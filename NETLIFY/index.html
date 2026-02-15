@@ -1,0 +1,2165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShiftCraft — Staff Scheduling Tool</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a1a; color: #e8e8f0; font-family: 'DM Sans', sans-serif; }
+    #root { min-height: 100vh; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script>
+    window.storage = {
+      async get(key) { const v = localStorage.getItem('sc:' + key); if (v === null) throw new Error('Key not found'); return { key, value: v, shared: false }; },
+      async set(key, value) { localStorage.setItem('sc:' + key, value); return { key, value, shared: false }; },
+      async delete(key) { localStorage.removeItem('sc:' + key); return { key, deleted: true, shared: false }; },
+      async list(prefix) { const keys = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('sc:')) { const s = k.substring(3); if (!prefix || s.startsWith(prefix)) keys.push(s); } } return { keys, prefix, shared: false }; }
+    };
+  </script>
+  <script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const WEEKDAYS_ONLY = ["Mon","Tue","Wed","Thu","Fri"];
+
+const defaultColors = [
+  "#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#84CC16","#F97316","#6366F1",
+  "#14B8A6","#E11D48","#7C3AED","#0EA5E9","#D946EF","#F43F5E","#22D3EE","#A3E635","#FB923C","#818CF8"
+];
+
+const DEV_USERNAME = "mike";
+const DEV_PASSWORD = "banchan";
+
+const PRESET_STAFF = [
+  { id: "s1", name: "Steve Kim MD", role: "Ophthalmologist", color: "#3B82F6" },
+  { id: "s2", name: "Steve Lin MD", role: "Ophthalmologist", color: "#10B981" },
+  { id: "s3", name: "Daniel Choi MD", role: "Ophthalmologist", color: "#F59E0B" },
+  { id: "s4", name: "Mike Yang MD", role: "Ophthalmologist", color: "#EF4444" },
+  { id: "s5", name: "Ethan Tittler MD", role: "Ophthalmologist", color: "#8B5CF6" },
+  { id: "s6", name: "Ken Miselis MD", role: "Ophthalmologist", color: "#EC4899" },
+  { id: "s7", name: "Kelsey McCall OD", role: "Optometrist", color: "#06B6D4" },
+  { id: "s8", name: "Vik Girn OD", role: "Optometrist", color: "#84CC16" },
+  { id: "s9", name: "Angela Maharaj OD", role: "Optometrist", color: "#F97316" },
+  { id: "s10", name: "Mike Sakamoto MD", role: "Ophthalmologist", color: "#6366F1" },
+];
+
+const PRESET_LOCATIONS = [
+  { id: "l1", name: "Manteca", address: "" },
+  { id: "l2", name: "Stockton", address: "" },
+  { id: "l5", name: "Modesto", address: "" },
+  { id: "l6", name: "Turlock", address: "" },
+  { id: "l7", name: "VLSC", address: "Valley Laser Surgery Center" },
+  { id: "l8", name: "MSC", address: "Modesto Surgery Center" },
+  { id: "l9", name: "DHM", address: "Doctors Hospital Manteca" },
+  { id: "l10", name: "LVC", address: "LASIK Surgery" },
+  { id: "l11", name: "NCSC", address: "NorCal Surgery Center" },
+  { id: "l12", name: "SJLSC", address: "San Joaquin Laser and Surgery Center" },
+  { id: "l13", name: "Admin", address: "" },
+  { id: "l14", name: "VA", address: "Veterans Affairs" },
+];
+
+// Distinct muted colors for location sections in calendar cells
+const LOCATION_COLORS = {
+  l1:  { bg: '#1a2332', border: '#2d6a9f', text: '#5ba3d9' },  // Manteca - blue
+  l2:  { bg: '#1a2a22', border: '#2d8f5f', text: '#4ec990' },  // Stockton - green
+  l5:  { bg: '#2a1f2e', border: '#8f4fc0', text: '#b47de0' },  // Modesto - purple
+  l6:  { bg: '#2a2518', border: '#9f8030', text: '#d4b04a' },  // Turlock - gold
+  l7:  { bg: '#1f1520', border: '#c04070', text: '#e06090' },  // VLSC - rose
+  l8:  { bg: '#201a18', border: '#b06030', text: '#d08050' },  // MSC - orange
+  l9:  { bg: '#18202a', border: '#4080c0', text: '#60a0e0' },  // DHM - sky
+  l10: { bg: '#1f1520', border: '#c04070', text: '#e06090' },  // LVC - rose
+  l11: { bg: '#1a2025', border: '#3090a0', text: '#50c0d0' },  // NCSC - teal
+  l12: { bg: '#201a28', border: '#7050b0', text: '#9070d0' },  // SJLSC - indigo
+  l13: { bg: '#1a1a20', border: '#606070', text: '#8888a0' },  // Admin - grey
+  l14: { bg: '#1a2520', border: '#308060', text: '#50b080' },  // VA - sea green
+  OFF: { bg: '#15151f', border: '#333340', text: '#555565' },   // OFF - dim
+};
+
+// ============================================================
+// PRESET RULES — All doctor scheduling rules
+// weekOfMonth: "all" | comma-separated "1,2,3,4"
+// period: "both" | "am" | "pm"
+// ============================================================
+const PRESET_RULES = [
+  // ===== DR. KIM (s1) =====
+  { id:"pr1", staffId:"s1", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic every Monday" },
+  { id:"pr2", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"1,2,4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st, 2nd & 4th Tuesdays" },
+  { id:"pr3", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", description:"MSC on 3rd Tuesday" },
+  { id:"pr4", staffId:"s1", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday" },
+  { id:"pr5", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l7", priority:"preferred", description:"VLSC on 1st, 2nd & 4th Thursdays (based on surgical need)" },
+  { id:"pr6", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"preferred", description:"3rd Thu: Stockton Clinic or Off — based on other provider schedules" },
+  { id:"pr7", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l6", priority:"required", description:"1st Friday = Turlock. EXCEPTION: If 1st Friday falls on 1st of month AND Dr. Tittler was NOT in surgery the day before → move to 2nd Friday and notify Turlock Eye Care" },
+  { id:"pr8", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"OFF", priority:"preferred", description:"Off every other Friday (alternating)" },
+
+  // ===== DR. LIN (s2) =====
+  { id:"pr9", staffId:"s2", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"preferred", description:"Off Mondays. EXCEPTION: every other month when an extra MSC day is needed → assign to MSC" },
+  { id:"pr10", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st Tuesday" },
+  { id:"pr11", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 2nd Tuesday" },
+  { id:"pr12", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 3rd Tuesday" },
+  { id:"pr13", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l12", priority:"required", description:"SJLSC on 4th Tuesday" },
+  { id:"pr14", staffId:"s2", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", description:"VLSC every Wednesday (unless low case count)" },
+  { id:"pr15", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st Thursday" },
+  { id:"pr16", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Thursday" },
+  { id:"pr17", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"am", locationId:"l2", priority:"required", description:"3rd Thu AM = Stockton Clinic" },
+  { id:"pr18", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"pm", locationId:"l10", priority:"required", description:"3rd Thu PM = LASIK Surgery (LVC)" },
+  { id:"pr19", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", description:"4th Thu = Open/flexible. Prefer extra Modesto day. Does NOT want 3 Stockton Thursdays in a month" },
+  { id:"pr20", staffId:"s2", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"required", description:"Off every Friday" },
+
+  // ===== DR. CHOI (s3) =====
+  { id:"pr21", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l7", priority:"required", description:"VLSC surgery on 1st–3rd Mondays" },
+  { id:"pr22", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l8", priority:"preferred", description:"4th Mon: Extra MSC day if needed, otherwise VLSC or Stockton Clinic" },
+  { id:"pr23", staffId:"s3", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday" },
+  { id:"pr24", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st–3rd Wednesdays" },
+  { id:"pr25", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l8", priority:"required", description:"MSC on 4th Wednesday" },
+  { id:"pr26", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", description:"1st Thu: DHM every other month. If not DHM → Stockton Clinic. Rotates monthly with Dr. Yang" },
+  { id:"pr27", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr28", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 4th Thursday" },
+  { id:"pr29", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l14", priority:"required", description:"VA on 1st Friday" },
+  { id:"pr30", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 2nd–4th Fridays" },
+
+  // ===== DR. YANG (s4) =====
+  { id:"pr31", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"1", period:"both", locationId:"l13", priority:"preferred", description:"1st Mon = Admin Day (unless moved by request)" },
+  { id:"pr32", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Monday" },
+  { id:"pr33", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"3,4", period:"both", locationId:"l2", priority:"preferred", description:"3rd & 4th Mon: Rotate Modesto with Dr. Tittler if no other Modesto days available; otherwise Stockton Clinic" },
+  { id:"pr34", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st Tuesday" },
+  { id:"pr35", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"2,3", period:"both", locationId:"l7", priority:"preferred", description:"2nd & 3rd Tue: Rotate VLSC OR coordinate with Dr. Tittler if needed" },
+  { id:"pr36", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"1,2,4", period:"both", locationId:"l2", priority:"preferred", description:"1st, 2nd & 4th Wed: Stockton Clinic. If Dr. Lin has unused OR days → assign to VLSC instead" },
+  { id:"pr37", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", description:"MSC on 3rd Wednesday" },
+  { id:"pr38", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", description:"1st Thu: Rotates monthly with Dr. Choi at DHM. If not DHM → Manteca Clinic" },
+  { id:"pr39", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr40", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l2", priority:"preferred", description:"4th Thu: Stockton Clinic (usually if Dr. Lin is in Modesto)" },
+  { id:"pr41", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st Friday" },
+  { id:"pr42", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"preferred", description:"2nd & 3rd Fri: Stockton if in Manteca the Thursday prior" },
+  { id:"pr43", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"4", period:"both", locationId:"l1", priority:"preferred", description:"4th Fri: Manteca if in Stockton the Thursday prior" },
+
+  // ===== DR. TITTLER (s5) =====
+  { id:"pr44", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st–3rd Mondays" },
+  { id:"pr45", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", description:"4th Mon: Based on Dr. Yang's Modesto needs, or extra MSC day" },
+  { id:"pr46", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l7", priority:"required", description:"VLSC on 1st Tuesday" },
+  { id:"pr47", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Tuesday" },
+  { id:"pr48", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 3rd Tuesday" },
+  { id:"pr49", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l7", priority:"required", description:"VLSC on 4th Tuesday" },
+  { id:"pr50", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"1,2", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st & 2nd Wednesdays" },
+  { id:"pr51", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l6", priority:"required", description:"Turlock on 3rd Wednesday" },
+  { id:"pr52", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 4th Wednesday" },
+  { id:"pr53", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st Thursday" },
+  { id:"pr54", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr55", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l9", priority:"required", description:"DHM on 4th Thursday" },
+  { id:"pr56", staffId:"s5", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", description:"Fridays: Make-up clinic / VLSC / NCSC (Merced) depending on month needs" },
+
+  // ===== DR. SAKAMOTO (s10) =====
+  { id:"pr57", staffId:"s10", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic every Wednesday (1st–4th)" },
+
+  // ===== DR. MISELIS (s6) =====
+  { id:"pr58", staffId:"s6", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Monday" },
+  { id:"pr59", staffId:"s6", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday" },
+  { id:"pr60", staffId:"s6", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday" },
+
+  // ===== DR. McCALL (s7) =====
+  { id:"pr61", staffId:"s7", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Monday" },
+  { id:"pr62", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"am", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday AM" },
+  { id:"pr63", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"pm", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday PM" },
+  { id:"pr64", staffId:"s7", dayOfWeek:"Wed", weekOfMonth:"1", period:"both", locationId:"l5", priority:"preferred", description:"1st Wed: Modesto Clinic IF Dr. Lin was at MSC the day before (Tuesday)" },
+  { id:"pr65", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 1st Thursday" },
+  { id:"pr66", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"2,4", period:"both", locationId:"l5", priority:"preferred", description:"2nd & 4th Thu: Modesto Clinic if a surgeon was at MSC the day prior (Wednesday)" },
+  { id:"pr67", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 3rd Thursday" },
+  { id:"pr68", staffId:"s7", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Friday" },
+
+  // ===== DR. MAHARAJ (s9) =====
+  { id:"pr69", staffId:"s9", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday (unless needed for Manteca coverage)" },
+  { id:"pr70", staffId:"s9", dayOfWeek:"Thu", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Thursday (unless needed for Manteca coverage)" },
+  { id:"pr71", staffId:"s9", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Friday (unless needed for Manteca coverage)" },
+
+  // ===== DR. GIRN (s8) =====
+  { id:"pr72", staffId:"s8", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"preferred", description:"Manteca Clinic every Monday (unless Stockton coverage needed)" },
+  { id:"pr73", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st–3rd Tuesdays" },
+  { id:"pr74", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 4th Tuesday" },
+  { id:"pr75", staffId:"s8", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l13", priority:"preferred", description:"Admin Day every Wednesday (unless coverage needed)" },
+  { id:"pr76", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st, 2nd & 4th Thursdays" },
+  { id:"pr77", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 3rd Thursday" },
+  { id:"pr78", staffId:"s8", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic every Friday" },
+];
+
+// Holiday definitions — type: "fixed" (month/day) or "nth" (nth weekday of month) or "lastMon" (last Monday)
+// month is 0-indexed (0=Jan, 11=Dec)
+// halfDay: "am" means office open AM only, closed PM. "closed" (default) means fully closed.
+const PRESET_HOLIDAYS = [
+  { id: 'h1', name: 'New Year\'s Day', type: 'fixed', month: 0, day: 1, halfDay: 'closed', note: '' },
+  { id: 'h1b', name: 'New Year\'s Eve', type: 'fixed', month: 11, day: 31, halfDay: 'am', note: 'Office open AM only — closes at noon' },
+  { id: 'h2', name: 'Presidents Day', type: 'nth', month: 1, nth: 3, weekday: 1, halfDay: 'closed', note: '' },
+  { id: 'h3', name: 'Memorial Day', type: 'lastMon', month: 4, halfDay: 'closed', note: '' },
+  { id: 'h4', name: 'Independence Day', type: 'fixed', month: 6, day: 4, halfDay: 'closed', note: '' },
+  { id: 'h5', name: 'Labor Day', type: 'nth', month: 8, nth: 1, weekday: 1, halfDay: 'closed', note: '' },
+  { id: 'h6', name: 'Thanksgiving Day', type: 'nth', month: 10, nth: 4, weekday: 4, halfDay: 'closed', note: '' },
+  { id: 'h7', name: 'Day After Thanksgiving', type: 'nthPlus', month: 10, nth: 4, weekday: 4, plusDays: 1, halfDay: 'closed', note: '' },
+  { id: 'h8', name: 'Christmas Day', type: 'fixed', month: 11, day: 25, halfDay: 'closed', note: '' },
+  { id: 'h8b', name: 'Christmas Eve', type: 'fixed', month: 11, day: 24, halfDay: 'am', note: 'Office open AM only — closes at noon' },
+];
+
+// Compute the actual date for a holiday in a given year
+function getHolidayDate(h, year) {
+  if (h.type === 'fixed') return new Date(year, h.month, h.day);
+  if (h.type === 'nth') {
+    // nth weekday of month (e.g., 3rd Monday of Feb)
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getMonth() !== h.month) break;
+      if (dt.getDay() === h.weekday) { count++; if (count === h.nth) return dt; }
+    }
+  }
+  if (h.type === 'lastMon') {
+    // Last Monday of month
+    const last = new Date(year, h.month + 1, 0);
+    for (let d = last.getDate(); d >= 1; d--) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getDay() === 1) return dt;
+    }
+  }
+  if (h.type === 'nthPlus') {
+    // nth weekday + plusDays (e.g., day after Thanksgiving)
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getMonth() !== h.month) break;
+      if (dt.getDay() === h.weekday) { count++; if (count === h.nth) { dt.setDate(dt.getDate() + h.plusDays); return dt; } }
+    }
+  }
+  return null;
+}
+
+function getCalendarDays(year, month) {
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days = [];
+  for (let i = 0; i < firstDay; i++) days.push(null);
+  for (let i = 1; i <= daysInMonth; i++) days.push(i);
+  return days;
+}
+
+function dateKey(year, month, day) {
+  return `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
+function isWeekend(year, month, day) {
+  return [0, 6].includes(new Date(year, month, day).getDay());
+}
+
+// Get which week-of-month (1-5) a given day falls on
+function getWeekOfMonth(day) {
+  return Math.ceil(day / 7);
+}
+
+function Modal({ open, onClose, title, children, wide }) {
+  if (!open) return null;
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.5)',backdropFilter:'blur(4px)'}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:16,padding:32,minWidth:wide?700:420,maxWidth:wide?900:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+          <h3 style={{margin:0,fontSize:20,color:'#e8e8f0',fontFamily:'"DM Sans",sans-serif',fontWeight:600}}>{title}</h3>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#888',fontSize:22,cursor:'pointer',padding:4}}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange, placeholder, type = "text", style: sx }) {
+  return (
+    <div style={{marginBottom:16,...sx}}>
+      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}} />
+    </div>
+  );
+}
+
+function Textarea({ label, value, onChange, placeholder, rows=3 }) {
+  return (
+    <div style={{marginBottom:16}}>
+      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box',resize:'vertical'}} />
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div style={{marginBottom:16}}>
+      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}}>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function Btn({ children, onClick, variant = "primary", style: sx, disabled }) {
+  const base = {padding:'10px 20px',borderRadius:8,border:'none',fontSize:13,fontWeight:600,cursor:disabled?'not-allowed':'pointer',fontFamily:'"DM Sans",sans-serif',transition:'all 0.2s',opacity:disabled?0.5:1,...sx};
+  const variants = {
+    primary:{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'#fff'},
+    secondary:{background:'#2a2a4a',color:'#e8e8f0'},
+    danger:{background:'#dc2626',color:'#fff'},
+    ghost:{background:'transparent',color:'#9ca3af',border:'1px solid #2a2a4a'},
+    success:{background:'linear-gradient(135deg,#059669,#10b981)',color:'#fff'},
+    dev:{background:'linear-gradient(135deg,#b45309,#d97706)',color:'#fff'},
+  };
+  return <button onClick={onClick} disabled={disabled} style={{...base,...variants[variant]}}>{children}</button>;
+}
+
+function Chip({ children, color }) {
+  return (
+    <span style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 12px',borderRadius:20,background:color+'22',color:color,fontSize:12,fontWeight:600,fontFamily:'"DM Sans",sans-serif'}}>
+      {children}
+    </span>
+  );
+}
+
+// Week-of-month toggle component
+function WeekOfMonthPicker({ value, onChange }) {
+  const weeks = ["1","2","3","4"];
+  const selected = value === "all" ? ["1","2","3","4"] : value.split(",");
+  const isAll = selected.length === 4;
+
+  function toggle(w) {
+    let next;
+    if (selected.includes(w)) {
+      next = selected.filter(x => x !== w);
+      if (next.length === 0) next = [w]; // must have at least one
+    } else {
+      next = [...selected, w].sort();
+    }
+    onChange(next.length === 4 ? "all" : next.join(","));
+  }
+
+  function toggleAll() {
+    onChange(isAll ? "1" : "all");
+  }
+
+  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th" };
+
+  return (
+    <div style={{marginBottom:16}}>
+      <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <div onClick={toggleAll}
+          style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
+            background:isAll?'#6366f122':'#12121f',color:isAll?'#818cf8':'#6b7280',border:`1px solid ${isAll?'#6366f1':'#2a2a4a'}`,transition:'all 0.15s'}}>
+          All Weeks
+        </div>
+        {weeks.map(w => {
+          const active = selected.includes(w);
+          return (
+            <div key={w} onClick={() => toggle(w)}
+              style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
+                background:active?'#6366f122':'#12121f',color:active?'#818cf8':'#6b7280',border:`1px solid ${active?'#6366f1':'#2a2a4a'}`,transition:'all 0.15s'}}>
+              {labels[w]}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Format weekOfMonth for display
+function formatWeekOfMonth(wom) {
+  if (wom === "all") return "Every week";
+  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th" };
+  return wom.split(",").map(w => labels[w] || w).join(", ");
+}
+
+// ============================================================
+// MAIN APP
+// ============================================================
+window.ShiftCraft = function StaffScheduler() {
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [isDev, setIsDev] = useState(false);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '', isRegister: false });
+
+  const [staff, setStaff] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [vacations, setVacations] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [schedules, setSchedules] = useState({});
+
+  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [activeTab, setActiveTab] = useState('schedule');
+  const [editCell, setEditCell] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [aiLog, setAiLog] = useState('');
+  const [rulesFilter, setRulesFilter] = useState('all');
+  const [devLogs, setDevLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(true);
+  const [visibleStaff, setVisibleStaff] = useState(new Set());
+  const [visibleLocations, setVisibleLocations] = useState(new Set());
+  const [expandedLocation, setExpandedLocation] = useState(null);
+  const [expandedStaffMember, setExpandedStaffMember] = useState(null);
+
+  // Plan system: A, B, C per month
+  const [activePlan, setActivePlan] = useState('A');
+  const [finalPlans, setFinalPlans] = useState({}); // { "2026-1": "A", ... }
+
+  // AI Agent chat
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+
+  // Call Claude API via Netlify function (API key stays server-side)
+  async function callClaudeAPI(body) {
+    return fetch('/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  const logsEndRef = useRef(null);
+  const chatEndRef = useRef(null);
+
+  // Initialize visibleStaff and visibleLocations to show all when data loads
+  useEffect(() => {
+    if (staff.length > 0 && visibleStaff.size === 0) {
+      setVisibleStaff(new Set(staff.map(s => s.id)));
+    }
+  }, [staff]);
+
+  useEffect(() => {
+    if (locations.length > 0 && visibleLocations.size === 0) {
+      setVisibleLocations(new Set(locations.map(l => l.id)));
+    }
+  }, [locations]);
+
+  // Get last name (handles "Steve Kim MD" → "Kim", "Kelsey McCall OD" → "McCall")
+  function getLastName(fullName) {
+    const parts = fullName.split(' ');
+    const suffixes = ['MD', 'OD', 'DO', 'NP', 'PA', 'RN', 'Jr', 'Sr', 'II', 'III'];
+    // Find last non-suffix part
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (!suffixes.includes(parts[i].replace(/[.,]/g, ''))) return parts[i];
+    }
+    return parts[0];
+  }
+
+  function toggleStaffVisibility(id) {
+    setVisibleStaff(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function showAllStaff() { setVisibleStaff(new Set(staff.map(s => s.id))); }
+  function showNoneStaff() { setVisibleStaff(new Set()); }
+
+  function toggleLocationVisibility(id) {
+    setVisibleLocations(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function showAllLocations() { setVisibleLocations(new Set(locations.map(l => l.id))); }
+  function showNoneLocations() { setVisibleLocations(new Set()); }
+
+  function addLog(type, message, data) {
+    const entry = { time: new Date().toLocaleTimeString(), type, message, data: data ? JSON.stringify(data).substring(0, 2000) : null };
+    setDevLogs(prev => [...prev, entry]);
+  }
+
+  useEffect(() => {
+    if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [devLogs]);
+
+  const [showStaffModal, setShowStaffModal] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [showVacationModal, setShowVacationModal] = useState(false);
+  const [editingStaff, setEditingStaff] = useState(null);
+  const [editingRule, setEditingRule] = useState(null);
+  const [editingLocation, setEditingLocation] = useState(null);
+
+  const [staffForm, setStaffForm] = useState({ name:'', role:'', color:defaultColors[0] });
+  const [locationForm, setLocationForm] = useState({ name:'', address:'' });
+  const [ruleForm, setRuleForm] = useState({ staffId:'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:'', priority:'preferred', description:'' });
+  const [vacationForm, setVacationForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [editingHoliday, setEditingHoliday] = useState(null);
+  const [holidayForm, setHolidayForm] = useState({ name:'', month:0, day:1, halfDay:'closed', note:'' });
+
+  const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan}`;
+  const monthKey = `${currentYear}-${currentMonth}`;
+
+  const finalPlanForMonth = finalPlans[monthKey] || null;
+
+  function setFinalPlan(plan) {
+    setFinalPlans(prev => ({ ...prev, [monthKey]: plan }));
+  }
+  function clearFinalPlan() {
+    setFinalPlans(prev => { const n = { ...prev }; delete n[monthKey]; return n; });
+  }
+
+  function planHasData(plan) {
+    const key = `schedule-${currentYear}-${currentMonth}-${plan}`;
+    return schedules[key] && Object.keys(schedules[key]).length > 0;
+  }
+
+  function copyPlanTo(fromPlan, toPlan) {
+    const fromKey = `schedule-${currentYear}-${currentMonth}-${fromPlan}`;
+    const toKey = `schedule-${currentYear}-${currentMonth}-${toPlan}`;
+    const data = schedules[fromKey];
+    if (!data) return;
+    setSchedules(prev => ({ ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }));
+  }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sess = await window.storage.get('session');
+        if (sess) {
+          const u = JSON.parse(sess.value);
+          setUser(u);
+          setIsDev(u.isDev || false);
+
+          if (u.isDev) {
+            // For dev account, verify all presets exist before loading
+            let hasCompleteData = false;
+            try {
+              const staffData = await window.storage.get(`${u.username}:staff`);
+              const locData = await window.storage.get(`${u.username}:locations`);
+              const rulesData = await window.storage.get(`${u.username}:rules`);
+              const staffOk = staffData && JSON.parse(staffData.value).length > 0;
+              const locsOk = locData && JSON.parse(locData.value).length > 0;
+              const rulesOk = rulesData && JSON.parse(rulesData.value).length > 0;
+              hasCompleteData = staffOk && locsOk && rulesOk;
+            } catch(e) {}
+
+            if (!hasCompleteData) {
+              // Restore presets but keep vacations and schedules
+              let existingVacations = [];
+              let existingSchedules = {};
+              try {
+                const vacData = await window.storage.get(`${u.username}:vacations`);
+                if (vacData) existingVacations = JSON.parse(vacData.value);
+                const schedData = await window.storage.get(`${u.username}:schedules`);
+                if (schedData) existingSchedules = JSON.parse(schedData.value);
+              } catch(e) {}
+              setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
+              setVacations(existingVacations); setSchedules(existingSchedules);
+              await window.storage.set(`${u.username}:staff`, JSON.stringify(PRESET_STAFF));
+              await window.storage.set(`${u.username}:locations`, JSON.stringify(PRESET_LOCATIONS));
+              await window.storage.set(`${u.username}:rules`, JSON.stringify(PRESET_RULES));
+              await window.storage.set(`${u.username}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
+            } else {
+              await loadUserData(u.username);
+            }
+          } else {
+            await loadUserData(u.username);
+          }
+        }
+      } catch(e) {}
+      setLoading(false);
+    })();
+  }, []);
+
+  async function loadUserData(username) {
+    try {
+      const d = async k => { try { const r = await window.storage.get(`${username}:${k}`); return r ? JSON.parse(r.value) : null; } catch(e) { return null; } };
+      const s = await d('staff'); if (s) setStaff(s);
+      let l = await d('locations');
+      let r = await d('rules');
+      let sc = await d('schedules');
+
+      // Migration: consolidate Stockton LASIK (l3) and Stockton LAL (l4) → Stockton (l2)
+      const deprecatedLocs = ['l3', 'l4'];
+      if (l) {
+        l = l.filter(loc => !deprecatedLocs.includes(loc.id));
+        setLocations(l);
+      }
+      if (r) {
+        r = r.map(rule => deprecatedLocs.includes(rule.locationId) ? { ...rule, locationId: 'l2' } : rule);
+        setRules(r);
+      }
+      if (sc) {
+        // Migrate schedule assignments
+        const migrated = {};
+        for (const [schedKey, days] of Object.entries(sc)) {
+          migrated[schedKey] = {};
+          for (const [dayKey, staffAssigns] of Object.entries(days)) {
+            migrated[schedKey][dayKey] = {};
+            for (const [staffId, periods] of Object.entries(staffAssigns)) {
+              migrated[schedKey][dayKey][staffId] = {};
+              for (const [period, locId] of Object.entries(periods)) {
+                migrated[schedKey][dayKey][staffId][period] = deprecatedLocs.includes(locId) ? 'l2' : locId;
+              }
+            }
+          }
+        }
+        setSchedules(migrated);
+      }
+
+      const v = await d('vacations'); if (v) setVacations(v);
+      const h = await d('holidays'); if (h) setHolidays(h); else setHolidays(PRESET_HOLIDAYS);
+      const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
+    } catch(e) {}
+  }
+
+  async function saveData(key, data) {
+    if (!user) return;
+    try { await window.storage.set(`${user.username}:${key}`, JSON.stringify(data)); } catch(e) {}
+  }
+
+  useEffect(() => { if (user) saveData('staff', staff); }, [staff]);
+  useEffect(() => { if (user) saveData('locations', locations); }, [locations]);
+  useEffect(() => { if (user) saveData('rules', rules); }, [rules]);
+  useEffect(() => { if (user) saveData('vacations', vacations); }, [vacations]);
+  useEffect(() => { if (user) saveData('holidays', holidays); }, [holidays]);
+  useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
+  useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
+
+  useEffect(() => {
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
+  async function handleAuth() {
+    const { username, password, isRegister } = loginForm;
+    if (!username || !password) return;
+    if (isRegister) {
+      try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username taken'); return; } } catch(e) {}
+      const u = { username, created: Date.now() };
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
+      await window.storage.set('session', JSON.stringify(u));
+      setUser(u); setIsDev(false);
+    } else {
+      try {
+        const userData = await window.storage.get(`user:${username}`);
+        if (!userData) { alert('User not found'); return; }
+        const parsed = JSON.parse(userData.value);
+        if (parsed.password !== password) { alert('Wrong password'); return; }
+        const u = { username, created: parsed.created };
+        await window.storage.set('session', JSON.stringify(u));
+        setUser(u); setIsDev(false);
+        await loadUserData(username);
+      } catch(e) { alert('Login failed'); }
+    }
+  }
+
+  async function handleDevLogin() {
+    const u = { username: DEV_USERNAME, isDev: true, created: Date.now() };
+    await window.storage.set('session', JSON.stringify(u));
+    setUser(u); setIsDev(true);
+
+    // Check if ALL essential preset data exists (staff, locations, AND rules)
+    let hasCompleteData = false;
+    try {
+      const staffData = await window.storage.get(`${DEV_USERNAME}:staff`);
+      const locData = await window.storage.get(`${DEV_USERNAME}:locations`);
+      const rulesData = await window.storage.get(`${DEV_USERNAME}:rules`);
+
+      const staffOk = staffData && JSON.parse(staffData.value).length > 0;
+      const locsOk = locData && JSON.parse(locData.value).length > 0;
+      const rulesOk = rulesData && JSON.parse(rulesData.value).length > 0;
+
+      hasCompleteData = staffOk && locsOk && rulesOk;
+    } catch(e) {}
+
+    if (!hasCompleteData) {
+      // Initialize with all presets — keep any existing vacations and schedules
+      let existingVacations = [];
+      let existingSchedules = {};
+      try {
+        const vacData = await window.storage.get(`${DEV_USERNAME}:vacations`);
+        if (vacData) existingVacations = JSON.parse(vacData.value);
+        const schedData = await window.storage.get(`${DEV_USERNAME}:schedules`);
+        if (schedData) existingSchedules = JSON.parse(schedData.value);
+      } catch(e) {}
+
+      setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
+      setVacations(existingVacations); setSchedules(existingSchedules);
+      await window.storage.set(`${DEV_USERNAME}:staff`, JSON.stringify(PRESET_STAFF));
+      await window.storage.set(`${DEV_USERNAME}:locations`, JSON.stringify(PRESET_LOCATIONS));
+      await window.storage.set(`${DEV_USERNAME}:rules`, JSON.stringify(PRESET_RULES));
+      await window.storage.set(`${DEV_USERNAME}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
+    } else {
+      await loadUserData(DEV_USERNAME);
+    }
+  }
+
+  async function resetDevData() {
+    if (!confirm('Reset all data to presets? This will clear schedules, vacations, and restore default staff, locations & rules.')) return;
+    setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS); setVacations([]); setSchedules({});
+    await window.storage.set(`${DEV_USERNAME}:staff`, JSON.stringify(PRESET_STAFF));
+    await window.storage.set(`${DEV_USERNAME}:locations`, JSON.stringify(PRESET_LOCATIONS));
+    await window.storage.set(`${DEV_USERNAME}:rules`, JSON.stringify(PRESET_RULES));
+    await window.storage.set(`${DEV_USERNAME}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
+    await window.storage.set(`${DEV_USERNAME}:vacations`, JSON.stringify([]));
+    await window.storage.set(`${DEV_USERNAME}:schedules`, JSON.stringify({}));
+  }
+
+  async function logout() {
+    try { await window.storage.delete('session'); } catch(e) {}
+    setUser(null); setIsDev(false);
+    setStaff([]); setLocations([]); setRules([]); setVacations([]); setHolidays([]); setSchedules({});
+  }
+
+  function addStaff() {
+    if (!staffForm.name) return;
+    if (editingStaff) { setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffForm } : s)); setEditingStaff(null); }
+    else { setStaff(prev => [...prev, { id: 's' + Date.now(), ...staffForm }]); }
+    setStaffForm({ name:'', role:'', color:defaultColors[staff.length%defaultColors.length] }); setShowStaffModal(false);
+  }
+  function removeStaff(id) { if (!confirm('Remove this staff member and all their rules/vacations?')) return; setStaff(p=>p.filter(s=>s.id!==id)); setRules(p=>p.filter(r=>r.staffId!==id)); setVacations(p=>p.filter(v=>v.staffId!==id)); }
+  function addLocation() {
+    if (!locationForm.name) return;
+    if (editingLocation) { setLocations(prev => prev.map(l => l.id === editingLocation.id ? { ...l, ...locationForm } : l)); setEditingLocation(null); }
+    else { setLocations(prev => [...prev, { id: 'l' + Date.now(), ...locationForm }]); }
+    setLocationForm({ name:'', address:'' }); setShowLocationModal(false);
+  }
+  function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
+  function addRule() {
+    if (!ruleForm.staffId || !ruleForm.locationId) return;
+    if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
+    else { setRules(prev => [...prev, { id: 'r' + Date.now(), ...ruleForm }]); }
+    setRuleForm({ staffId:staff[0]?.id||'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:locations[0]?.id||'', priority:'preferred', description:'' }); setShowRuleModal(false);
+  }
+  function removeRule(id) { setRules(prev => prev.filter(r => r.id !== id)); }
+  function addVacation() {
+    if (!vacationForm.staffId || !vacationForm.startDate || !vacationForm.endDate) return;
+    setVacations(prev => [...prev, { id: 'v' + Date.now(), ...vacationForm }]);
+    setVacationForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowVacationModal(false);
+  }
+  function removeVacation(id) { setVacations(prev => prev.filter(v => v.id !== id)); }
+  function isOnVacation(staffId, dateStr) { return vacations.some(v => v.staffId === staffId && dateStr >= v.startDate && dateStr <= v.endDate); }
+
+  function addHoliday() {
+    if (!holidayForm.name) return;
+    if (editingHoliday) {
+      setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? { ...editingHoliday, name:holidayForm.name, month:holidayForm.month, day:holidayForm.day, halfDay:holidayForm.halfDay, note:holidayForm.note } : h));
+      setEditingHoliday(null);
+    } else {
+      setHolidays(prev => [...prev, { id: 'h' + Date.now(), type: 'fixed', ...holidayForm }]);
+    }
+    setHolidayForm({ name:'', month:0, day:1, halfDay:'closed', note:'' }); setShowHolidayModal(false);
+  }
+  function removeHoliday(id) { setHolidays(prev => prev.filter(h => h.id !== id)); }
+
+  // Check if a given date (year, month 0-indexed, day) falls on a holiday
+  function getHolidayForDate(year, month, day) {
+    const dk = dateKey(year, month, day);
+    for (const h of holidays) {
+      const hd = getHolidayDate(h, year);
+      if (!hd) continue;
+      const hdk = dateKey(hd.getFullYear(), hd.getMonth(), hd.getDate());
+      if (hdk === dk) return h;
+    }
+    return null;
+  }
+
+  function getSchedule() { return schedules[scheduleKey] || {}; }
+
+  function setDayAssignment(day, staffId, period, locationId) {
+    const dk = dateKey(currentYear, currentMonth, day);
+    setSchedules(prev => {
+      const sched = { ...prev };
+      if (!sched[scheduleKey]) sched[scheduleKey] = {};
+      if (!sched[scheduleKey][dk]) sched[scheduleKey][dk] = {};
+      if (!sched[scheduleKey][dk][staffId]) sched[scheduleKey][dk][staffId] = {};
+      sched[scheduleKey][dk][staffId][period] = locationId;
+      return { ...sched };
+    });
+  }
+
+  function clearSchedule() {
+    if (!confirm('Clear entire schedule for this month?')) return;
+    setSchedules(prev => { const s = { ...prev }; delete s[scheduleKey]; return s; });
+  }
+
+  // Build a human-readable rules summary for the AI prompt
+  function buildRulesSummary() {
+    const grouped = {};
+    rules.forEach(r => {
+      const s = staff.find(x => x.id === r.staffId);
+      if (!s) return;
+      if (!grouped[s.name]) grouped[s.name] = [];
+      const l = locations.find(x => x.id === r.locationId);
+      const locName = r.locationId === 'OFF' ? 'OFF' : (l?.name || '?');
+      const womLabel = formatWeekOfMonth(r.weekOfMonth);
+      const periodLabel = r.period === 'both' ? 'Full Day' : r.period.toUpperCase();
+      grouped[s.name].push(`${r.dayOfWeek} [${womLabel}] ${periodLabel} → ${locName} (${r.priority})${r.description ? ' — ' + r.description : ''}`);
+    });
+
+    let summary = '';
+    for (const [name, ruleList] of Object.entries(grouped)) {
+      summary += `\n${name}:\n`;
+      ruleList.forEach(r => { summary += `  • ${r}\n`; });
+    }
+    return summary || 'No rules defined.';
+  }
+
+  async function generateWithAI() {
+    if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
+    setGenerating(true);
+    setAiLog('Analyzing all scheduling rules, vacations, and cross-provider dependencies...');
+    addLog('info', 'Starting AI schedule generation...');
+
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const rulesSummary = buildRulesSummary();
+
+    const prompt = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice. Generate a precise monthly schedule.
+
+MONTH: ${MONTHS[currentMonth]} ${currentYear} (${daysInMonth} days)
+Today's date context: The 1st falls on ${DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()]}.
+
+STAFF MEMBERS:
+${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('\n')}
+
+LOCATIONS:
+${locations.map(l => `- ${l.name} (ID: ${l.id}${l.address ? ' — ' + l.address : ''})`).join('\n')}
+
+DETAILED SCHEDULING RULES (by provider):
+${rulesSummary}
+
+VACATION / OUT OF OFFICE:
+${vacations.length > 0 ? vacations.map(v => {
+  const s = staff.find(x => x.id === v.staffId);
+  return `- ${s?.name || '?'}: ${v.startDate} to ${v.endDate} (${v.reason || 'Vacation'})`;
+}).join('\n') : 'None scheduled.'}
+
+COMPANY HOLIDAYS (all offices closed — no staff scheduled):
+${(()=>{
+  const hols = [];
+  holidays.forEach(h => {
+    const dt = getHolidayDate(h, currentYear);
+    if (!dt) return;
+    if (dt.getMonth() !== currentMonth) return;
+    const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    if (h.halfDay === 'am') {
+      hols.push('- ' + dk + ': ' + h.name + ' — HALF DAY: office open AM only, ALL staff OFF for PM');
+    } else {
+      hols.push('- ' + dk + ': ' + h.name + ' — FULL CLOSURE: ALL staff OFF for both AM and PM');
+    }
+  });
+  return hols.length > 0 ? hols.join('\n') : 'No holidays this month.';
+})()}
+
+CRITICAL INSTRUCTIONS:
+1. For each weekday (Mon-Fri), assign EVERY staff member an AM and PM location (or "OFF").
+2. "Week of month" means: days 1-7 = 1st week, 8-14 = 2nd week, 15-21 = 3rd week, 22+ = 4th week.
+3. Follow REQUIRED rules strictly. Follow PREFERRED rules when possible.
+4. Pay attention to cross-provider dependencies (e.g., "if Dr. Lin was at MSC the day before" or "rotates with Dr. Choi").
+5. When a rule says "OFF" or the provider has no rule for a day, mark them OFF.
+6. Staff on vacation = "OFF" for both AM and PM on those dates.
+7. COMPANY HOLIDAYS: On full-closure holidays, ALL staff must be "OFF" for both AM and PM. On half-day holidays (AM only), schedule staff for AM per normal rules but set ALL staff to "OFF" for PM.
+8. Ensure each major clinic location has adequate coverage.
+9. If a 5th occurrence of a weekday exists, use the 4th week's rules.
+10. For conditional rules, use your best judgment based on the overall schedule context.
+
+Respond ONLY with valid JSON, no markdown, no backticks, no explanation:
+{
+  "assignments": {
+    "YYYY-MM-DD": {
+      "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }
+    }
+  }
+}
+
+Use exact IDs. Include every weekday. Include every staff member each day.`;
+
+    addLog('info', `Prompt built: ${prompt.length} chars, ${rules.length} rules, ${staff.length} staff`);
+
+    try {
+      const requestBody = {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16000,
+        messages: [{ role: "user", content: prompt }]
+      };
+      addLog('request', 'Sending API request...', { model: requestBody.model, max_tokens: requestBody.max_tokens });
+
+      const response = await callClaudeAPI(requestBody);
+
+      addLog('response', `HTTP ${response.status} ${response.statusText}`, { status: response.status, ok: response.ok });
+
+      if (!response.ok) {
+        let errorText = '';
+        try { errorText = await response.text(); } catch(e) { errorText = 'Could not read error body'; }
+        addLog('error', `API returned ${response.status}`, { errorText: errorText.substring(0, 1000) });
+        setAiLog(`⚠️ API error (${response.status}). Check developer logs for details.`);
+        setGenerating(false);
+        return;
+      }
+
+      let data;
+      try {
+        const rawText = await response.text();
+        addLog('response', `Raw response: ${rawText.length} chars`, { preview: rawText.substring(0, 500) });
+        data = JSON.parse(rawText);
+      } catch (jsonErr) {
+        addLog('error', 'Failed to parse API response as JSON', { error: jsonErr.message });
+        setAiLog('⚠️ Invalid response from API. Check developer logs.');
+        setGenerating(false);
+        return;
+      }
+
+      addLog('response', 'API response parsed', { type: data.type, stop_reason: data.stop_reason, content_blocks: data.content?.length });
+
+      if (data.error) {
+        addLog('error', 'API returned error', { error: data.error });
+        setAiLog(`⚠️ API error: ${data.error?.message || JSON.stringify(data.error)}`);
+        setGenerating(false);
+        return;
+      }
+
+      const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+      addLog('info', `Extracted text: ${text.length} chars`);
+
+      if (!text) {
+        addLog('error', 'No text content in API response', { content: data.content });
+        setAiLog('⚠️ Empty response from AI. Try again.');
+        setGenerating(false);
+        return;
+      }
+
+      // Clean any markdown fencing
+      const clean = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      addLog('info', `Cleaned text: ${clean.length} chars, starts with: ${clean.substring(0, 50)}`);
+
+      let parsed;
+      try {
+        parsed = JSON.parse(clean);
+      } catch (parseErr) {
+        addLog('error', 'Failed to parse schedule JSON', { error: parseErr.message, textPreview: clean.substring(0, 300) });
+        // Try to extract JSON from the response
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[0]);
+            addLog('info', 'Extracted JSON via regex fallback');
+          } catch(e2) {
+            addLog('error', 'Regex fallback also failed', { error: e2.message });
+            setAiLog('⚠️ Could not parse schedule. Check developer logs.');
+            setGenerating(false);
+            return;
+          }
+        } else {
+          setAiLog('⚠️ AI response was not valid JSON. Check developer logs.');
+          setGenerating(false);
+          return;
+        }
+      }
+
+      if (parsed.assignments) {
+        // Post-process: enforce holidays
+        const assignments = parsed.assignments;
+        let holidayEdits = 0;
+        for (const [dk, dayAssignments] of Object.entries(assignments)) {
+          const [y, m, d] = dk.split('-').map(Number);
+          const holiday = getHolidayForDate(y, m - 1, d);
+          if (!holiday) continue;
+          for (const staffId of Object.keys(dayAssignments)) {
+            if (holiday.halfDay === 'am') {
+              // Half day: keep AM, force PM to OFF
+              if (dayAssignments[staffId].pm !== 'OFF') {
+                dayAssignments[staffId].pm = 'OFF';
+                holidayEdits++;
+              }
+            } else {
+              // Full closure: force both to OFF
+              if (dayAssignments[staffId].am !== 'OFF' || dayAssignments[staffId].pm !== 'OFF') {
+                dayAssignments[staffId].am = 'OFF';
+                dayAssignments[staffId].pm = 'OFF';
+                holidayEdits++;
+              }
+            }
+          }
+        }
+        if (holidayEdits > 0) addLog('info', `Holiday enforcement: corrected ${holidayEdits} assignments`);
+
+        const dayCount = Object.keys(assignments).length;
+        setSchedules(prev => ({ ...prev, [scheduleKey]: assignments }));
+        addLog('success', `Schedule applied: ${dayCount} days populated`);
+        setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${dayCount} days populated.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections applied.` : ''} Click any day to adjust.`);
+      } else {
+        addLog('error', 'Parsed JSON has no "assignments" key', { keys: Object.keys(parsed) });
+        setAiLog('⚠️ AI response missing schedule data. Try again.');
+      }
+    } catch (err) {
+      addLog('error', `Network/fetch error: ${err.message}`, { name: err.name, stack: err.stack?.substring(0, 300) });
+      setAiLog(`⚠️ Connection error: ${err.message}`);
+    }
+    setGenerating(false);
+  }
+
+  // AI Agent Chat
+  async function sendChatMessage() {
+    if (!chatInput.trim() || chatLoading) return;
+    const userMsg = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    setChatLoading(true);
+
+    const currentSchedule = getSchedule();
+    const scheduleSummary = Object.keys(currentSchedule).length > 0
+      ? `Current schedule for ${MONTHS[currentMonth]} ${currentYear} (Plan ${activePlan}) has ${Object.keys(currentSchedule).length} days filled.`
+      : `No schedule generated yet for ${MONTHS[currentMonth]} ${currentYear} Plan ${activePlan}.`;
+
+    const systemPrompt = `You are an AI scheduling assistant for ShiftCraft, a medical practice staff scheduler. You help manage schedules for an ophthalmology/optometry practice.
+
+Current context:
+- Month: ${MONTHS[currentMonth]} ${currentYear}, viewing Plan ${activePlan}
+- ${scheduleSummary}
+- Staff: ${staff.map(s => s.name + ' (' + s.role + ')').join(', ')}
+- Locations: ${locations.map(l => l.name).join(', ')}
+- Active rules: ${rules.length}
+- Vacations: ${vacations.length}
+- Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : ' (closed)') + (dt ? ' — ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : ''); }).join(', ')}
+
+Rules summary:
+${buildRulesSummary()}
+
+You can help with:
+- Answering questions about the current schedule, rules, or providers
+- Suggesting rule changes or additions
+- Explaining scheduling conflicts or dependencies
+- Recommending schedule adjustments
+- Providing coverage analysis
+- Holiday and vacation impact analysis
+
+Be concise and helpful. Use provider last names. If the user asks to make changes, explain what they should do in the app.`;
+
+    try {
+      const apiMessages = chatMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+      apiMessages.push({ role: 'user', content: userMsg });
+
+      const response = await callClaudeAPI({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1500,
+        system: systemPrompt,
+        messages: apiMessages
+      });
+
+      if (!response.ok) {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: API returned ${response.status}. Please try again.` }]);
+        setChatLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+      setChatMessages(prev => [...prev, { role: 'assistant', content: text || 'No response received.' }]);
+    } catch (err) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Connection error: ${err.message}` }]);
+    }
+    setChatLoading(false);
+  }
+
+  function generatePDF() {
+    const schedule = getSchedule();
+    const calDays = getCalendarDays(currentYear, currentMonth);
+
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${MONTHS[currentMonth]} ${currentYear} Schedule</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+      *{margin:0;padding:0;box-sizing:border-box}
+      @page{size:landscape;margin:10mm}
+      body{font-family:'DM Sans',sans-serif;background:#fff;color:#1a1a2e;padding:12px}
+      h1{font-size:20px;font-weight:700;margin-bottom:2px}
+      .sub{font-size:11px;color:#666;margin-bottom:10px}
+      .legend{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;padding:6px 10px;background:#f8f9fa;border-radius:4px}
+      .li{display:flex;align-items:center;gap:3px;font-size:8px;font-weight:600}
+      .ld{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+      table{width:100%;border-collapse:collapse;table-layout:fixed}
+      th{background:#1a1a2e;color:#fff;padding:6px 2px;font-size:10px;font-weight:600;text-align:center}
+      td{border:1px solid #ddd;padding:2px;vertical-align:top;font-size:7px}
+      .dn{font-weight:700;font-size:12px;color:#1a1a2e;margin-bottom:1px}
+      .wk{background:#f3f4f6}
+      .se{padding:1px 2px;border-radius:1px;margin-bottom:1px;font-size:7px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .pl{font-weight:700;font-size:6.5px;text-transform:uppercase;color:#888;margin-top:1px;letter-spacing:0.3px}
+    </style></head><body>`;
+
+    html += `<h1>${MONTHS[currentMonth]} ${currentYear} — Provider Schedule</h1>`;
+    html += `<p class="sub">Generated ${new Date().toLocaleDateString()}</p>`;
+    html += `<div class="legend">`;
+    staff.forEach(s => { html += `<div class="li"><div class="ld" style="background:${s.color}"></div>${getLastName(s.name)} (${s.name.split(' ')[0]})</div>`; });
+    html += `</div><table><thead><tr>`;
+    DAYS_OF_WEEK.forEach(d => { html += `<th>${d}</th>`; });
+    html += `</tr></thead><tbody><tr>`;
+
+    calDays.forEach((day, i) => {
+      if (i > 0 && i % 7 === 0) html += `</tr><tr>`;
+      if (day === null) { html += `<td class="wk"></td>`; return; }
+      const dk = dateKey(currentYear, currentMonth, day);
+      const wkend = isWeekend(currentYear, currentMonth, day);
+      html += `<td class="${wkend?'wk':''}"><div class="dn">${day}</div>`;
+      if (!wkend) {
+        ['am','pm'].forEach(period => {
+          html += `<div class="pl">${period.toUpperCase()}</div>`;
+          staff.forEach(s => {
+            const a = schedule[dk]?.[s.id]?.[period];
+            if (!a) return;
+            if (a === 'OFF') {
+              html += `<div class="se" style="background:#f3f4f6;color:#999;font-style:italic">${getLastName(s.name)} — OFF</div>`;
+            } else {
+              const loc = locations.find(l => l.id === a);
+              html += `<div class="se" style="background:${s.color}12;color:${s.color};border-left:2px solid ${s.color}">${getLastName(s.name)} → ${loc?.name||'?'}</div>`;
+            }
+          });
+        });
+      }
+      html += `</td>`;
+    });
+
+    const rem = calDays.length % 7;
+    if (rem > 0) { for (let i = 0; i < 7 - rem; i++) html += `<td class="wk"></td>`; }
+    html += `</tr></tbody></table></body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 500); }; }
+  }
+
+  const calDays = getCalendarDays(currentYear, currentMonth);
+  const schedule = getSchedule();
+  function prevMonth() { if (currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1)} else setCurrentMonth(m=>m-1); }
+  function nextMonth() { if (currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1)} else setCurrentMonth(m=>m+1); }
+
+  // Filtered rules for Rules tab
+  const filteredRules = rulesFilter === 'all' ? rules : rules.filter(r => r.staffId === rulesFilter);
+
+  if (loading) return (
+    <div style={{minHeight:'100vh',background:'#0d0d1a',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div style={{color:'#6366f1',fontSize:18,fontFamily:'"DM Sans",sans-serif'}}>Loading...</div>
+    </div>
+  );
+
+  // Login
+  if (!user) return (
+    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+      <div style={{width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'}}>
+        <div style={{textAlign:'center',marginBottom:36}}>
+          <div style={{fontSize:40,marginBottom:8}}>📅</div>
+          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>ShiftCraft</h1>
+          <p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p>
+        </div>
+        <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
+        <Input label="Password" value={loginForm.password} onChange={v=>setLoginForm(p=>({...p,password:v}))} placeholder="Enter password" type="password" />
+        <Btn onClick={handleAuth} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>
+          {loginForm.isRegister ? 'Create Account' : 'Sign In'}
+        </Btn>
+        <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
+          {loginForm.isRegister?'Already have an account?':"Don't have an account?"}{' '}
+          <span onClick={()=>setLoginForm(p=>({...p,isRegister:!p.isRegister}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>
+            {loginForm.isRegister?'Sign In':'Register'}
+          </span>
+        </p>
+        <div style={{marginTop:28,paddingTop:24,borderTop:'1px solid #2a2a4a',textAlign:'center'}}>
+          <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            🔧 Developer Sign In
+          </Btn>
+          <p style={{fontSize:11,color:'#4b5563',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Main App
+  return (
+    <div style={{minHeight:'100vh',background:'#0d0d1a',fontFamily:'"DM Sans",sans-serif',color:'#e8e8f0'}}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+      {/* Top Bar */}
+      <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <span style={{fontSize:24}}>📅</span>
+          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>ShiftCraft</span>
+          {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          {isDev && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
+          <span style={{fontSize:13,color:'#6b7280'}}>👤 {user.username}</span>
+          <Btn variant="ghost" onClick={logout} style={{fontSize:12,padding:'6px 14px'}}>Logout</Btn>
+        </div>
+      </div>
+
+      <div style={{display:'flex',minHeight:'calc(100vh - 53px)'}}>
+        {/* Sidebar */}
+        <div style={{width:220,background:'#12121f',borderRight:'1px solid #1e1e35',padding:'20px 0',flexShrink:0}}>
+          {[
+            {id:'schedule',icon:'📅',label:'Schedule'},
+            {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
+            {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
+            {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
+            {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
+            {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+          ].map(tab => (
+            <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+              style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:14,fontWeight:activeTab===tab.id?600:400,
+                color:activeTab===tab.id?'#e8e8f0':'#6b7280',background:activeTab===tab.id?'#1e1e35':'transparent',
+                borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',transition:'all 0.15s'}}>
+              <span>{tab.icon}</span>{tab.label}
+            </div>
+          ))}
+        </div>
+
+        {/* Main Content */}
+        <div style={{flex:1,padding:28,overflow:'auto'}}>
+
+          {/* ===== SCHEDULE TAB ===== */}
+          {activeTab === 'schedule' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
+                <div>
+                  <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Monthly Schedule</h2>
+                  <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>
+                </div>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                  <Btn variant="success" onClick={generateWithAI} disabled={generating}>
+                    {generating ? '⏳ Generating...' : '✨ Generate with AI'}
+                  </Btn>
+                  <Btn variant="secondary" onClick={generatePDF}>📄 Export PDF</Btn>
+                  <Btn variant="danger" onClick={clearSchedule} style={{fontSize:12}}>Clear</Btn>
+                </div>
+              </div>
+
+              {/* Staff Filter */}
+              <div style={{padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                  <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filter Providers:</span>
+                  <span onClick={showAllStaff}
+                    style={{fontSize:11,color:visibleStaff.size===staff.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===staff.length?'#6366f122':'transparent',border:`1px solid ${visibleStaff.size===staff.length?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
+                    Show All
+                  </span>
+                  <span onClick={showNoneStaff}
+                    style={{fontSize:11,color:visibleStaff.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===0?'#6366f122':'transparent',border:`1px solid ${visibleStaff.size===0?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
+                    Clear All
+                  </span>
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {staff.map(s => {
+                    const active = visibleStaff.has(s.id);
+                    return (
+                      <div key={s.id} onClick={() => toggleStaffVisibility(s.id)}
+                        style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,userSelect:'none',
+                          background:active?s.color+'20':'#12121f',color:active?s.color:'#4b5563',border:`1px solid ${active?s.color+'55':'#2a2a4a'}`,transition:'all 0.15s'}}>
+                        <div style={{width:14,height:14,borderRadius:4,border:`2px solid ${active?s.color:'#4b5563'}`,background:active?s.color:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
+                          {active && '✓'}
+                        </div>
+                        {getLastName(s.name)}
+                        <span style={{fontSize:10,opacity:0.6}}>{s.role === 'Ophthalmologist' ? 'MD' : 'OD'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Location Filter */}
+              <div style={{padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                  <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filter Locations:</span>
+                  <span onClick={showAllLocations}
+                    style={{fontSize:11,color:visibleLocations.size===locations.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===locations.length?'#6366f122':'transparent',border:`1px solid ${visibleLocations.size===locations.length?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
+                    Show All
+                  </span>
+                  <span onClick={showNoneLocations}
+                    style={{fontSize:11,color:visibleLocations.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===0?'#6366f122':'transparent',border:`1px solid ${visibleLocations.size===0?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
+                    Clear All
+                  </span>
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l => {
+                    const active = visibleLocations.has(l.id);
+                    const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
+                    return (
+                      <div key={l.id} onClick={() => toggleLocationVisibility(l.id)}
+                        style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,userSelect:'none',
+                          background:active?lc.bg:'#12121f',color:active?lc.text:'#4b5563',border:`1px solid ${active?lc.border:'#2a2a4a'}`,transition:'all 0.15s'}}>
+                        <div style={{width:14,height:14,borderRadius:4,border:`2px solid ${active?lc.border:'#4b5563'}`,background:active?lc.border:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
+                          {active && '✓'}
+                        </div>
+                        {l.name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* AI Agent Chat */}
+              <div style={{marginBottom:16,border:'1px solid #2a2a4a',borderRadius:12,overflow:'hidden',background:'#1a1a2e'}}>
+                <div onClick={()=>setShowChat(p=>!p)}
+                  style={{padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',background:'linear-gradient(135deg,#1a1035,#1a1a2e)'}}>
+                  <span style={{fontSize:13,fontWeight:700,color:'#a78bfa',display:'flex',alignItems:'center',gap:8}}>
+                    🤖 AI Scheduling Agent
+                    <span style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Ask questions, request changes, get analysis</span>
+                  </span>
+                  <span style={{color:'#6b7280',fontSize:12}}>{showChat ? '▼' : '▶'}</span>
+                </div>
+                {showChat && (
+                  <div>
+                    <div style={{height:250,overflow:'auto',padding:12,background:'#12121f',borderTop:'1px solid #2a2a4a'}}>
+                      {chatMessages.length === 0 && (
+                        <div style={{textAlign:'center',padding:20,color:'#4b5563'}}>
+                          <div style={{fontSize:28,marginBottom:8}}>🤖</div>
+                          <p style={{fontSize:12,marginBottom:4}}>Ask me anything about the schedule.</p>
+                          <p style={{fontSize:11,color:'#374151'}}>Examples: "Who covers Manteca on Mondays?" • "Add a vacation for Dr. Kim next week" • "Are there any coverage gaps?"</p>
+                        </div>
+                      )}
+                      {chatMessages.map((msg, i) => (
+                        <div key={i} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',marginBottom:8}}>
+                          <div style={{maxWidth:'80%',padding:'8px 14px',borderRadius:12,fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap',
+                            background:msg.role==='user'?'#6366f133':'#1a1a2e',
+                            color:msg.role==='user'?'#c7d2fe':'#d1d5db',
+                            border:`1px solid ${msg.role==='user'?'#6366f144':'#2a2a4a'}`,
+                            borderBottomRightRadius:msg.role==='user'?4:12,
+                            borderBottomLeftRadius:msg.role==='user'?12:4}}>
+                            {msg.content}
+                          </div>
+                        </div>
+                      ))}
+                      {chatLoading && (
+                        <div style={{display:'flex',justifyContent:'flex-start',marginBottom:8}}>
+                          <div style={{padding:'8px 14px',borderRadius:12,background:'#1a1a2e',border:'1px solid #2a2a4a',color:'#6b7280',fontSize:13}}>
+                            <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span> Thinking...
+                          </div>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+                    <div style={{display:'flex',gap:8,padding:10,borderTop:'1px solid #2a2a4a',background:'#1a1a2e'}}>
+                      <input value={chatInput} onChange={e=>setChatInput(e.target.value)}
+                        onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage()}}}
+                        placeholder="Ask about the schedule, request changes..."
+                        style={{flex:1,padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',outline:'none'}} />
+                      <Btn onClick={sendChatMessage} disabled={chatLoading||!chatInput.trim()} style={{padding:'10px 18px'}}>
+                        {chatLoading ? '...' : 'Send'}
+                      </Btn>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {aiLog && (
+                <div style={{padding:'12px 18px',background:generating?'#1e1b4b':'#064e3b',border:`1px solid ${generating?'#3730a3':'#065f46'}`,borderRadius:10,marginBottom:16,fontSize:13,color:generating?'#a5b4fc':'#6ee7b7',display:'flex',alignItems:'center',gap:10}}>
+                  {generating && <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>}
+                  <span style={{flex:1}}>{aiLog}</span>
+                  {!generating && <span onClick={()=>setAiLog('')} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                </div>
+              )}
+
+              <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12}}>
+                <Btn variant="ghost" onClick={prevMonth} style={{padding:'8px 14px'}}>◀</Btn>
+                <h3 style={{fontSize:20,fontWeight:600,minWidth:220,textAlign:'center',fontFamily:'"Space Mono",monospace'}}>
+                  {MONTHS[currentMonth]} {currentYear}
+                </h3>
+                <Btn variant="ghost" onClick={nextMonth} style={{padding:'8px 14px'}}>▶</Btn>
+                <Btn variant="ghost" onClick={()=>{setCurrentMonth(new Date().getMonth());setCurrentYear(new Date().getFullYear())}} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
+              </div>
+
+              {/* Plan Selector */}
+              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
+                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Plans:</span>
+                {['A','B','C'].map(plan => {
+                  const hasData = planHasData(plan);
+                  const isFinal = finalPlanForMonth === plan;
+                  const isActive = activePlan === plan;
+                  return (
+                    <div key={plan} onClick={()=>setActivePlan(plan)}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:700,userSelect:'none',transition:'all 0.15s',
+                        background:isActive?(isFinal?'#065f4622':'#6366f122'):'#12121f',
+                        color:isActive?(isFinal?'#34d399':'#818cf8'):(hasData?'#9ca3af':'#4b5563'),
+                        border:`1px solid ${isActive?(isFinal?'#065f46':'#6366f1'):(hasData?'#2a2a4a':'#1e1e35')}`}}>
+                      Plan {plan}
+                      {hasData && <span style={{width:6,height:6,borderRadius:'50%',background:isFinal?'#10b981':'#6366f1'}} />}
+                      {isFinal && <span style={{fontSize:9,color:'#10b981',fontWeight:800,textTransform:'uppercase'}}>Final</span>}
+                    </div>
+                  );
+                })}
+                <div style={{marginLeft:8,display:'flex',gap:6}}>
+                  {finalPlanForMonth !== activePlan ? (
+                    <Btn variant="success" onClick={()=>setFinalPlan(activePlan)} style={{fontSize:11,padding:'5px 12px'}} disabled={!planHasData(activePlan)}>
+                      ✓ Set as Final
+                    </Btn>
+                  ) : (
+                    <Btn variant="ghost" onClick={clearFinalPlan} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>
+                      Unset Final
+                    </Btn>
+                  )}
+                  {planHasData(activePlan) && (
+                    <div style={{position:'relative'}}>
+                      <select onChange={e=>{if(e.target.value)copyPlanTo(activePlan,e.target.value);e.target.value=''}}
+                        style={{padding:'5px 10px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:6,color:'#9ca3af',fontSize:11,fontFamily:'"DM Sans",sans-serif',cursor:'pointer'}}>
+                        <option value="">Copy to...</option>
+                        {['A','B','C'].filter(p=>p!==activePlan).map(p=>(
+                          <option key={p} value={p}>Plan {p}{planHasData(p)?' (overwrite)':''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{borderRadius:14,overflow:'hidden',border:'1px solid #1e1e35',background:'#12121f'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+                  {DAYS_OF_WEEK.map(d=>(
+                    <div key={d} style={{padding:'10px 8px',textAlign:'center',fontSize:12,fontWeight:700,color:'#9ca3af',background:'#1a1a2e',borderBottom:'1px solid #1e1e35',textTransform:'uppercase',letterSpacing:'0.08em'}}>{d}</div>
+                  ))}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+                  {calDays.map((day,i)=>{
+                    if(day===null) return <div key={`e-${i}`} style={{minHeight:100,background:'#0d0d18',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35'}} />;
+                    const dk=dateKey(currentYear,currentMonth,day);
+                    const wkend=isWeekend(currentYear,currentMonth,day);
+                    const ds=schedule[dk]||{};
+                    // Filter to only visible staff
+                    const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
+
+                    // Group assignments by location for each period, sorted alphabetically
+                    function getLocationGroups(period) {
+                      const groups = {};
+                      filteredStaffList.forEach(s => {
+                        const val = ds[s.id]?.[period];
+                        if (!val) return;
+                        // Filter by visible locations (OFF always shown if staff is visible)
+                        if (val !== 'OFF' && !visibleLocations.has(val)) return;
+                        const key = val === 'OFF' ? 'OFF' : val;
+                        if (!groups[key]) groups[key] = { locId: val, staff: [] };
+                        groups[key].staff.push(s);
+                      });
+                      // Sort: alphabetically by location name, OFF always last
+                      return Object.values(groups).sort((a, b) => {
+                        if (a.locId === 'OFF') return 1;
+                        if (b.locId === 'OFF') return -1;
+                        const nameA = (locations.find(l => l.id === a.locId)?.name || '').toLowerCase();
+                        const nameB = (locations.find(l => l.id === b.locId)?.name || '').toLowerCase();
+                        return nameA.localeCompare(nameB);
+                      });
+                    }
+
+                    // Hybrid display: per-provider consolidation
+                    // - Provider same AM & PM location → unified full-width bar
+                    // - Provider different AM vs PM (or only one period) → split AM/PM columns
+                    function getHybridDisplay() {
+                      const allDay = []; // { staff, locId } — same AM=PM
+                      const splitAm = []; // { staff, locId } — AM only or different from PM
+                      const splitPm = []; // { staff, locId } — PM only or different from AM
+
+                      filteredStaffList.forEach(s => {
+                        const am = ds[s.id]?.am;
+                        const pm = ds[s.id]?.pm;
+                        if (!am && !pm) return;
+
+                        // Check location visibility
+                        const amOk = am && (am === 'OFF' || visibleLocations.has(am));
+                        const pmOk = pm && (pm === 'OFF' || visibleLocations.has(pm));
+
+                        if (amOk && pmOk && am === pm) {
+                          // Same location all day
+                          allDay.push({ staff: s, locId: am });
+                        } else {
+                          if (amOk) splitAm.push({ staff: s, locId: am });
+                          if (pmOk) splitPm.push({ staff: s, locId: pm });
+                        }
+                      });
+
+                      // Group by location and sort
+                      function groupByLoc(entries) {
+                        const groups = {};
+                        entries.forEach(e => {
+                          const key = e.locId === 'OFF' ? 'OFF' : e.locId;
+                          if (!groups[key]) groups[key] = { locId: e.locId, staff: [] };
+                          groups[key].staff.push(e.staff);
+                        });
+                        return Object.values(groups).sort((a, b) => {
+                          if (a.locId === 'OFF') return 1;
+                          if (b.locId === 'OFF') return -1;
+                          const nameA = (locations.find(l => l.id === a.locId)?.name || '').toLowerCase();
+                          const nameB = (locations.find(l => l.id === b.locId)?.name || '').toLowerCase();
+                          return nameA.localeCompare(nameB);
+                        });
+                      }
+
+                      return {
+                        allDayGroups: groupByLoc(allDay),
+                        amGroups: groupByLoc(splitAm),
+                        pmGroups: groupByLoc(splitPm),
+                        hasSplit: splitAm.length > 0 || splitPm.length > 0
+                      };
+                    }
+
+                    const hybrid = getHybridDisplay();
+
+                    // Reusable location block renderer
+                    function renderLocBlock(g, gi) {
+                      const isOff = g.locId === 'OFF';
+                      const loc = isOff ? null : locations.find(l => l.id === g.locId);
+                      const lc = LOCATION_COLORS[g.locId] || LOCATION_COLORS.OFF;
+                      return (
+                        <div key={gi} style={{background:lc.bg,borderLeft:`2px solid ${lc.border}`,borderRadius:3,padding:'2px 3px',marginBottom:2}}>
+                          {!isOff && (
+                            <div style={{fontSize:8,fontWeight:700,color:lc.text,lineHeight:1.2,marginBottom:1}}>
+                              {loc?.name || '?'}
+                            </div>
+                          )}
+                          {g.staff.map(s => (
+                            <div key={s.id} style={{display:'flex',alignItems:'center',gap:2,lineHeight:1.3}}>
+                              <div style={{width:5,height:5,borderRadius:'50%',background:isOff?'#444':s.color,flexShrink:0}} />
+                              <span style={{fontSize:9,color:isOff?'#556':s.color,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                                {isOff ? <span style={{fontStyle:'italic'}}>{getLastName(s.name)}</span> : getLastName(s.name)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    return(
+                      <div key={day}
+                        style={{minHeight:100,padding:'4px 3px',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':'#12121f',cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden'}}
+                        onClick={()=>{if(!wkend)setEditCell({day,dk})}}
+                        onMouseEnter={e=>{if(!wkend)e.currentTarget.style.background='#1a1a30'}}
+                        onMouseLeave={e=>{if(!wkend)e.currentTarget.style.background='#12121f'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2,padding:'0 2px'}}>
+                          <span style={{fontSize:14,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
+                          {!wkend&&<span style={{fontSize:8,color:'#374151',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
+                        </div>
+                        {(()=>{
+                          const holiday = getHolidayForDate(currentYear, currentMonth, day);
+                          if (holiday && holiday.halfDay === 'am') return (
+                            <div style={{background:'#78350f33',border:'1px solid #f59e0b44',borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
+                              <div style={{fontSize:8,fontWeight:700,color:'#f59e0b'}}>⚠️ {holiday.name} — AM Only</div>
+                            </div>
+                          );
+                          if (holiday) return (
+                            <div style={{background:'#7f1d1d44',border:'1px solid #ef444466',borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
+                              <div style={{fontSize:9,fontWeight:800,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
+                              <div style={{fontSize:8,color:'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
+                            </div>
+                          );
+                          return null;
+                        })()}
+                        {!wkend && (
+                          <div>
+                            {/* All-day unified bars (full width) */}
+                            {hybrid.allDayGroups.map((g, gi) => renderLocBlock(g, `u-${gi}`))}
+
+                            {/* Split AM/PM section (two columns) */}
+                            {hybrid.hasSplit && (
+                              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>
+                                {[{period:'am',groups:hybrid.amGroups},{period:'pm',groups:hybrid.pmGroups}].map(({period,groups}) => (
+                                  <div key={period} style={{minHeight:0}}>
+                                    <div style={{fontSize:8,fontWeight:800,color:'#555',textTransform:'uppercase',letterSpacing:'0.1em',textAlign:'center',marginBottom:1,borderBottom:'1px solid #1e1e35',paddingBottom:1}}>{period}</div>
+                                    {groups.map((g, gi) => renderLocBlock(g, `${period}-${gi}`))}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
+                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',alignSelf:'center'}}>Providers:</span>
+                {staff.map(s=>(
+                  <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11}}>
+                    <div style={{width:9,height:9,borderRadius:'50%',background:s.color,flexShrink:0}} />
+                    <span style={{color:'#9ca3af'}}>{s.name}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8,padding:'10px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
+                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',alignSelf:'center'}}>Locations:</span>
+                {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l=>{
+                  const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
+                  return (
+                    <div key={l.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,padding:'3px 10px',borderRadius:6,background:lc.bg,borderLeft:`3px solid ${lc.border}`}}>
+                      <span style={{color:lc.text,fontWeight:600}}>{l.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Developer Log Panel */}
+              {isDev && (
+                <div style={{marginTop:20,border:'1px solid #92400e44',borderRadius:12,overflow:'hidden'}}>
+                  <div onClick={()=>setShowLogs(p=>!p)}
+                    style={{padding:'10px 16px',background:'#1a1a2e',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',borderBottom:showLogs?'1px solid #92400e44':'none'}}>
+                    <span style={{fontSize:13,fontWeight:700,color:'#fbbf24',fontFamily:'"Space Mono",monospace'}}>🔧 Developer Logs ({devLogs.length})</span>
+                    <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                      {devLogs.length > 0 && (
+                        <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:11,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f'}}>Clear</span>
+                      )}
+                      <span style={{color:'#6b7280',fontSize:12}}>{showLogs ? '▼' : '▶'}</span>
+                    </div>
+                  </div>
+                  {showLogs && (
+                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:11}}>
+                      {devLogs.length === 0 ? (
+                        <div style={{color:'#4b5563',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
+                      ) : devLogs.map((log, i) => {
+                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24' };
+                        return (
+                          <div key={i} style={{marginBottom:6,lineHeight:1.4}}>
+                            <span style={{color:'#4b5563'}}>[{log.time}]</span>{' '}
+                            <span style={{color:colors[log.type]||'#9ca3af',fontWeight:700}}>{log.type.toUpperCase()}</span>{' '}
+                            <span style={{color:'#d1d5db'}}>{log.message}</span>
+                            {log.data && (
+                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:10}}>
+                                {log.data}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div ref={logsEndRef} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== STAFF TAB ===== */}
+          {activeTab === 'staff' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Staff Members</h2>
+                <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});setShowStaffModal(true)}}>+ Add Staff</Btn>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                {staff.map(s=>{
+                  const sr=rules.filter(r=>r.staffId===s.id);
+                  const sv=vacations.filter(v=>v.staffId===s.id);
+                  const isExpanded = expandedStaffMember === s.id;
+                  return(
+                    <div key={s.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:14,borderTop:`3px solid ${s.color}`,overflow:'hidden'}}>
+                      <div style={{padding:'18px 24px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}
+                        onClick={()=>setExpandedStaffMember(isExpanded?null:s.id)}>
+                        <div style={{display:'flex',alignItems:'center',gap:16}}>
+                          <div>
+                            <div style={{fontSize:17,fontWeight:700}}>{s.name}</div>
+                            <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{s.role||'—'}</div>
+                          </div>
+                          <div style={{display:'flex',gap:8}}>
+                            <Chip color={s.color}>{sr.length} rule{sr.length!==1?'s':''}</Chip>
+                            <Chip color="#f59e0b">{sv.length} vacation{sv.length!==1?'s':''}</Chip>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                          <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
+                          <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div style={{borderTop:'1px solid #2a2a4a'}}>
+                          {/* Generic month rules calendar */}
+                          <div style={{padding:'16px 24px'}}>
+                            <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:10}}>Weekly Pattern Overview</span>
+                            <div style={{borderRadius:10,overflow:'hidden',border:'1px solid #2a2a4a',background:'#12121f'}}>
+                              {/* Header row */}
+                              <div style={{display:'grid',gridTemplateColumns:'60px repeat(5,1fr)'}}>
+                                <div style={{padding:'8px 6px',fontSize:10,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #2a2a4a'}} />
+                                {WEEKDAYS_ONLY.map(d=>(
+                                  <div key={d} style={{padding:'8px 4px',textAlign:'center',fontSize:11,fontWeight:700,color:'#9ca3af',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #1e1e35',letterSpacing:'0.05em'}}>{d}</div>
+                                ))}
+                              </div>
+                              {/* Week rows */}
+                              {[1,2,3,4].map(week => (
+                                <div key={week} style={{display:'grid',gridTemplateColumns:'60px repeat(5,1fr)'}}>
+                                  <div style={{padding:'6px 8px',fontSize:10,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderRight:'1px solid #2a2a4a',borderBottom:week<4?'1px solid #1e1e35':'none',display:'flex',alignItems:'center'}}>
+                                    Wk {week}
+                                  </div>
+                                  {WEEKDAYS_ONLY.map(day => {
+                                    // Find rules matching this day + week
+                                    const dayRules = sr.filter(r => {
+                                      if (r.dayOfWeek !== day) return false;
+                                      const weeks = r.weekOfMonth === 'all' ? [1,2,3,4] : r.weekOfMonth.split(',').map(Number);
+                                      return weeks.includes(week);
+                                    });
+
+                                    if (dayRules.length === 0) {
+                                      return (
+                                        <div key={day} style={{padding:4,borderRight:'1px solid #1e1e35',borderBottom:week<4?'1px solid #1e1e35':'none',minHeight:40,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                          <span style={{fontSize:10,color:'#2a2a3a',fontStyle:'italic'}}>—</span>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div key={day} style={{padding:3,borderRight:'1px solid #1e1e35',borderBottom:week<4?'1px solid #1e1e35':'none',minHeight:40}}>
+                                        {dayRules.map((r,ri) => {
+                                          const isOff = r.locationId === 'OFF';
+                                          const loc = isOff ? null : locations.find(x=>x.id===r.locationId);
+                                          const lc = LOCATION_COLORS[r.locationId] || LOCATION_COLORS.OFF;
+                                          const periodLabel = r.period === 'am' ? 'AM' : r.period === 'pm' ? 'PM' : '';
+                                          return (
+                                            <div key={ri} style={{background:isOff?'#15151f':lc.bg,borderLeft:`2px solid ${isOff?'#333':lc.border}`,borderRadius:3,padding:'3px 5px',marginBottom:ri<dayRules.length-1?2:0}}>
+                                              <div style={{fontSize:10,fontWeight:700,color:isOff?'#555':lc.text,lineHeight:1.3,display:'flex',alignItems:'center',gap:3}}>
+                                                {periodLabel && <span style={{fontSize:8,color:'#6b7280',fontWeight:800}}>{periodLabel}</span>}
+                                                {isOff ? 'OFF' : (loc?.name || '?')}
+                                              </div>
+                                              {r.priority==='required' && <div style={{width:4,height:4,borderRadius:'50%',background:'#ef4444',display:'inline-block',marginTop:1}} title="Required" />}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{display:'flex',gap:12,marginTop:8,fontSize:10,color:'#4b5563'}}>
+                              <span style={{display:'flex',alignItems:'center',gap:4}}><div style={{width:6,height:6,borderRadius:'50%',background:'#ef4444'}} /> Required</span>
+                              <span>Color = Location</span>
+                              <span>AM/PM shown when split-day</span>
+                            </div>
+                          </div>
+
+                          {/* Rules section */}
+                          <div style={{padding:'16px 24px'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Scheduling Rules ({sr.length})</span>
+                              <Btn variant="ghost" onClick={()=>{setEditingRule(null);setRuleForm({staffId:s.id,dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:locations[0]?.id||'',priority:'preferred',description:''});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>
+                            </div>
+                            {sr.length===0 ? (
+                              <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules defined.</div>
+                            ) : (
+                              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                                {sr.map(r => {
+                                  const l = r.locationId==='OFF'?{name:'OFF'}:locations.find(x=>x.id===r.locationId);
+                                  return (
+                                    <div key={r.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${s.color}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+                                      <div style={{flex:1,fontSize:13}}>
+                                        <span style={{color:'#9ca3af',fontWeight:600}}>{r.dayOfWeek}</span>
+                                        <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
+                                        {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
+                                        <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
+                                        <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip></span>
+                                        {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
+                                      </div>
+                                      <div style={{display:'flex',gap:6,flexShrink:0}}>
+                                        <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
+                                        <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Vacations section */}
+                          <div style={{padding:'16px 24px',borderTop:'1px solid #2a2a4a'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Vacation ({sv.length})</span>
+                              <Btn variant="ghost" onClick={()=>{setVacationForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Vacation</Btn>
+                            </div>
+                            {sv.length===0 ? (
+                              <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No vacations scheduled.</div>
+                            ) : (
+                              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                                {sv.map(v => (
+                                  <div key={v.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #f59e0b',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <div>
+                                      <div style={{fontSize:13,color:'#9ca3af',fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
+                                      {v.reason&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{v.reason}</div>}
+                                    </div>
+                                    <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ===== LOCATIONS TAB ===== */}
+          {activeTab === 'locations' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Office Locations</h2>
+                <Btn onClick={()=>{setEditingLocation(null);setLocationForm({name:'',address:''});setShowLocationModal(true)}}>+ Add Location</Btn>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                {locations.map(l=>{
+                  const lr = rules.filter(r=>r.locationId===l.id);
+                  const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
+                  const isExpanded = expandedLocation === l.id;
+                  return(
+                    <div key={l.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,borderLeft:`3px solid ${lc.border}`,overflow:'hidden'}}>
+                      <div style={{padding:'16px 20px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}
+                        onClick={()=>setExpandedLocation(isExpanded?null:l.id)}>
+                        <div style={{display:'flex',alignItems:'center',gap:14}}>
+                          <div>
+                            <div style={{fontSize:16,fontWeight:700,color:lc.text}}>🏢 {l.name}</div>
+                            {l.address&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{l.address}</div>}
+                          </div>
+                          <Chip color={lc.text}>{lr.length} rule{lr.length!==1?'s':''}</Chip>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
+                          <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                          <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div style={{borderTop:'1px solid #2a2a4a',padding:'16px 20px'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                            <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Rules at {l.name}</span>
+                            <Btn variant="ghost" onClick={()=>{setEditingRule(null);setRuleForm({staffId:staff[0]?.id||'',dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:l.id,priority:'preferred',description:''});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>
+                          </div>
+                          {lr.length===0 ? (
+                            <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules assigned to this location.</div>
+                          ) : (
+                            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                              {lr.map(r => {
+                                const s = staff.find(x=>x.id===r.staffId);
+                                return (
+                                  <div key={r.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${s?.color||'#666'}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+                                    <div style={{flex:1,fontSize:13}}>
+                                      <span style={{color:s?.color||'#fff',fontWeight:700}}>{s?.name||'?'}</span>
+                                      <span style={{color:'#9ca3af',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
+                                      <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
+                                      {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
+                                      <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip></span>
+                                      {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
+                                    </div>
+                                    <div style={{display:'flex',gap:6,flexShrink:0}}>
+                                      <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
+                                      <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ===== RULES TAB ===== */}
+          {activeTab === 'rules' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
+                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
+                <Btn onClick={()=>{setEditingRule(null);setRuleForm({staffId:staff[0]?.id||'',dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:locations[0]?.id||'',priority:'preferred',description:''});setShowRuleModal(true)}}
+                  disabled={staff.length===0||locations.length===0}>+ Add Rule</Btn>
+              </div>
+
+              {/* Filter by provider */}
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+                <div onClick={()=>setRulesFilter('all')}
+                  style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,
+                    background:rulesFilter==='all'?'#6366f122':'#12121f',color:rulesFilter==='all'?'#818cf8':'#6b7280',border:`1px solid ${rulesFilter==='all'?'#6366f1':'#2a2a4a'}`}}>
+                  All ({rules.length})
+                </div>
+                {staff.map(s=>{
+                  const count=rules.filter(r=>r.staffId===s.id).length;
+                  if(count===0) return null;
+                  return(
+                    <div key={s.id} onClick={()=>setRulesFilter(s.id)}
+                      style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,
+                        background:rulesFilter===s.id?s.color+'22':'#12121f',color:rulesFilter===s.id?s.color:'#6b7280',border:`1px solid ${rulesFilter===s.id?s.color:'#2a2a4a'}`}}>
+                      {getLastName(s.name)} ({count})
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                {filteredRules.map(r=>{
+                  const s=staff.find(x=>x.id===r.staffId);
+                  const l=r.locationId==='OFF'?{name:'OFF'}:locations.find(x=>x.id===r.locationId);
+                  return(
+                    <div key={r.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:16,borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>
+                            <span style={{color:s?.color||'#fff'}}>{s?.name||'?'}</span>
+                            <span style={{color:'#6b7280'}}> — {r.dayOfWeek}</span>
+                            <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
+                            <span style={{color:'#9ca3af'}}> {r.period!=='both'?`(${r.period.toUpperCase()})`:''}</span>
+                            <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
+                          </div>
+                          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                            <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>
+                            {r.description && <span style={{fontSize:12,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:6,flexShrink:0}}>
+                          <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
+                          <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ===== VACATIONS TAB ===== */}
+          {activeTab === 'vacations' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Vacation</h2>
+                <Btn onClick={()=>{setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} disabled={staff.length===0}>+ Add Vacation</Btn>
+              </div>
+              {vacations.length===0?(
+                <div style={{textAlign:'center',padding:60,color:'#4b5563'}}><div style={{fontSize:48,marginBottom:16}}>🏖️</div><p>No vacations scheduled.</p></div>
+              ):(
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {vacations.map(v=>{
+                    const s=staff.find(x=>x.id===v.staffId);
+                    return(
+                      <div key={v.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:600,color:s?.color||'#fff'}}>{s?.name||'?'}</div>
+                          <div style={{fontSize:13,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
+                          {v.reason&&<div style={{fontSize:12,color:'#6b7280',marginTop:4}}>{v.reason}</div>}
+                        </div>
+                        <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== HOLIDAYS TAB ===== */}
+          {activeTab === 'holidays' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <div>
+                  <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Company Holidays</h2>
+                  <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
+                </div>
+                <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>
+              </div>
+              {holidays.length===0?(
+                <div style={{textAlign:'center',padding:60,color:'#4b5563'}}><div style={{fontSize:48,marginBottom:16}}>📆</div><p>No holidays defined.</p></div>
+              ):(
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {holidays.map(h=>{
+                    const dateThisYear = getHolidayDate(h, currentYear);
+                    const dateStr = dateThisYear ? dateThisYear.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Date varies';
+                    const isFloating = h.type !== 'fixed';
+                    const isHalfDay = h.halfDay === 'am';
+                    return(
+                      <div key={h.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${isHalfDay?'#f59e0b':'#ef4444'}`}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                            <span style={{fontSize:16,fontWeight:700,color:'#e8e8f0'}}>{h.name}</span>
+                            {isHalfDay && <span style={{fontSize:9,padding:'2px 8px',borderRadius:10,background:'#78350f33',color:'#f59e0b',border:'1px solid #f59e0b44',fontWeight:700}}>AM Only</span>}
+                            {!isHalfDay && <span style={{fontSize:9,padding:'2px 8px',borderRadius:10,background:'#7f1d1d33',color:'#ef4444',border:'1px solid #ef444444',fontWeight:700}}>Closed</span>}
+                            {isFloating && <span style={{fontSize:9,padding:'2px 8px',borderRadius:10,background:'#6366f122',color:'#818cf8',border:'1px solid #6366f144',fontWeight:600}}>Floating</span>}
+                          </div>
+                          <div style={{fontSize:13,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>
+                            {currentYear}: {dateStr}
+                          </div>
+                          {h.note&&<div style={{fontSize:12,color:'#6b7280',marginTop:4}}>{h.note}</div>}
+                        </div>
+                        <div style={{display:'flex',gap:8,flexShrink:0}}>
+                          <span onClick={()=>{
+                            setEditingHoliday(h);
+                            setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||''});
+                            setShowHolidayModal(true);
+                          }} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                          <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Year preview */}
+              <div style={{marginTop:24,padding:'16px 20px',background:'#1a1a2e',borderRadius:12,border:'1px solid #2a2a4a'}}>
+                <h3 style={{fontSize:16,fontWeight:700,marginBottom:12}}>📅 {currentYear} Holiday Calendar</h3>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220,1fr))',gap:10}}>
+                  {holidays.map(h => {
+                    const dt = getHolidayDate(h, currentYear);
+                    if (!dt) return null;
+                    return (
+                      <div key={h.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #ef4444',display:'flex',alignItems:'center',gap:10}}>
+                        <div style={{fontSize:24,fontWeight:800,color:'#ef4444',fontFamily:'"Space Mono",monospace',width:32,textAlign:'center'}}>{dt.getDate()}</div>
+                        <div>
+                          <div style={{fontSize:12,fontWeight:600,color:'#e8e8f0'}}>{h.name}</div>
+                          <div style={{fontSize:10,color:'#6b7280'}}>{MONTHS[dt.getMonth()]} {dt.getDate()}, {currentYear}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ====== MODALS ====== */}
+
+      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setEditingStaff(null)}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
+        <Input label="Full Name" value={staffForm.name} onChange={v=>setStaffForm(p=>({...p,name:v}))} placeholder="e.g., Jane Smith MD" />
+        <Input label="Role / Title" value={staffForm.role} onChange={v=>setStaffForm(p=>({...p,role:v}))} placeholder="e.g., Ophthalmologist" />
+        <div style={{marginBottom:16}}>
+          <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Color</label>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {defaultColors.map(c=>(<div key={c} onClick={()=>setStaffForm(p=>({...p,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:staffForm.color===c?'3px solid #fff':'3px solid transparent',transition:'all 0.15s'}} />))}
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setEditingStaff(null)}}>Cancel</Btn>
+          <Btn onClick={addStaff}>{editingStaff?'Save':'Add Staff'}</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={showLocationModal} onClose={()=>{setShowLocationModal(false);setEditingLocation(null)}} title={editingLocation?'Edit Location':'Add Location'}>
+        <Input label="Location Name" value={locationForm.name} onChange={v=>setLocationForm(p=>({...p,name:v}))} placeholder="e.g., Main Office" />
+        <Input label="Description (optional)" value={locationForm.address} onChange={v=>setLocationForm(p=>({...p,address:v}))} placeholder="e.g., Surgery Center" />
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>{setShowLocationModal(false);setEditingLocation(null)}}>Cancel</Btn>
+          <Btn onClick={addLocation}>{editingLocation?'Save':'Add Location'}</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null)}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <Select label="Staff Member" value={ruleForm.staffId} onChange={v=>setRuleForm(p=>({...p,staffId:v}))}
+            options={staff.map(s=>({value:s.id,label:s.name}))} />
+          <Select label="Day of Week" value={ruleForm.dayOfWeek} onChange={v=>setRuleForm(p=>({...p,dayOfWeek:v}))}
+            options={WEEKDAYS_ONLY.map(d=>({value:d,label:d}))} />
+        </div>
+        <WeekOfMonthPicker value={ruleForm.weekOfMonth} onChange={v=>setRuleForm(p=>({...p,weekOfMonth:v}))} />
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <Select label="Time Period" value={ruleForm.period} onChange={v=>setRuleForm(p=>({...p,period:v}))}
+            options={[{value:'both',label:'Full Day (AM & PM)'},{value:'am',label:'AM Only'},{value:'pm',label:'PM Only'}]} />
+          <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
+            options={[...locations.map(l=>({value:l.id,label:l.name+(l.address?` (${l.address})`:'')})),{value:'OFF',label:'OFF (Day Off)'}]} />
+          <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
+            options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
+        </div>
+        <Textarea label="Notes / Conditions (optional)" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))} placeholder="e.g., Only if Dr. Lin was at MSC the day before..." rows={3} />
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>{setShowRuleModal(false);setEditingRule(null)}}>Cancel</Btn>
+          <Btn onClick={addRule}>{editingRule?'Save':'Add Rule'}</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={showVacationModal} onClose={()=>setShowVacationModal(false)} title="Add Vacation">
+        <Select label="Staff Member" value={vacationForm.staffId} onChange={v=>setVacationForm(p=>({...p,staffId:v}))}
+          options={staff.map(s=>({value:s.id,label:s.name}))} />
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <Input label="Start Date" value={vacationForm.startDate} onChange={v=>setVacationForm(p=>({...p,startDate:v}))} type="date" />
+          <Input label="End Date" value={vacationForm.endDate} onChange={v=>setVacationForm(p=>({...p,endDate:v}))} type="date" />
+        </div>
+        <Input label="Reason (optional)" value={vacationForm.reason} onChange={v=>setVacationForm(p=>({...p,reason:v}))} placeholder="e.g., Conference, family vacation" />
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>setShowVacationModal(false)}>Cancel</Btn>
+          <Btn onClick={addVacation}>Add Vacation</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={showHolidayModal} onClose={()=>{setShowHolidayModal(false);setEditingHoliday(null)}} title={editingHoliday?'Edit Holiday':'Add Holiday'}>
+        <Input label="Holiday Name" value={holidayForm.name} onChange={v=>setHolidayForm(p=>({...p,name:v}))} placeholder="e.g., Veterans Day" />
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+          <Select label="Month" value={holidayForm.month} onChange={v=>setHolidayForm(p=>({...p,month:parseInt(v)}))}
+            options={MONTHS.map((m,i)=>({value:i,label:m}))} />
+          <Select label="Day" value={holidayForm.day} onChange={v=>setHolidayForm(p=>({...p,day:parseInt(v)}))}
+            options={Array.from({length:31},(_,i)=>({value:i+1,label:String(i+1)}))} />
+          <Select label="Closure Type" value={holidayForm.halfDay||'closed'} onChange={v=>setHolidayForm(p=>({...p,halfDay:v}))}
+            options={[{value:'closed',label:'Full Day Closed'},{value:'am',label:'AM Only (close at noon)'}]} />
+        </div>
+        <Input label="Note (optional)" value={holidayForm.note} onChange={v=>setHolidayForm(p=>({...p,note:v}))} placeholder="e.g., Office open AM only" />
+        <p style={{fontSize:11,color:'#4b5563',marginTop:4}}>Note: For floating holidays (e.g., 3rd Monday), edit the saved holiday definition directly.</p>
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>{setShowHolidayModal(false);setEditingHoliday(null)}}>Cancel</Btn>
+          <Btn onClick={addHoliday}>{editingHoliday?'Save':'Add Holiday'}</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={!!editCell} onClose={()=>setEditCell(null)} title={editCell?`${MONTHS[currentMonth]} ${editCell.day}, ${currentYear} — Week ${getWeekOfMonth(editCell.day)}`:''} wide>
+        {editCell&&(
+          <div>
+            <p style={{fontSize:13,color:'#6b7280',marginBottom:16}}>Assign each provider to a location for AM and PM.</p>
+            <div style={{maxHeight:'60vh',overflow:'auto'}}>
+              {staff.map(s=>{
+                const onVac=isOnVacation(s.id,editCell.dk);
+                return(
+                  <div key={s.id} style={{padding:12,background:'#12121f',borderRadius:10,marginBottom:8,borderLeft:`3px solid ${s.color}`}}>
+                    <div style={{fontSize:14,fontWeight:600,color:s.color,marginBottom:8}}>
+                      {s.name}<span style={{fontSize:11,color:'#6b7280',fontWeight:400,marginLeft:8}}>{s.role}</span>
+                      {onVac&&<span style={{fontSize:11,color:'#f59e0b',marginLeft:8}}>⚠️ Vacation</span>}
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                      {['am','pm'].map(period=>(
+                        <div key={period}>
+                          <label style={{display:'block',fontSize:10,color:'#6b7280',marginBottom:3,textTransform:'uppercase',fontWeight:700}}>{period}</label>
+                          <select value={schedule[editCell.dk]?.[s.id]?.[period]||''} onChange={e=>setDayAssignment(editCell.day,s.id,period,e.target.value)}
+                            style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}}>
+                            <option value="">— Unassigned —</option>
+                            {locations.map(l=><option key={l.id} value={l.id}>{l.name}{l.address?` (${l.address})`:''}</option>)}
+                            <option value="OFF">OFF</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}><Btn onClick={()=>setEditCell(null)}>Done</Btn></div>
+          </div>
+        )}
+      </Modal>
+
+      <style>{`
+        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#0d0d1a}::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:4px}
+        select option{background:#1a1a2e;color:#e8e8f0}
+        input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
+      `}</style>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.ShiftCraft));
+  </script>
+</body>
+</html>
