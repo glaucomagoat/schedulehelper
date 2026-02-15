@@ -817,62 +817,79 @@ window.ShiftCraft = function StaffScheduler() {
   async function generateWithAI() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
-    setAiLog('Analyzing all scheduling rules, vacations, and cross-provider dependencies...');
-    addLog('info', 'Starting AI schedule generation...');
+    addLog('info', 'Starting AI schedule generation (weekly batches)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
 
-    const prompt = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice. Generate a precise monthly schedule.
+    // Build weekday list grouped into weeks
+    const weeks = [[], [], [], [], []]; // Up to 5 weeks
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(currentYear, currentMonth, d).getDay();
+      if (dow === 0 || dow === 6) continue; // Skip weekends
+      const weekIdx = Math.min(Math.floor((d - 1) / 7), 4);
+      weeks[weekIdx].push(d);
+    }
+    const nonEmptyWeeks = weeks.filter(w => w.length > 0);
+
+    const contextBlock = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
 
 MONTH: ${MONTHS[currentMonth]} ${currentYear} (${daysInMonth} days)
-Today's date context: The 1st falls on ${DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()]}.
+The 1st falls on ${DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()]}.
 
 STAFF MEMBERS:
 ${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('\n')}
 
 LOCATIONS:
-${locations.map(l => `- ${l.name} (ID: ${l.id}${l.address ? ' — ' + l.address : ''})`).join('\n')}
+${locations.map(l => `- ${l.name} (ID: ${l.id})`).join('\n')}
 
-DETAILED SCHEDULING RULES (by provider):
+SCHEDULING RULES (by provider):
 ${rulesSummary}
 
 VACATION / OUT OF OFFICE:
 ${vacations.length > 0 ? vacations.map(v => {
   const s = staff.find(x => x.id === v.staffId);
-  return `- ${s?.name || '?'}: ${v.startDate} to ${v.endDate} (${v.reason || 'Vacation'})`;
-}).join('\n') : 'None scheduled.'}
+  return `- ${s?.name || '?'}: ${v.startDate} to ${v.endDate}`;
+}).join('\n') : 'None.'}
 
-COMPANY HOLIDAYS (all offices closed — no staff scheduled):
+COMPANY HOLIDAYS:
 ${(()=>{
   const hols = [];
   holidays.forEach(h => {
     const dt = getHolidayDate(h, currentYear);
-    if (!dt) return;
-    if (dt.getMonth() !== currentMonth) return;
+    if (!dt || dt.getMonth() !== currentMonth) return;
     const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
-    if (h.halfDay === 'am') {
-      hols.push('- ' + dk + ': ' + h.name + ' — HALF DAY: office open AM only, ALL staff OFF for PM');
-    } else {
-      hols.push('- ' + dk + ': ' + h.name + ' — FULL CLOSURE: ALL staff OFF for both AM and PM');
-    }
+    hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED)'));
   });
-  return hols.length > 0 ? hols.join('\n') : 'No holidays this month.';
+  return hols.length > 0 ? hols.join('\n') : 'None this month.';
 })()}
 
-CRITICAL INSTRUCTIONS:
-1. For each weekday (Mon-Fri), assign EVERY staff member an AM and PM location (or "OFF").
-2. "Week of month" means: days 1-7 = 1st week, 8-14 = 2nd week, 15-21 = 3rd week, 22+ = 4th week.
-3. Follow REQUIRED rules strictly. Follow PREFERRED rules when possible.
-4. Pay attention to cross-provider dependencies (e.g., "if Dr. Lin was at MSC the day before" or "rotates with Dr. Choi").
-5. When a rule says "OFF" or the provider has no rule for a day, mark them OFF.
-6. Staff on vacation = "OFF" for both AM and PM on those dates.
-7. COMPANY HOLIDAYS: On full-closure holidays, ALL staff must be "OFF" for both AM and PM. On half-day holidays (AM only), schedule staff for AM per normal rules but set ALL staff to "OFF" for PM.
-8. Ensure each major clinic location has adequate coverage.
-9. If a 5th occurrence of a weekday exists, use the 4th week's rules.
-10. For conditional rules, use your best judgment based on the overall schedule context.
+RULES:
+- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4
+- Follow REQUIRED rules strictly. PREFERRED when possible.
+- No rule or "OFF" = mark OFF. Vacation = OFF both AM/PM.
+- Holidays CLOSED = OFF both. Half-day = schedule AM, OFF PM.
+- 5th occurrence of a weekday → use W4 rules.`;
 
-Respond ONLY with valid JSON, no markdown, no backticks, no explanation:
+    const allAssignments = {};
+    let totalDays = 0;
+
+    for (let wi = 0; wi < nonEmptyWeeks.length; wi++) {
+      const weekDays = nonEmptyWeeks[wi];
+      const weekNum = Math.floor((weekDays[0] - 1) / 7) + 1;
+      setAiLog(`⏳ Generating week ${wi + 1} of ${nonEmptyWeeks.length} (days ${weekDays[0]}–${weekDays[weekDays.length-1]})...`);
+
+      const daysList = weekDays.map(d => {
+        const dt = new Date(currentYear, currentMonth, d);
+        return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${weekNum})`;
+      }).join(', ');
+
+      const weekPrompt = `${contextBlock}
+
+TASK: Generate schedule for ONLY these days: ${daysList}
+
+For each day, assign EVERY staff member an AM and PM location (or "OFF").
+Respond ONLY with valid JSON, no markdown, no backticks:
 {
   "assignments": {
     "YYYY-MM-DD": {
@@ -880,130 +897,84 @@ Respond ONLY with valid JSON, no markdown, no backticks, no explanation:
     }
   }
 }
+Use exact IDs. Include every listed day and every staff member.`;
 
-Use exact IDs. Include every weekday. Include every staff member each day.`;
+      addLog('info', `Week ${wi+1}: ${weekDays.length} days, prompt ${weekPrompt.length} chars`);
 
-    addLog('info', `Prompt built: ${prompt.length} chars, ${rules.length} rules, ${staff.length} staff`);
-
-    try {
-      const requestBody = {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 16000,
-        messages: [{ role: "user", content: prompt }]
-      };
-      addLog('request', 'Sending API request...', { model: requestBody.model, max_tokens: requestBody.max_tokens });
-
-      const response = await callClaudeAPI(requestBody);
-
-      addLog('response', `HTTP ${response.status} ${response.statusText}`, { status: response.status, ok: response.ok });
-
-      if (!response.ok) {
-        let errorText = '';
-        try { errorText = await response.text(); } catch(e) { errorText = 'Could not read error body'; }
-        addLog('error', `API returned ${response.status}`, { errorText: errorText.substring(0, 1000) });
-        setAiLog(`⚠️ API error (${response.status}). Check developer logs for details.`);
-        setGenerating(false);
-        return;
-      }
-
-      let data;
       try {
-        const rawText = await response.text();
-        addLog('response', `Raw response: ${rawText.length} chars`, { preview: rawText.substring(0, 500) });
-        data = JSON.parse(rawText);
-      } catch (jsonErr) {
-        addLog('error', 'Failed to parse API response as JSON', { error: jsonErr.message });
-        setAiLog('⚠️ Invalid response from API. Check developer logs.');
-        setGenerating(false);
-        return;
-      }
+        const response = await callClaudeAPI({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4000,
+          messages: [{ role: "user", content: weekPrompt }]
+        });
 
-      addLog('response', 'API response parsed', { type: data.type, stop_reason: data.stop_reason, content_blocks: data.content?.length });
+        addLog('response', `Week ${wi+1}: HTTP ${response.status}`, { ok: response.ok });
 
-      if (data.error) {
-        addLog('error', 'API returned error', { error: data.error });
-        setAiLog(`⚠️ API error: ${data.error?.message || JSON.stringify(data.error)}`);
-        setGenerating(false);
-        return;
-      }
-
-      const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
-      addLog('info', `Extracted text: ${text.length} chars`);
-
-      if (!text) {
-        addLog('error', 'No text content in API response', { content: data.content });
-        setAiLog('⚠️ Empty response from AI. Try again.');
-        setGenerating(false);
-        return;
-      }
-
-      // Clean any markdown fencing
-      const clean = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      addLog('info', `Cleaned text: ${clean.length} chars, starts with: ${clean.substring(0, 50)}`);
-
-      let parsed;
-      try {
-        parsed = JSON.parse(clean);
-      } catch (parseErr) {
-        addLog('error', 'Failed to parse schedule JSON', { error: parseErr.message, textPreview: clean.substring(0, 300) });
-        // Try to extract JSON from the response
-        const jsonMatch = clean.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            parsed = JSON.parse(jsonMatch[0]);
-            addLog('info', 'Extracted JSON via regex fallback');
-          } catch(e2) {
-            addLog('error', 'Regex fallback also failed', { error: e2.message });
-            setAiLog('⚠️ Could not parse schedule. Check developer logs.');
-            setGenerating(false);
-            return;
-          }
-        } else {
-          setAiLog('⚠️ AI response was not valid JSON. Check developer logs.');
+        if (!response.ok) {
+          let errorText = '';
+          try { errorText = await response.text(); } catch(e) { errorText = '?'; }
+          addLog('error', `Week ${wi+1} API error ${response.status}`, { errorText: errorText.substring(0, 500) });
+          setAiLog(`⚠️ API error on week ${wi+1} (${response.status}). Check developer logs.`);
           setGenerating(false);
           return;
         }
-      }
 
-      if (parsed.assignments) {
-        // Post-process: enforce holidays
-        const assignments = parsed.assignments;
-        let holidayEdits = 0;
-        for (const [dk, dayAssignments] of Object.entries(assignments)) {
-          const [y, m, d] = dk.split('-').map(Number);
-          const holiday = getHolidayForDate(y, m - 1, d);
-          if (!holiday) continue;
-          for (const staffId of Object.keys(dayAssignments)) {
-            if (holiday.halfDay === 'am') {
-              // Half day: keep AM, force PM to OFF
-              if (dayAssignments[staffId].pm !== 'OFF') {
-                dayAssignments[staffId].pm = 'OFF';
-                holidayEdits++;
-              }
-            } else {
-              // Full closure: force both to OFF
-              if (dayAssignments[staffId].am !== 'OFF' || dayAssignments[staffId].pm !== 'OFF') {
-                dayAssignments[staffId].am = 'OFF';
-                dayAssignments[staffId].pm = 'OFF';
-                holidayEdits++;
-              }
-            }
+        const rawText = await response.text();
+        const data = JSON.parse(rawText);
+
+        if (data.error) {
+          addLog('error', `Week ${wi+1} API error`, { error: data.error });
+          setAiLog(`⚠️ API error on week ${wi+1}: ${data.error?.message || 'Unknown'}`);
+          setGenerating(false);
+          return;
+        }
+
+        const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+        const clean = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+        let parsed;
+        try {
+          parsed = JSON.parse(clean);
+        } catch(e) {
+          const m = clean.match(/\{[\s\S]*\}/);
+          if (m) parsed = JSON.parse(m[0]);
+          else throw e;
+        }
+
+        if (parsed.assignments) {
+          Object.assign(allAssignments, parsed.assignments);
+          totalDays += Object.keys(parsed.assignments).length;
+          addLog('success', `Week ${wi+1}: ${Object.keys(parsed.assignments).length} days parsed`);
+        }
+      } catch (err) {
+        addLog('error', `Week ${wi+1} failed: ${err.message}`);
+        setAiLog(`⚠️ Failed on week ${wi+1}: ${err.message}`);
+        setGenerating(false);
+        return;
+      }
+    }
+
+    // Post-process: enforce holidays
+    let holidayEdits = 0;
+    for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
+      const [y, m, d] = dk.split('-').map(Number);
+      const holiday = getHolidayForDate(y, m - 1, d);
+      if (!holiday) continue;
+      for (const staffId of Object.keys(dayAssignments)) {
+        if (holiday.halfDay === 'am') {
+          if (dayAssignments[staffId].pm !== 'OFF') { dayAssignments[staffId].pm = 'OFF'; holidayEdits++; }
+        } else {
+          if (dayAssignments[staffId].am !== 'OFF' || dayAssignments[staffId].pm !== 'OFF') {
+            dayAssignments[staffId].am = 'OFF'; dayAssignments[staffId].pm = 'OFF'; holidayEdits++;
           }
         }
-        if (holidayEdits > 0) addLog('info', `Holiday enforcement: corrected ${holidayEdits} assignments`);
-
-        const dayCount = Object.keys(assignments).length;
-        setSchedules(prev => ({ ...prev, [scheduleKey]: assignments }));
-        addLog('success', `Schedule applied: ${dayCount} days populated`);
-        setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${dayCount} days populated.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections applied.` : ''} Click any day to adjust.`);
-      } else {
-        addLog('error', 'Parsed JSON has no "assignments" key', { keys: Object.keys(parsed) });
-        setAiLog('⚠️ AI response missing schedule data. Try again.');
       }
-    } catch (err) {
-      addLog('error', `Network/fetch error: ${err.message}`, { name: err.name, stack: err.stack?.substring(0, 300) });
-      setAiLog(`⚠️ Connection error: ${err.message}`);
     }
+    if (holidayEdits > 0) addLog('info', `Holiday enforcement: corrected ${holidayEdits} assignments`);
+
+    setSchedules(prev => ({ ...prev, [scheduleKey]: allAssignments }));
+    addLog('success', `Schedule complete: ${totalDays} days populated across ${nonEmptyWeeks.length} batches`);
+    setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''} Click any day to adjust.`);
     setGenerating(false);
   }
 

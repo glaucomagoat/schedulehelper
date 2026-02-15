@@ -1,7 +1,5 @@
-// ShiftCraft Claude API proxy
-// Keeps ANTHROPIC_API_KEY on the server side (set in Netlify Environment Variables)
-
 export default async (req) => {
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('', {
       status: 200,
@@ -22,8 +20,8 @@ export default async (req) => {
 
   const apiKey = Netlify.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
-    return new Response(JSON.stringify({
-      error: 'ANTHROPIC_API_KEY not configured. Add it in Netlify Site Configuration → Environment Variables.'
+    return new Response(JSON.stringify({ 
+      error: 'ANTHROPIC_API_KEY not configured. Go to Netlify Dashboard → Site Configuration → Environment Variables and add your key.' 
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
