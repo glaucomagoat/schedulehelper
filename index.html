@@ -817,20 +817,22 @@ window.ShiftCraft = function StaffScheduler() {
   async function generateWithAI() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
-    addLog('info', 'Starting AI schedule generation (weekly batches)...');
+    addLog('info', 'Starting AI schedule generation (biweekly batches)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
 
-    // Build weekday list grouped into weeks
-    const weeks = [[], [], [], [], []]; // Up to 5 weeks
+    // Group weekdays into biweekly batches (W1+W2, W3+W4, overflow)
+    const allWeekdays = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
-      if (dow === 0 || dow === 6) continue; // Skip weekends
-      const weekIdx = Math.min(Math.floor((d - 1) / 7), 4);
-      weeks[weekIdx].push(d);
+      if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-    const nonEmptyWeeks = weeks.filter(w => w.length > 0);
+
+    // Split at day 15 boundary (W1+W2 = days 1-14, W3+W4+ = days 15+)
+    const batch1 = allWeekdays.filter(d => d <= 14);
+    const batch2 = allWeekdays.filter(d => d > 14);
+    const batches = [batch1, batch2].filter(b => b.length > 0);
 
     const contextBlock = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
 
@@ -859,32 +861,36 @@ ${(()=>{
     const dt = getHolidayDate(h, currentYear);
     if (!dt || dt.getMonth() !== currentMonth) return;
     const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
-    hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED)'));
+    hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
   });
   return hols.length > 0 ? hols.join('\n') : 'None this month.';
 })()}
 
 RULES:
-- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4
+- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.
 - Follow REQUIRED rules strictly. PREFERRED when possible.
-- No rule or "OFF" = mark OFF. Vacation = OFF both AM/PM.
-- Holidays CLOSED = OFF both. Half-day = schedule AM, OFF PM.
+- Cross-provider dependencies: pay attention to rotations and conditional rules.
+- No rule or "OFF" → mark OFF. Vacation → OFF both AM/PM.
+- Holidays CLOSED → OFF both. Half-day → schedule AM, OFF PM.
 - 5th occurrence of a weekday → use W4 rules.`;
+
+    addLog('info', `Context: ${contextBlock.length} chars, ${allWeekdays.length} weekdays, ${batches.length} batches`);
 
     const allAssignments = {};
     let totalDays = 0;
 
-    for (let wi = 0; wi < nonEmptyWeeks.length; wi++) {
-      const weekDays = nonEmptyWeeks[wi];
-      const weekNum = Math.floor((weekDays[0] - 1) / 7) + 1;
-      setAiLog(`⏳ Generating week ${wi + 1} of ${nonEmptyWeeks.length} (days ${weekDays[0]}–${weekDays[weekDays.length-1]})...`);
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batchDays = batches[bi];
+      const weeksInBatch = bi === 0 ? 'W1–W2' : 'W3–W4';
+      setAiLog(`⏳ Generating ${weeksInBatch} (${batchDays.length} days)... batch ${bi + 1} of ${batches.length}`);
 
-      const daysList = weekDays.map(d => {
+      const daysList = batchDays.map(d => {
         const dt = new Date(currentYear, currentMonth, d);
-        return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${weekNum})`;
+        const wk = Math.min(Math.floor((d - 1) / 7), 3) + 1;
+        return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
-      const weekPrompt = `${contextBlock}
+      const batchPrompt = `${contextBlock}
 
 TASK: Generate schedule for ONLY these days: ${daysList}
 
@@ -899,22 +905,22 @@ Respond ONLY with valid JSON, no markdown, no backticks:
 }
 Use exact IDs. Include every listed day and every staff member.`;
 
-      addLog('info', `Week ${wi+1}: ${weekDays.length} days, prompt ${weekPrompt.length} chars`);
+      addLog('request', `Batch ${bi+1} (${weeksInBatch}): ${batchDays.length} days, prompt ${batchPrompt.length} chars`);
 
       try {
         const response = await callClaudeAPI({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          messages: [{ role: "user", content: weekPrompt }]
+          max_tokens: 8000,
+          messages: [{ role: "user", content: batchPrompt }]
         });
 
-        addLog('response', `Week ${wi+1}: HTTP ${response.status}`, { ok: response.ok });
+        addLog('response', `Batch ${bi+1}: HTTP ${response.status}`, { ok: response.ok });
 
         if (!response.ok) {
           let errorText = '';
           try { errorText = await response.text(); } catch(e) { errorText = '?'; }
-          addLog('error', `Week ${wi+1} API error ${response.status}`, { errorText: errorText.substring(0, 500) });
-          setAiLog(`⚠️ API error on week ${wi+1} (${response.status}). Check developer logs.`);
+          addLog('error', `Batch ${bi+1} error ${response.status}`, { errorText: errorText.substring(0, 500) });
+          setAiLog(`⚠️ API error on ${weeksInBatch} (${response.status}). Check developer logs.`);
           setGenerating(false);
           return;
         }
@@ -923,8 +929,8 @@ Use exact IDs. Include every listed day and every staff member.`;
         const data = JSON.parse(rawText);
 
         if (data.error) {
-          addLog('error', `Week ${wi+1} API error`, { error: data.error });
-          setAiLog(`⚠️ API error on week ${wi+1}: ${data.error?.message || 'Unknown'}`);
+          addLog('error', `Batch ${bi+1} API error`, { error: data.error });
+          setAiLog(`⚠️ Error on ${weeksInBatch}: ${data.error?.message || 'Unknown'}`);
           setGenerating(false);
           return;
         }
@@ -941,14 +947,14 @@ Use exact IDs. Include every listed day and every staff member.`;
           else throw e;
         }
 
-        if (parsed.assignments) {
-          Object.assign(allAssignments, parsed.assignments);
-          totalDays += Object.keys(parsed.assignments).length;
-          addLog('success', `Week ${wi+1}: ${Object.keys(parsed.assignments).length} days parsed`);
-        }
+        const dayData = parsed.assignments || parsed;
+        Object.assign(allAssignments, dayData);
+        totalDays += Object.keys(dayData).length;
+        addLog('success', `Batch ${bi+1} (${weeksInBatch}): ${Object.keys(dayData).length} days`);
+
       } catch (err) {
-        addLog('error', `Week ${wi+1} failed: ${err.message}`);
-        setAiLog(`⚠️ Failed on week ${wi+1}: ${err.message}`);
+        addLog('error', `Batch ${bi+1} failed: ${err.message}`);
+        setAiLog(`⚠️ Failed on ${weeksInBatch}: ${err.message}`);
         setGenerating(false);
         return;
       }
@@ -960,20 +966,20 @@ Use exact IDs. Include every listed day and every staff member.`;
       const [y, m, d] = dk.split('-').map(Number);
       const holiday = getHolidayForDate(y, m - 1, d);
       if (!holiday) continue;
-      for (const staffId of Object.keys(dayAssignments)) {
+      for (const sid of Object.keys(dayAssignments)) {
         if (holiday.halfDay === 'am') {
-          if (dayAssignments[staffId].pm !== 'OFF') { dayAssignments[staffId].pm = 'OFF'; holidayEdits++; }
+          if (dayAssignments[sid].pm !== 'OFF') { dayAssignments[sid].pm = 'OFF'; holidayEdits++; }
         } else {
-          if (dayAssignments[staffId].am !== 'OFF' || dayAssignments[staffId].pm !== 'OFF') {
-            dayAssignments[staffId].am = 'OFF'; dayAssignments[staffId].pm = 'OFF'; holidayEdits++;
+          if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+            dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; holidayEdits++;
           }
         }
       }
     }
-    if (holidayEdits > 0) addLog('info', `Holiday enforcement: corrected ${holidayEdits} assignments`);
+    if (holidayEdits > 0) addLog('info', `Holiday enforcement: ${holidayEdits} corrections`);
 
     setSchedules(prev => ({ ...prev, [scheduleKey]: allAssignments }));
-    addLog('success', `Schedule complete: ${totalDays} days populated across ${nonEmptyWeeks.length} batches`);
+    addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
     setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''} Click any day to adjust.`);
     setGenerating(false);
   }
