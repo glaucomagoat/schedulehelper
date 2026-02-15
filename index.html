@@ -985,6 +985,116 @@ Use exact IDs. Include every listed day and every staff member.`;
   }
 
   // AI Agent Chat
+  // Execute an action command from the AI agent
+  function executeAgentAction(action) {
+    try {
+      switch (action.type) {
+        case 'add_vacation': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
+          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          if (!action.startDate || !action.endDate) return '❌ Missing start or end date.';
+          const v = { id: 'v' + Date.now(), staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Vacation' };
+          setVacations(prev => [...prev, v]);
+          return `✅ Added vacation for ${s.name}: ${action.startDate} to ${action.endDate}${action.reason ? ' (' + action.reason + ')' : ''}`;
+        }
+        case 'remove_vacation': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
+          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const matching = vacations.filter(v => v.staffId === s.id && (!action.startDate || v.startDate === action.startDate));
+          if (matching.length === 0) return `❌ No matching vacation found for ${s.name}.`;
+          setVacations(prev => prev.filter(v => v.id !== matching[0].id));
+          return `✅ Removed vacation for ${s.name}: ${matching[0].startDate} to ${matching[0].endDate}`;
+        }
+        case 'add_staff': {
+          if (!action.name) return '❌ Missing staff name.';
+          const newStaff = { id: 's' + Date.now(), name: action.name, role: action.role || 'MD', color: defaultColors[staff.length % defaultColors.length] };
+          setStaff(prev => [...prev, newStaff]);
+          return `✅ Added staff: ${action.name} (${newStaff.role})`;
+        }
+        case 'remove_staff': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
+          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          setStaff(p => p.filter(x => x.id !== s.id));
+          setRules(p => p.filter(r => r.staffId !== s.id));
+          setVacations(p => p.filter(v => v.staffId !== s.id));
+          return `✅ Removed ${s.name} and all their rules/vacations.`;
+        }
+        case 'add_location': {
+          if (!action.name) return '❌ Missing location name.';
+          setLocations(prev => [...prev, { id: 'l' + Date.now(), name: action.name, address: action.address || '' }]);
+          return `✅ Added location: ${action.name}`;
+        }
+        case 'remove_location': {
+          const loc = locations.find(l => l.name.toLowerCase().includes(action.name?.toLowerCase()));
+          if (!loc) return `❌ Location "${action.name}" not found.`;
+          setLocations(p => p.filter(l => l.id !== loc.id));
+          setRules(p => p.filter(r => r.locationId !== loc.id));
+          return `✅ Removed location: ${loc.name}`;
+        }
+        case 'add_rule': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
+          const loc = locations.find(l => l.name.toLowerCase().includes(action.locationName?.toLowerCase()));
+          if (!s) return `❌ Staff "${action.staffName}" not found.`;
+          if (!loc) return `❌ Location "${action.locationName}" not found.`;
+          const newRule = {
+            id: 'r' + Date.now(), staffId: s.id, locationId: loc.id,
+            dayOfWeek: action.dayOfWeek || 'Mon', weekOfMonth: action.weekOfMonth || 'all',
+            period: action.period || 'both', priority: action.priority || 'preferred',
+            description: action.description || ''
+          };
+          setRules(prev => [...prev, newRule]);
+          return `✅ Added rule: ${s.name} → ${loc.name} on ${newRule.dayOfWeek} (${newRule.weekOfMonth}, ${newRule.period}, ${newRule.priority})`;
+        }
+        case 'remove_rule': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
+          if (!s) return `❌ Staff "${action.staffName}" not found.`;
+          const matching = rules.filter(r => r.staffId === s.id &&
+            (!action.dayOfWeek || r.dayOfWeek === action.dayOfWeek) &&
+            (!action.locationName || locations.find(l => l.id === r.locationId)?.name.toLowerCase().includes(action.locationName.toLowerCase()))
+          );
+          if (matching.length === 0) return `❌ No matching rule found.`;
+          setRules(prev => prev.filter(r => r.id !== matching[0].id));
+          const loc = locations.find(l => l.id === matching[0].locationId);
+          return `✅ Removed rule: ${s.name} → ${loc?.name} on ${matching[0].dayOfWeek}`;
+        }
+        case 'add_holiday': {
+          if (!action.name || action.month == null || !action.day) return '❌ Missing holiday details.';
+          const newH = { id: 'h' + Date.now(), type: 'fixed', name: action.name, month: action.month, day: action.day, halfDay: action.halfDay || 'closed', note: action.note || '' };
+          setHolidays(prev => [...prev, newH]);
+          return `✅ Added holiday: ${action.name} (${MONTHS[action.month]} ${action.day})`;
+        }
+        case 'remove_holiday': {
+          const h = holidays.find(x => x.name.toLowerCase().includes(action.name?.toLowerCase()));
+          if (!h) return `❌ Holiday "${action.name}" not found.`;
+          setHolidays(prev => prev.filter(x => x.id !== h.id));
+          return `✅ Removed holiday: ${h.name}`;
+        }
+        case 'update_schedule': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
+          if (!s) return `❌ Staff "${action.staffName}" not found.`;
+          if (!action.date) return '❌ Missing date.';
+          const loc = action.location === 'OFF' ? 'OFF' : locations.find(l => l.name.toLowerCase().includes(action.location?.toLowerCase()));
+          const locId = action.location === 'OFF' ? 'OFF' : loc?.id;
+          if (!locId) return `❌ Location "${action.location}" not found.`;
+          const period = action.period || 'both';
+          setSchedules(prev => {
+            const sched = { ...prev[scheduleKey] || {} };
+            if (!sched[action.date]) sched[action.date] = {};
+            if (!sched[action.date][s.id]) sched[action.date][s.id] = { am: 'OFF', pm: 'OFF' };
+            if (period === 'am' || period === 'both') sched[action.date][s.id].am = locId;
+            if (period === 'pm' || period === 'both') sched[action.date][s.id].pm = locId;
+            return { ...prev, [scheduleKey]: sched };
+          });
+          return `✅ Updated ${s.name} on ${action.date}: ${period === 'both' ? 'AM+PM' : period.toUpperCase()} → ${action.location}`;
+        }
+        default:
+          return `❌ Unknown action: ${action.type}`;
+      }
+    } catch (e) {
+      return `❌ Error executing action: ${e.message}`;
+    }
+  }
+
   async function sendChatMessage() {
     if (!chatInput.trim() || chatLoading) return;
     const userMsg = chatInput.trim();
@@ -997,29 +1107,56 @@ Use exact IDs. Include every listed day and every staff member.`;
       ? `Current schedule for ${MONTHS[currentMonth]} ${currentYear} (Plan ${activePlan}) has ${Object.keys(currentSchedule).length} days filled.`
       : `No schedule generated yet for ${MONTHS[currentMonth]} ${currentYear} Plan ${activePlan}.`;
 
-    const systemPrompt = `You are an AI scheduling assistant for ShiftCraft, a medical practice staff scheduler. You help manage schedules for an ophthalmology/optometry practice.
+    const staffContext = staff.map(s => `${s.id}: ${s.name} (${s.role})`).join('\n');
+    const locContext = locations.map(l => `${l.id}: ${l.name}`).join('\n');
+    const vacContext = vacations.length > 0 ? vacations.map(v => {
+      const s = staff.find(x => x.id === v.staffId);
+      return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
+    }).join('\n') : 'None';
+
+    const systemPrompt = `You are an AI scheduling assistant for ShiftCraft. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
 
 Current context:
-- Month: ${MONTHS[currentMonth]} ${currentYear}, viewing Plan ${activePlan}
+- Month: ${MONTHS[currentMonth]} ${currentYear}, Plan ${activePlan}
 - ${scheduleSummary}
-- Staff: ${staff.map(s => s.name + ' (' + s.role + ')').join(', ')}
-- Locations: ${locations.map(l => l.name).join(', ')}
-- Active rules: ${rules.length}
-- Vacations: ${vacations.length}
-- Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : ' (closed)') + (dt ? ' — ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : ''); }).join(', ')}
 
+Staff:
+${staffContext}
+
+Locations:
+${locContext}
+
+Vacations:
+${vacContext}
+
+Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : '') + (dt ? ' ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : ''); }).join(', ')}
+
+Active rules: ${rules.length}
 Rules summary:
 ${buildRulesSummary()}
 
-You can help with:
-- Answering questions about the current schedule, rules, or providers
-- Suggesting rule changes or additions
-- Explaining scheduling conflicts or dependencies
-- Recommending schedule adjustments
-- Providing coverage analysis
-- Holiday and vacation impact analysis
+ACTIONS: When the user asks you to make a change, include a JSON action block in your response using this exact format:
 
-Be concise and helpful. Use provider last names. If the user asks to make changes, explain what they should do in the app.`;
+\`\`\`action
+{"type": "action_type", ...params}
+\`\`\`
+
+Available actions:
+- add_vacation: {"type":"add_vacation", "staffName":"Last Name", "startDate":"YYYY-MM-DD", "endDate":"YYYY-MM-DD", "reason":"optional"}
+- remove_vacation: {"type":"remove_vacation", "staffName":"Last Name", "startDate":"YYYY-MM-DD"}
+- add_staff: {"type":"add_staff", "name":"Full Name", "role":"MD|OD"}
+- remove_staff: {"type":"remove_staff", "staffName":"Last Name"}
+- add_location: {"type":"add_location", "name":"Location Name", "address":"optional"}
+- remove_location: {"type":"remove_location", "name":"Location Name"}
+- add_rule: {"type":"add_rule", "staffName":"Last Name", "locationName":"Location", "dayOfWeek":"Mon|Tue|Wed|Thu|Fri", "weekOfMonth":"all|1|2|3|4", "period":"am|pm|both", "priority":"required|preferred", "description":"optional"}
+- remove_rule: {"type":"remove_rule", "staffName":"Last Name", "dayOfWeek":"Mon", "locationName":"Location"}
+- add_holiday: {"type":"add_holiday", "name":"Holiday Name", "month":0, "day":1, "halfDay":"closed|am", "note":"optional"}  (month is 0-indexed: 0=Jan, 11=Dec)
+- remove_holiday: {"type":"remove_holiday", "name":"Holiday Name"}
+- update_schedule: {"type":"update_schedule", "staffName":"Last Name", "date":"YYYY-MM-DD", "location":"Location Name or OFF", "period":"am|pm|both"}
+
+You can include MULTIPLE action blocks in one response. Always confirm what you're doing in natural language AND include the action block. If unsure about details, ask the user first.
+
+For questions (not changes), just respond normally without action blocks. Be concise. Use last names for providers.`;
 
     try {
       const apiMessages = chatMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
@@ -1039,8 +1176,29 @@ Be concise and helpful. Use provider last names. If the user asks to make change
       }
 
       const data = await response.json();
-      const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
-      setChatMessages(prev => [...prev, { role: 'assistant', content: text || 'No response received.' }]);
+      let text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+
+      // Extract and execute action blocks
+      const actionRegex = /```action\s*\n?([\s\S]*?)```/g;
+      let match;
+      const results = [];
+      while ((match = actionRegex.exec(text)) !== null) {
+        try {
+          const action = JSON.parse(match[1].trim());
+          const result = executeAgentAction(action);
+          results.push(result);
+        } catch (e) {
+          results.push(`❌ Failed to parse action: ${e.message}`);
+        }
+      }
+
+      // Remove action blocks from displayed text and append results
+      let displayText = text.replace(/```action\s*\n?[\s\S]*?```/g, '').trim();
+      if (results.length > 0) {
+        displayText += '\n\n' + results.join('\n');
+      }
+
+      setChatMessages(prev => [...prev, { role: 'assistant', content: displayText || 'Done.' }]);
     } catch (err) {
       setChatMessages(prev => [...prev, { role: 'assistant', content: `Connection error: ${err.message}` }]);
     }
