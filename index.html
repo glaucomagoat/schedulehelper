@@ -938,10 +938,12 @@ window.ScheduleHelper = function StaffScheduler() {
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
 
-    // Split at day 15 boundary (W1+W2 = days 1-14, W3+W4+ = days 15+)
-    const batch1 = allWeekdays.filter(d => d <= 14);
-    const batch2 = allWeekdays.filter(d => d > 14);
-    const batches = [batch1, batch2].filter(b => b.length > 0);
+    // Split into weekly batches (W1=days 1-7, W2=8-14, W3=15-21, W4=22+)
+    const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
+    const batches = weekBounds.map((wb, wi) => ({
+      days: allWeekdays.filter(d => d >= wb[0] && d <= wb[1]),
+      label: `W${wi+1}`
+    })).filter(b => b.days.length > 0);
 
     const decisionsBlock = userDecisions ? `\nUSER DECISIONS (from critical ambiguity prompts):\n${Object.entries(userDecisions).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nFollow these decisions exactly.\n` : '';
 
@@ -999,9 +1001,9 @@ RULES:
     let totalDays = 0;
 
     for (let bi = 0; bi < batches.length; bi++) {
-      const batchDays = batches[bi];
-      const weeksInBatch = bi === 0 ? 'W1–W2' : 'W3–W4';
-      setAiLog(`⏳ Generating ${weeksInBatch} (${batchDays.length} days)... batch ${bi + 1} of ${batches.length}`);
+      const batchDays = batches[bi].days;
+      const batchLabel = batches[bi].label;
+      setAiLog(`⏳ Generating ${batchLabel} (${batchDays.length} days)... batch ${bi + 1} of ${batches.length}`);
 
       const daysList = batchDays.map(d => {
         const dt = new Date(currentYear, currentMonth, d);
@@ -1009,7 +1011,29 @@ RULES:
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
+      // Carry forward prior-week results for cross-week dependency accuracy
+      let priorWeeksBlock = '';
+      if (bi > 0 && Object.keys(allAssignments).length > 0) {
+        priorWeeksBlock = '\nPRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):\n';
+        const priorDays = Object.keys(allAssignments).sort().slice(-5); // last 5 days max
+        priorDays.forEach(dk => {
+          const dayData = allAssignments[dk];
+          const d = parseInt(dk.split('-')[2]);
+          const dow = new Date(currentYear, currentMonth, d).getDay();
+          priorWeeksBlock += `  ${dk} (${DAYS_OF_WEEK[dow]}):\n`;
+          Object.entries(dayData).forEach(([sid, periods]) => {
+            const s = staff.find(x => x.id === sid);
+            if (!s) return;
+            const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
+            const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
+            priorWeeksBlock += `    ${s.name}: ${amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc}\n`;
+          });
+        });
+        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.\n';
+      }
+
       const batchPrompt = `${contextBlock}
+${priorWeeksBlock}
 
 TASK: Generate schedule for ONLY these days: ${daysList}
 
@@ -1032,12 +1056,12 @@ Use exact IDs. Include every listed day and every staff member.
 For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules, unclear conditional): list them so the user can decide.
 For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling preference): auto-resolve with your best judgment and list in auto_resolved.`;
 
-      addLog('request', `Batch ${bi+1} (${weeksInBatch}): ${batchDays.length} days, prompt ${batchPrompt.length} chars`);
+      addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days, prompt ${batchPrompt.length} chars`);
 
       try {
         const response = await callClaudeAPI({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 8000,
+          max_tokens: 4096,
           messages: [{ role: "user", content: batchPrompt }]
         });
 
@@ -1047,7 +1071,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
           let errorText = '';
           try { errorText = await response.text(); } catch(e) { errorText = '?'; }
           addLog('error', `Batch ${bi+1} error ${response.status}`, { errorText: errorText.substring(0, 500) });
-          setAiLog(`⚠️ API error on ${weeksInBatch} (${response.status}). Check developer logs.`);
+          setAiLog(`⚠️ API error on ${batchLabel} (${response.status}). Check developer logs.`);
           setGenerating(false);
           return;
         }
@@ -1057,7 +1081,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
 
         if (data.error) {
           addLog('error', `Batch ${bi+1} API error`, { error: data.error });
-          setAiLog(`⚠️ Error on ${weeksInBatch}: ${data.error?.message || 'Unknown'}`);
+          setAiLog(`⚠️ Error on ${batchLabel}: ${data.error?.message || 'Unknown'}`);
           setGenerating(false);
           return;
         }
@@ -1082,12 +1106,12 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
         if (parsed.ambiguities) allAmbiguities.push(...parsed.ambiguities);
         if (parsed.auto_resolved) allAutoResolved.push(...parsed.auto_resolved);
 
-        addLog('success', `Batch ${bi+1} (${weeksInBatch}): ${Object.keys(dayData).length} days${parsed.ambiguities?.length ? ', ' + parsed.ambiguities.length + ' ambiguities' : ''}`);
+        addLog('success', `Batch ${bi+1} (${batchLabel}): ${Object.keys(dayData).length} days${parsed.ambiguities?.length ? ', ' + parsed.ambiguities.length + ' ambiguities' : ''}`);
 
 
       } catch (err) {
         addLog('error', `Batch ${bi+1} failed: ${err.message}`);
-        setAiLog(`⚠️ Failed on ${weeksInBatch}: ${err.message}`);
+        setAiLog(`⚠️ Failed on ${batchLabel}: ${err.message}`);
         setGenerating(false);
         return;
       }
