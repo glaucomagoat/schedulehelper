@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SchedulerHelper</title>
+  <title>Schedule Helper</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -26,7 +26,7 @@
       async list(prefix) { var keys = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.startsWith('sc:')) { var s = k.substring(3); if (!prefix || s.startsWith(prefix)) keys.push(s); } } return { keys: keys, prefix: prefix, shared: false }; }
     };
   </script>
-  <script type="text/babel" data-presets="react">
+  <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -386,7 +386,7 @@ function formatWeekOfMonth(wom) {
 // ============================================================
 // MAIN APP
 // ============================================================
-window.SchedulerHelper = function StaffScheduler() {
+window.ScheduleHelper = function StaffScheduler() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [isDev, setIsDev] = useState(false);
@@ -1197,7 +1197,7 @@ Use exact IDs. Include every listed day and every staff member.`;
       return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
     }).join('\n') : 'None';
 
-    const systemPrompt = `You are an AI scheduling assistant for SchedulerHelper. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
+    const systemPrompt = `You are an AI scheduling assistant for Schedule Helper. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
 
 Current context:
 - Month: ${MONTHS[currentMonth]} ${currentYear}, Plan ${activePlan}
@@ -1375,7 +1375,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       <div style={{width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'}}>
         <div style={{textAlign:'center',marginBottom:36}}>
           <div style={{fontSize:40,marginBottom:8}}>📅</div>
-          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>SchedulerHelper</h1>
+          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1>
           <p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p>
         </div>
         <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
@@ -1408,7 +1408,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <span style={{fontSize:24}}>📅</span>
-          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>SchedulerHelper</span>
+          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>Schedule Helper</span>
           {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -1850,7 +1850,6 @@ For questions (not changes), just respond normally without action blocks. Be con
                     </div>
                   );
                 })()}
-                </div>
               </div>
 
               <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
@@ -2433,7 +2432,7 @@ For questions (not changes), just respond normally without action blocks. Be con
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.SchedulerHelper));
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.ScheduleHelper));
   </script>
 </body>
 </html>
