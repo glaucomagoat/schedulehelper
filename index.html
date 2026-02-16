@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ShiftCraft — Staff Scheduling Tool</title>
+  <title>SchedulerHelper</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -20,13 +20,13 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
   <script>
     window.storage = {
-      async get(key) { const v = localStorage.getItem('sc:' + key); if (v === null) throw new Error('Key not found'); return { key, value: v, shared: false }; },
-      async set(key, value) { localStorage.setItem('sc:' + key, value); return { key, value, shared: false }; },
-      async delete(key) { localStorage.removeItem('sc:' + key); return { key, deleted: true, shared: false }; },
-      async list(prefix) { const keys = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('sc:')) { const s = k.substring(3); if (!prefix || s.startsWith(prefix)) keys.push(s); } } return { keys, prefix, shared: false }; }
+      async get(key) { var v = localStorage.getItem('sc:' + key); if (v === null) throw new Error('Key not found'); return { key: key, value: v, shared: false }; },
+      async set(key, value) { localStorage.setItem('sc:' + key, value); return { key: key, value: value, shared: false }; },
+      async delete(key) { localStorage.removeItem('sc:' + key); return { key: key, deleted: true, shared: false }; },
+      async list(prefix) { var keys = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.startsWith('sc:')) { var s = k.substring(3); if (!prefix || s.startsWith(prefix)) keys.push(s); } } return { keys: keys, prefix: prefix, shared: false }; }
     };
   </script>
-  <script type="text/babel">
+  <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback, useRef } = React;
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -386,7 +386,7 @@ function formatWeekOfMonth(wom) {
 // ============================================================
 // MAIN APP
 // ============================================================
-window.ShiftCraft = function StaffScheduler() {
+window.SchedulerHelper = function StaffScheduler() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [isDev, setIsDev] = useState(false);
@@ -405,6 +405,7 @@ window.ShiftCraft = function StaffScheduler() {
   const [editCell, setEditCell] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [aiLog, setAiLog] = useState('');
+  const [conflictsReport, setConflictsReport] = useState(null); // {conflicts:[], month, year}
   const [rulesFilter, setRulesFilter] = useState('all');
   const [devLogs, setDevLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(true);
@@ -412,6 +413,8 @@ window.ShiftCraft = function StaffScheduler() {
   const [visibleLocations, setVisibleLocations] = useState(new Set());
   const [expandedLocation, setExpandedLocation] = useState(null);
   const [expandedStaffMember, setExpandedStaffMember] = useState(null);
+  const [calendarView, setCalendarView] = useState('month'); // 'month' | 'week'
+  const [currentWeekStart, setCurrentWeekStart] = useState(null); // Date of Monday
 
   // Plan system: A, B, C per month
   const [activePlan, setActivePlan] = useState('A');
@@ -980,8 +983,88 @@ Use exact IDs. Include every listed day and every staff member.`;
 
     setSchedules(prev => ({ ...prev, [scheduleKey]: allAssignments }));
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
-    setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''} Click any day to adjust.`);
+
+    // Detect rule conflicts/violations
+    const conflicts = detectRuleConflicts(allAssignments);
+    if (conflicts.length > 0) {
+      setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
+      addLog('info', `Found ${conflicts.length} potential rule conflicts`);
+      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+    } else {
+      setConflictsReport(null);
+      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+    }
     setGenerating(false);
+  }
+
+  // Detect scheduling rule violations
+  function detectRuleConflicts(assignments) {
+    const conflicts = [];
+    for (const [dk, dayAssignments] of Object.entries(assignments)) {
+      const [y, m, d] = dk.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      const dow = dt.getDay();
+      if (dow === 0 || dow === 6) continue;
+      const dayName = DAYS_OF_WEEK[dow];
+      const wk = Math.min(Math.floor((d - 1) / 7), 3) + 1;
+
+      for (const [staffId, periods] of Object.entries(dayAssignments)) {
+        const s = staff.find(x => x.id === staffId);
+        if (!s) continue;
+
+        // Check if on vacation
+        if (isOnVacation(staffId, dk)) {
+          if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
+            conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'vacation',
+              message: `${getLastName(s.name)} is on vacation but scheduled`,
+              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM' });
+          }
+          continue;
+        }
+
+        // Find applicable rules for this staff/day
+        const staffRules = rules.filter(r => r.staffId === staffId && r.dayOfWeek === dayName &&
+          (r.weekOfMonth === 'all' || r.weekOfMonth === String(wk)));
+
+        const requiredRules = staffRules.filter(r => r.priority === 'required');
+
+        for (const rule of requiredRules) {
+          const loc = locations.find(l => l.id === rule.locationId);
+          const locName = loc?.name || rule.locationId;
+          const period = rule.period;
+
+          if (period === 'am' || period === 'both') {
+            if (periods.am !== rule.locationId && periods.am !== 'OFF') {
+              const actualLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
+              conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
+                message: `${getLastName(s.name)} should be at ${locName} AM (required) but is at ${actualLoc}`,
+                ruleId: rule.id, current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
+                fix: { date: dk, staffId, period: 'am', locationId: rule.locationId } });
+            }
+          }
+          if (period === 'pm' || period === 'both') {
+            if (periods.pm !== rule.locationId && periods.pm !== 'OFF') {
+              const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
+              conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
+                message: `${getLastName(s.name)} should be at ${locName} PM (required) but is at ${actualLoc}`,
+                ruleId: rule.id, current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
+                fix: { date: dk, staffId, period: 'pm', locationId: rule.locationId } });
+            }
+          }
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  function applyConflictFix(fix) {
+    setSchedules(prev => {
+      const sched = { ...(prev[scheduleKey] || {}) };
+      if (!sched[fix.date]) sched[fix.date] = {};
+      if (!sched[fix.date][fix.staffId]) sched[fix.date][fix.staffId] = { am: 'OFF', pm: 'OFF' };
+      sched[fix.date][fix.staffId][fix.period] = fix.locationId;
+      return { ...prev, [scheduleKey]: sched };
+    });
   }
 
   // AI Agent Chat
@@ -1114,7 +1197,7 @@ Use exact IDs. Include every listed day and every staff member.`;
       return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
     }).join('\n') : 'None';
 
-    const systemPrompt = `You are an AI scheduling assistant for ShiftCraft. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
+    const systemPrompt = `You are an AI scheduling assistant for SchedulerHelper. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
 
 Current context:
 - Month: ${MONTHS[currentMonth]} ${currentYear}, Plan ${activePlan}
@@ -1292,7 +1375,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       <div style={{width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'}}>
         <div style={{textAlign:'center',marginBottom:36}}>
           <div style={{fontSize:40,marginBottom:8}}>📅</div>
-          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>ShiftCraft</h1>
+          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>SchedulerHelper</h1>
           <p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p>
         </div>
         <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
@@ -1325,7 +1408,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <span style={{fontSize:24}}>📅</span>
-          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>ShiftCraft</span>
+          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>SchedulerHelper</span>
           {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -1492,20 +1575,103 @@ For questions (not changes), just respond normally without action blocks. Be con
               </div>
 
               {aiLog && (
-                <div style={{padding:'12px 18px',background:generating?'#1e1b4b':'#064e3b',border:`1px solid ${generating?'#3730a3':'#065f46'}`,borderRadius:10,marginBottom:16,fontSize:13,color:generating?'#a5b4fc':'#6ee7b7',display:'flex',alignItems:'center',gap:10}}>
+                <div style={{padding:'12px 18px',background:generating?'#1e1b4b':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#78350f':'#064e3b'),border:`1px solid ${generating?'#3730a3':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#92400e':'#065f46')}`,borderRadius:10,marginBottom:conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?8:16,fontSize:13,color:generating?'#a5b4fc':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#fbbf24':'#6ee7b7'),display:'flex',alignItems:'center',gap:10}}>
                   {generating && <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>}
                   <span style={{flex:1}}>{aiLog}</span>
-                  {!generating && <span onClick={()=>setAiLog('')} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                  {!generating && <span onClick={()=>{setAiLog('');setConflictsReport(null)}} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                </div>
+              )}
+
+              {/* Conflicts Report */}
+              {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (
+                <div style={{background:'#1a1520',border:'1px solid #92400e',borderRadius:10,marginBottom:16,overflow:'hidden'}}>
+                  <div style={{padding:'10px 16px',background:'#78350f33',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span style={{fontSize:13,fontWeight:700,color:'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
+                    <div style={{display:'flex',gap:8}}>
+                      <Btn variant="success" onClick={()=>{
+                        conflictsReport.conflicts.forEach(c => { if (c.fix) applyConflictFix(c.fix); });
+                        setConflictsReport(null); setAiLog('✅ All conflicts resolved — rules applied.');
+                      }} style={{fontSize:11,padding:'4px 12px'}}>Fix All</Btn>
+                      <Btn variant="ghost" onClick={()=>setConflictsReport(null)} style={{fontSize:11,padding:'4px 10px'}}>Dismiss</Btn>
+                    </div>
+                  </div>
+                  <div style={{maxHeight:250,overflowY:'auto',padding:'8px 12px'}}>
+                    {conflictsReport.conflicts.map((c, ci) => (
+                      <div key={ci} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:ci%2===0?'#1e1530':'transparent',borderRadius:6,marginBottom:2}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:'#fbbf24'}}>{c.message}</div>
+                          <div style={{fontSize:11,color:'#9ca3af',marginTop:2}}>
+                            {c.date} ({c.day}) — Current: {c.current} → Suggested: {c.suggested}
+                          </div>
+                        </div>
+                        {c.fix && (
+                          <Btn variant="success" onClick={()=>{
+                            applyConflictFix(c.fix);
+                            setConflictsReport(prev => {
+                              if (!prev) return null;
+                              const remaining = prev.conflicts.filter((_, j) => j !== ci);
+                              if (remaining.length === 0) { setAiLog('✅ All conflicts resolved!'); return null; }
+                              return { ...prev, conflicts: remaining };
+                            });
+                          }} style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}}>Fix</Btn>
+                        )}
+                        <Btn variant="ghost" onClick={()=>{
+                          setConflictsReport(prev => {
+                            if (!prev) return null;
+                            const remaining = prev.conflicts.filter((_, j) => j !== ci);
+                            if (remaining.length === 0) return null;
+                            return { ...prev, conflicts: remaining };
+                          });
+                        }} style={{fontSize:10,padding:'3px 8px',color:'#6b7280'}}>Skip</Btn>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12}}>
-                <Btn variant="ghost" onClick={prevMonth} style={{padding:'8px 14px'}}>◀</Btn>
+                <Btn variant="ghost" onClick={()=>{
+                  if (calendarView === 'week' && currentWeekStart) {
+                    const prev = new Date(currentWeekStart); prev.setDate(prev.getDate() - 7);
+                    setCurrentWeekStart(prev);
+                    if (prev.getMonth() !== currentMonth) { setCurrentMonth(prev.getMonth()); setCurrentYear(prev.getFullYear()); }
+                  } else { prevMonth(); }
+                }} style={{padding:'8px 14px'}}>◀</Btn>
                 <h3 style={{fontSize:20,fontWeight:600,minWidth:220,textAlign:'center',fontFamily:'"Space Mono",monospace'}}>
-                  {MONTHS[currentMonth]} {currentYear}
+                  {calendarView === 'week' && currentWeekStart
+                    ? `${MONTHS[currentWeekStart.getMonth()]} ${currentWeekStart.getDate()}–${(()=>{const e=new Date(currentWeekStart);e.setDate(e.getDate()+4);return e.getDate()})()}, ${currentWeekStart.getFullYear()}`
+                    : `${MONTHS[currentMonth]} ${currentYear}`}
                 </h3>
-                <Btn variant="ghost" onClick={nextMonth} style={{padding:'8px 14px'}}>▶</Btn>
-                <Btn variant="ghost" onClick={()=>{setCurrentMonth(new Date().getMonth());setCurrentYear(new Date().getFullYear())}} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
+                <Btn variant="ghost" onClick={()=>{
+                  if (calendarView === 'week' && currentWeekStart) {
+                    const nxt = new Date(currentWeekStart); nxt.setDate(nxt.getDate() + 7);
+                    setCurrentWeekStart(nxt);
+                    if (nxt.getMonth() !== currentMonth) { setCurrentMonth(nxt.getMonth()); setCurrentYear(nxt.getFullYear()); }
+                  } else { nextMonth(); }
+                }} style={{padding:'8px 14px'}}>▶</Btn>
+                <Btn variant="ghost" onClick={()=>{
+                  const today = new Date();
+                  setCurrentMonth(today.getMonth()); setCurrentYear(today.getFullYear());
+                  const d = today.getDay(); const diff = d === 0 ? -6 : 1 - d;
+                  const mon = new Date(today); mon.setDate(today.getDate() + diff);
+                  setCurrentWeekStart(mon);
+                }} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
+                <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
+                  {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
+                    <div key={v} onClick={()=>{
+                      setCalendarView(v);
+                      if (v === 'week' && !currentWeekStart) {
+                        const d1 = new Date(currentYear, currentMonth, 1);
+                        const dow = d1.getDay(); const diff = dow === 0 ? -6 : 1 - dow;
+                        const mon = new Date(d1); mon.setDate(d1.getDate() + diff);
+                        setCurrentWeekStart(mon);
+                      }
+                    }}
+                      style={{padding:'6px 16px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                        background:calendarView===v?'#6366f1':'transparent',color:calendarView===v?'#fff':'#6b7280',
+                        transition:'all 0.15s'}}>{label}</div>
+                  ))}
+                </div>
               </div>
 
               {/* Plan Selector */}
@@ -1552,165 +1718,138 @@ For questions (not changes), just respond normally without action blocks. Be con
               </div>
 
               <div style={{borderRadius:14,overflow:'hidden',border:'1px solid #1e1e35',background:'#12121f'}}>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
-                  {DAYS_OF_WEEK.map(d=>(
+                {/* Day headers */}
+                <div style={{display:'grid',gridTemplateColumns:calendarView==='week'?'repeat(5,1fr)':'repeat(7,1fr)'}}>
+                  {(calendarView==='week'?DAYS_OF_WEEK.slice(1,6):DAYS_OF_WEEK).map(d=>(
                     <div key={d} style={{padding:'10px 8px',textAlign:'center',fontSize:12,fontWeight:700,color:'#9ca3af',background:'#1a1a2e',borderBottom:'1px solid #1e1e35',textTransform:'uppercase',letterSpacing:'0.08em'}}>{d}</div>
                   ))}
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
-                  {calDays.map((day,i)=>{
-                    if(day===null) return <div key={`e-${i}`} style={{minHeight:100,background:'#0d0d18',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35'}} />;
-                    const dk=dateKey(currentYear,currentMonth,day);
-                    const wkend=isWeekend(currentYear,currentMonth,day);
-                    const ds=schedule[dk]||{};
-                    // Filter to only visible staff
-                    const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
 
-                    // Group assignments by location for each period, sorted alphabetically
-                    function getLocationGroups(period) {
-                      const groups = {};
-                      filteredStaffList.forEach(s => {
-                        const val = ds[s.id]?.[period];
-                        if (!val) return;
-                        // Filter by visible locations (OFF always shown if staff is visible)
-                        if (val !== 'OFF' && !visibleLocations.has(val)) return;
-                        const key = val === 'OFF' ? 'OFF' : val;
-                        if (!groups[key]) groups[key] = { locId: val, staff: [] };
-                        groups[key].staff.push(s);
-                      });
-                      // Sort: alphabetically by location name, OFF always last
-                      return Object.values(groups).sort((a, b) => {
-                        if (a.locId === 'OFF') return 1;
-                        if (b.locId === 'OFF') return -1;
-                        const nameA = (locations.find(l => l.id === a.locId)?.name || '').toLowerCase();
-                        const nameB = (locations.find(l => l.id === b.locId)?.name || '').toLowerCase();
-                        return nameA.localeCompare(nameB);
-                      });
+                {/* Calendar cells */}
+                {(()=>{
+                  // Build array of days to show
+                  let daysToRender = [];
+                  if (calendarView === 'week' && currentWeekStart) {
+                    for (let i = 0; i < 5; i++) {
+                      const d = new Date(currentWeekStart);
+                      d.setDate(d.getDate() + i);
+                      daysToRender.push({ day: d.getDate(), month: d.getMonth(), year: d.getFullYear(), isCurrentMonth: d.getMonth() === currentMonth });
                     }
+                  } else {
+                    daysToRender = calDays.map(day => day === null ? null : { day, month: currentMonth, year: currentYear, isCurrentMonth: true });
+                  }
 
-                    // Hybrid display: per-provider consolidation
-                    // - Provider same AM & PM location → unified full-width bar
-                    // - Provider different AM vs PM (or only one period) → split AM/PM columns
-                    function getHybridDisplay() {
-                      const allDay = []; // { staff, locId } — same AM=PM
-                      const splitAm = []; // { staff, locId } — AM only or different from PM
-                      const splitPm = []; // { staff, locId } — PM only or different from AM
+                  const isWeekView = calendarView === 'week';
+                  const cols = isWeekView ? 5 : 7;
 
-                      filteredStaffList.forEach(s => {
-                        const am = ds[s.id]?.am;
-                        const pm = ds[s.id]?.pm;
-                        if (!am && !pm) return;
+                  return (
+                    <div style={{display:'grid',gridTemplateColumns:`repeat(${cols},1fr)`}}>
+                      {daysToRender.map((cell,i)=>{
+                        if(cell===null) return <div key={`e-${i}`} style={{minHeight:isWeekView?200:100,background:'#0d0d18',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35'}} />;
 
-                        // Check location visibility
-                        const amOk = am && (am === 'OFF' || visibleLocations.has(am));
-                        const pmOk = pm && (pm === 'OFF' || visibleLocations.has(pm));
+                        const {day, month: cellMonth, year: cellYear, isCurrentMonth: isCurMonth} = cell;
+                        const dk=dateKey(cellYear,cellMonth,day);
+                        const wkend=isWeekend(cellYear,cellMonth,day);
+                        const schedule = getSchedule();
+                        const ds=schedule[dk]||{};
+                        const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
+                        const cellMinH = isWeekView ? 200 : 100;
 
-                        if (amOk && pmOk && am === pm) {
-                          // Same location all day
-                          allDay.push({ staff: s, locId: am });
-                        } else {
-                          if (amOk) splitAm.push({ staff: s, locId: am });
-                          if (pmOk) splitPm.push({ staff: s, locId: pm });
+                        // Hybrid display logic
+                        function getHybridDisplay() {
+                          const allDay = [];
+                          const splitAm = [];
+                          const splitPm = [];
+                          filteredStaffList.forEach(s => {
+                            const am = ds[s.id]?.am;
+                            const pm = ds[s.id]?.pm;
+                            if (!am && !pm) return;
+                            const amOk = am && (am === 'OFF' || visibleLocations.has(am));
+                            const pmOk = pm && (pm === 'OFF' || visibleLocations.has(pm));
+                            if (amOk && pmOk && am === pm) { allDay.push({ staff: s, locId: am }); }
+                            else { if (amOk) splitAm.push({ staff: s, locId: am }); if (pmOk) splitPm.push({ staff: s, locId: pm }); }
+                          });
+                          function groupByLoc(entries) {
+                            const groups = {};
+                            entries.forEach(e => { const key = e.locId === 'OFF' ? 'OFF' : e.locId; if (!groups[key]) groups[key] = { locId: e.locId, staff: [] }; groups[key].staff.push(e.staff); });
+                            return Object.values(groups).sort((a, b) => { if (a.locId === 'OFF') return 1; if (b.locId === 'OFF') return -1; const nA = (locations.find(l => l.id === a.locId)?.name || '').toLowerCase(); const nB = (locations.find(l => l.id === b.locId)?.name || '').toLowerCase(); return nA.localeCompare(nB); });
+                          }
+                          return { allDayGroups: groupByLoc(allDay), amGroups: groupByLoc(splitAm), pmGroups: groupByLoc(splitPm), hasSplit: splitAm.length > 0 || splitPm.length > 0 };
                         }
-                      });
 
-                      // Group by location and sort
-                      function groupByLoc(entries) {
-                        const groups = {};
-                        entries.forEach(e => {
-                          const key = e.locId === 'OFF' ? 'OFF' : e.locId;
-                          if (!groups[key]) groups[key] = { locId: e.locId, staff: [] };
-                          groups[key].staff.push(e.staff);
-                        });
-                        return Object.values(groups).sort((a, b) => {
-                          if (a.locId === 'OFF') return 1;
-                          if (b.locId === 'OFF') return -1;
-                          const nameA = (locations.find(l => l.id === a.locId)?.name || '').toLowerCase();
-                          const nameB = (locations.find(l => l.id === b.locId)?.name || '').toLowerCase();
-                          return nameA.localeCompare(nameB);
-                        });
-                      }
+                        const hybrid = getHybridDisplay();
+                        const isWk = isWeekView;
+                        const fs = isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10} : {loc:10,name:11,dot:6,dayNum:14,wk:9,hol:9,holSub:8,ampm:9};
 
-                      return {
-                        allDayGroups: groupByLoc(allDay),
-                        amGroups: groupByLoc(splitAm),
-                        pmGroups: groupByLoc(splitPm),
-                        hasSplit: splitAm.length > 0 || splitPm.length > 0
-                      };
-                    }
-
-                    const hybrid = getHybridDisplay();
-
-                    // Reusable location block renderer
-                    function renderLocBlock(g, gi) {
-                      const isOff = g.locId === 'OFF';
-                      const loc = isOff ? null : locations.find(l => l.id === g.locId);
-                      const lc = LOCATION_COLORS[g.locId] || LOCATION_COLORS.OFF;
-                      return (
-                        <div key={gi} style={{background:lc.bg,borderLeft:`2px solid ${lc.border}`,borderRadius:3,padding:'2px 3px',marginBottom:2}}>
-                          {!isOff && (
-                            <div style={{fontSize:8,fontWeight:700,color:lc.text,lineHeight:1.2,marginBottom:1}}>
-                              {loc?.name || '?'}
-                            </div>
-                          )}
-                          {g.staff.map(s => (
-                            <div key={s.id} style={{display:'flex',alignItems:'center',gap:2,lineHeight:1.3}}>
-                              <div style={{width:5,height:5,borderRadius:'50%',background:isOff?'#444':s.color,flexShrink:0}} />
-                              <span style={{fontSize:9,color:isOff?'#556':s.color,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                                {isOff ? <span style={{fontStyle:'italic'}}>{getLastName(s.name)}</span> : getLastName(s.name)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    }
-
-                    return(
-                      <div key={day}
-                        style={{minHeight:100,padding:'4px 3px',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':'#12121f',cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden'}}
-                        onClick={()=>{if(!wkend)setEditCell({day,dk})}}
-                        onMouseEnter={e=>{if(!wkend)e.currentTarget.style.background='#1a1a30'}}
-                        onMouseLeave={e=>{if(!wkend)e.currentTarget.style.background='#12121f'}}>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2,padding:'0 2px'}}>
-                          <span style={{fontSize:14,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
-                          {!wkend&&<span style={{fontSize:8,color:'#374151',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
-                        </div>
-                        {(()=>{
-                          const holiday = getHolidayForDate(currentYear, currentMonth, day);
-                          if (holiday && holiday.halfDay === 'am') return (
-                            <div style={{background:'#78350f33',border:'1px solid #f59e0b44',borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
-                              <div style={{fontSize:8,fontWeight:700,color:'#f59e0b'}}>⚠️ {holiday.name} — AM Only</div>
-                            </div>
-                          );
-                          if (holiday) return (
-                            <div style={{background:'#7f1d1d44',border:'1px solid #ef444466',borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
-                              <div style={{fontSize:9,fontWeight:800,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
-                              <div style={{fontSize:8,color:'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
-                            </div>
-                          );
-                          return null;
-                        })()}
-                        {!wkend && (
-                          <div>
-                            {/* All-day unified bars (full width) */}
-                            {hybrid.allDayGroups.map((g, gi) => renderLocBlock(g, `u-${gi}`))}
-
-                            {/* Split AM/PM section (two columns) */}
-                            {hybrid.hasSplit && (
-                              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>
-                                {[{period:'am',groups:hybrid.amGroups},{period:'pm',groups:hybrid.pmGroups}].map(({period,groups}) => (
-                                  <div key={period} style={{minHeight:0}}>
-                                    <div style={{fontSize:8,fontWeight:800,color:'#555',textTransform:'uppercase',letterSpacing:'0.1em',textAlign:'center',marginBottom:1,borderBottom:'1px solid #1e1e35',paddingBottom:1}}>{period}</div>
-                                    {groups.map((g, gi) => renderLocBlock(g, `${period}-${gi}`))}
+                        function renderLocBlock(g, gi) {
+                          const isOff = g.locId === 'OFF';
+                          const loc = isOff ? null : locations.find(function(l){return l.id===g.locId});
+                          const lc = LOCATION_COLORS[g.locId] || LOCATION_COLORS.OFF;
+                          const locName = loc ? loc.name : '?';
+                          // Multi-column: location name left, staff names flow right
+                          return (
+                            <div key={gi} style={{background:lc.bg,borderLeft:'3px solid '+lc.border,borderRadius:4,padding:isWk?'3px 5px':'2px 4px',marginBottom:isWk?3:2,display:'flex',alignItems:'flex-start',gap:isWk?6:4,flexWrap:'wrap'}}>
+                              {!isOff && <div style={{fontSize:fs.loc,fontWeight:700,color:lc.text,lineHeight:1.3,whiteSpace:'nowrap',minWidth:isWk?'auto':0,flexShrink:isWk?0:1,overflow:'hidden',textOverflow:'ellipsis'}}>{locName}</div>}
+                              <div style={{display:'flex',flexWrap:'wrap',gap:isWk?'2px 8px':'1px 6px',flex:1,minWidth:0}}>
+                                {g.staff.map(function(s){return(
+                                  <div key={s.id} style={{display:'flex',alignItems:'center',gap:2}}>
+                                    <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'#444':s.color,flexShrink:0}} />
+                                    <span style={{fontSize:fs.name,color:isOff?'#556':s.color,fontWeight:600,whiteSpace:'nowrap'}}>
+                                      {getLastName(s.name)}
+                                    </span>
                                   </div>
-                                ))}
+                                )})}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={cellYear+'-'+cellMonth+'-'+day}
+                            style={{minHeight:cellMinH,padding:isWk?'6px 6px':'4px 4px',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':(isCurMonth?'#12121f':'#0e0e1a'),cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
+                            onClick={function(){if(!wkend)setEditCell({day:day,dk:dk})}}
+                            onMouseEnter={function(e){if(!wkend)e.currentTarget.style.background='#1a1a30'}}
+                            onMouseLeave={function(e){if(!wkend)e.currentTarget.style.background=wkend?'#0d0d18':'#12121f'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
+                              <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
+                              {!wkend&&<span style={{fontSize:fs.wk,color:'#4b5563',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
+                            </div>
+                            {(function(){
+                              var holiday = getHolidayForDate(cellYear, cellMonth, day);
+                              if (holiday && holiday.halfDay === 'am') return (
+                                <div style={{background:'#78350f33',border:'1px solid #f59e0b44',borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
+                                  <div style={{fontSize:fs.hol,fontWeight:700,color:'#f59e0b'}}>{'⚠️ '+holiday.name+' — AM Only'}</div>
+                                </div>
+                              );
+                              if (holiday) return (
+                                <div style={{background:'#7f1d1d44',border:'1px solid #ef444466',borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
+                                  <div style={{fontSize:fs.hol,fontWeight:800,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
+                                  <div style={{fontSize:fs.holSub,color:'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
+                                </div>
+                              );
+                              return null;
+                            })()}
+                            {!wkend && (
+                              <div>
+                                {hybrid.allDayGroups.map(function(g, gi){return renderLocBlock(g, 'u-'+gi)})}
+                                {hybrid.hasSplit && (
+                                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:isWk?4:2}}>
+                                    {[{period:'am',groups:hybrid.amGroups},{period:'pm',groups:hybrid.pmGroups}].map(function(item){return(
+                                      <div key={item.period} style={{minHeight:0}}>
+                                        <div style={{fontSize:fs.ampm,fontWeight:800,color:'#555',textTransform:'uppercase',letterSpacing:'0.1em',textAlign:'center',marginBottom:1,borderBottom:'1px solid #1e1e35',paddingBottom:1}}>{item.period}</div>
+                                        {item.groups.map(function(g, gi){return renderLocBlock(g, item.period+'-'+gi)})}
+                                      </div>
+                                    )})}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
                 </div>
               </div>
 
@@ -2294,7 +2433,7 @@ For questions (not changes), just respond normally without action blocks. Be con
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.ShiftCraft));
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.SchedulerHelper));
   </script>
 </body>
 </html>
