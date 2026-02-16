@@ -93,102 +93,103 @@ const LOCATION_COLORS = {
 // ============================================================
 const PRESET_RULES = [
   // ===== DR. KIM (s1) =====
-  { id:"pr1", staffId:"s1", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic every Monday" },
-  { id:"pr2", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"1,2,4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st, 2nd & 4th Tuesdays" },
-  { id:"pr3", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", description:"MSC on 3rd Tuesday" },
-  { id:"pr4", staffId:"s1", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday" },
-  { id:"pr5", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l7", priority:"preferred", description:"VLSC on 1st, 2nd & 4th Thursdays (based on surgical need)" },
-  { id:"pr6", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"preferred", description:"3rd Thu: Stockton Clinic or Off — based on other provider schedules" },
-  { id:"pr7", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l6", priority:"required", description:"1st Friday = Turlock. EXCEPTION: If 1st Friday falls on 1st of month AND Dr. Tittler was NOT in surgery the day before → move to 2nd Friday and notify Turlock Eye Care" },
-  { id:"pr8", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"OFF", priority:"preferred", description:"Off every other Friday (alternating)" },
+  { id:"pr1", staffId:"s1", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic every Monday" },
+  { id:"pr2", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"1,2,4", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 1st, 2nd & 4th Tuesdays" },
+  { id:"pr3", staffId:"s1", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 3rd Tuesday" },
+  { id:"pr4", staffId:"s1", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Wednesday" },
+  { id:"pr5", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l7", priority:"preferred", ruleType:"standard", description:"VLSC on 1st, 2nd & 4th Thursdays (based on surgical need)" },
+  { id:"pr6", staffId:"s1", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"preferred", ruleType:"conditional", conditionText:"Stockton Clinic or Off — based on other provider schedules and surgical needs", description:"3rd Thu: flexible" },
+  { id:"pr7", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l6", priority:"required", ruleType:"exception", exceptionText:"If 1st Friday falls on 1st of month AND Dr. Tittler was NOT in surgery the day before → move to 2nd Friday and notify Turlock Eye Care", description:"1st Friday = Turlock" },
+  { id:"pr8", staffId:"s1", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"OFF", priority:"preferred", ruleType:"standard", description:"Off every other Friday (alternating)" },
 
   // ===== DR. LIN (s2) =====
-  { id:"pr9", staffId:"s2", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"preferred", description:"Off Mondays. EXCEPTION: every other month when an extra MSC day is needed → assign to MSC" },
-  { id:"pr10", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st Tuesday" },
-  { id:"pr11", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 2nd Tuesday" },
-  { id:"pr12", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 3rd Tuesday" },
-  { id:"pr13", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l12", priority:"required", description:"SJLSC on 4th Tuesday" },
-  { id:"pr14", staffId:"s2", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", description:"VLSC every Wednesday (unless low case count)" },
-  { id:"pr15", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st Thursday" },
-  { id:"pr16", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Thursday" },
-  { id:"pr17", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"am", locationId:"l2", priority:"required", description:"3rd Thu AM = Stockton Clinic" },
-  { id:"pr18", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"pm", locationId:"l10", priority:"required", description:"3rd Thu PM = LASIK Surgery (LVC)" },
-  { id:"pr19", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", description:"4th Thu = Open/flexible. Prefer extra Modesto day. Does NOT want 3 Stockton Thursdays in a month" },
-  { id:"pr20", staffId:"s2", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"required", description:"Off every Friday" },
+  { id:"pr9", staffId:"s2", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"preferred", ruleType:"exception", exceptionText:"Every other month when an extra MSC day is needed → assign to MSC instead of OFF", description:"Off Mondays unless extra MSC needed" },
+  { id:"pr10", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 1st Tuesday" },
+  { id:"pr11", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 2nd Tuesday" },
+  { id:"pr12", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 3rd Tuesday" },
+  { id:"pr13", staffId:"s2", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l12", priority:"required", ruleType:"standard", description:"SJLSC on 4th Tuesday" },
+  { id:"pr14", staffId:"s2", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", ruleType:"standard", description:"VLSC every Wednesday (unless low case count)" },
+  { id:"pr15", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 1st Thursday" },
+  { id:"pr16", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 2nd Thursday" },
+  { id:"pr17", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"am", locationId:"l2", priority:"required", ruleType:"standard", description:"3rd Thu AM = Stockton Clinic" },
+  { id:"pr18", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"3", period:"pm", locationId:"l10", priority:"required", ruleType:"standard", description:"3rd Thu PM = LASIK Surgery (LVC)" },
+  { id:"pr19", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", ruleType:"standard", description:"4th Thu = Open/flexible. Prefer extra Modesto day" },
+  { id:"pr19b", staffId:"s2", dayOfWeek:"Thu", weekOfMonth:"all", period:"both", locationId:"l2", priority:"preferred", ruleType:"negative", negativeText:"Does NOT want 3 Stockton Thursdays in a month. Maximum 2 Stockton Thursdays.", description:"Negative: max 2 Stockton Thursdays" },
+  { id:"pr20", staffId:"s2", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"OFF", priority:"required", ruleType:"standard", description:"Off every Friday" },
 
   // ===== DR. CHOI (s3) =====
-  { id:"pr21", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l7", priority:"required", description:"VLSC surgery on 1st–3rd Mondays" },
-  { id:"pr22", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l8", priority:"preferred", description:"4th Mon: Extra MSC day if needed, otherwise VLSC or Stockton Clinic" },
-  { id:"pr23", staffId:"s3", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday" },
-  { id:"pr24", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st–3rd Wednesdays" },
-  { id:"pr25", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l8", priority:"required", description:"MSC on 4th Wednesday" },
-  { id:"pr26", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", description:"1st Thu: DHM every other month. If not DHM → Stockton Clinic. Rotates monthly with Dr. Yang" },
-  { id:"pr27", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 2nd & 3rd Thursdays" },
-  { id:"pr28", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 4th Thursday" },
-  { id:"pr29", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l14", priority:"required", description:"VA on 1st Friday" },
-  { id:"pr30", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 2nd–4th Fridays" },
+  { id:"pr21", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l7", priority:"required", ruleType:"standard", description:"VLSC surgery on 1st–3rd Mondays" },
+  { id:"pr22", staffId:"s3", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l8", priority:"preferred", ruleType:"conditional", conditionText:"Extra MSC day if needed, otherwise VLSC or Stockton Clinic based on coverage needs", description:"4th Mon: flexible" },
+  { id:"pr23", staffId:"s3", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Tuesday" },
+  { id:"pr24", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 1st–3rd Wednesdays" },
+  { id:"pr25", staffId:"s3", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 4th Wednesday" },
+  { id:"pr26", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", ruleType:"rotation", rotateWithStaffId:"s4", rotateAtLocationId:"l9", description:"1st Thu: DHM rotation with Dr. Yang. If not DHM → Stockton Clinic" },
+  { id:"pr27", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr28", staffId:"s3", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 4th Thursday" },
+  { id:"pr29", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l14", priority:"required", ruleType:"standard", description:"VA on 1st Friday" },
+  { id:"pr30", staffId:"s3", dayOfWeek:"Fri", weekOfMonth:"2,3,4", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 2nd–4th Fridays" },
 
   // ===== DR. YANG (s4) =====
-  { id:"pr31", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"1", period:"both", locationId:"l13", priority:"preferred", description:"1st Mon = Admin Day (unless moved by request)" },
-  { id:"pr32", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Monday" },
-  { id:"pr33", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"3,4", period:"both", locationId:"l2", priority:"preferred", description:"3rd & 4th Mon: Rotate Modesto with Dr. Tittler if no other Modesto days available; otherwise Stockton Clinic" },
-  { id:"pr34", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st Tuesday" },
-  { id:"pr35", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"2,3", period:"both", locationId:"l7", priority:"preferred", description:"2nd & 3rd Tue: Rotate VLSC OR coordinate with Dr. Tittler if needed" },
-  { id:"pr36", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"1,2,4", period:"both", locationId:"l2", priority:"preferred", description:"1st, 2nd & 4th Wed: Stockton Clinic. If Dr. Lin has unused OR days → assign to VLSC instead" },
-  { id:"pr37", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", description:"MSC on 3rd Wednesday" },
-  { id:"pr38", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", description:"1st Thu: Rotates monthly with Dr. Choi at DHM. If not DHM → Manteca Clinic" },
-  { id:"pr39", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 2nd & 3rd Thursdays" },
-  { id:"pr40", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l2", priority:"preferred", description:"4th Thu: Stockton Clinic (usually if Dr. Lin is in Modesto)" },
-  { id:"pr41", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st Friday" },
-  { id:"pr42", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"preferred", description:"2nd & 3rd Fri: Stockton if in Manteca the Thursday prior" },
-  { id:"pr43", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"4", period:"both", locationId:"l1", priority:"preferred", description:"4th Fri: Manteca if in Stockton the Thursday prior" },
+  { id:"pr31", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"1", period:"both", locationId:"l13", priority:"preferred", ruleType:"standard", description:"1st Mon = Admin Day (unless moved by request)" },
+  { id:"pr32", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 2nd Monday" },
+  { id:"pr33", staffId:"s4", dayOfWeek:"Mon", weekOfMonth:"3,4", period:"both", locationId:"l2", priority:"preferred", ruleType:"conditional", conditionText:"If Dr. Tittler has no other Modesto days available this week → rotate Modesto with Tittler; otherwise Stockton Clinic", description:"3rd & 4th Mon: conditional Modesto/Stockton" },
+  { id:"pr34", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 1st Tuesday" },
+  { id:"pr35", staffId:"s4", dayOfWeek:"Tue", weekOfMonth:"2,3", period:"both", locationId:"l7", priority:"preferred", ruleType:"conditional", conditionText:"Rotate VLSC OR coordinate with Dr. Tittler if Tittler needs VLSC coverage", description:"2nd & 3rd Tue: VLSC coordination with Tittler" },
+  { id:"pr36", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"1,2,4", period:"both", locationId:"l2", priority:"preferred", ruleType:"conditional", conditionText:"Stockton Clinic by default. IF Dr. Lin has unused OR days → assign Yang to VLSC instead", description:"Wed: Stockton or VLSC based on Lin's OR schedule" },
+  { id:"pr37", staffId:"s4", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 3rd Wednesday" },
+  { id:"pr38", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l9", priority:"preferred", ruleType:"rotation", rotateWithStaffId:"s3", rotateAtLocationId:"l9", description:"1st Thu: DHM rotation with Dr. Choi. If not DHM → Manteca Clinic" },
+  { id:"pr39", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr40", staffId:"s4", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l2", priority:"preferred", ruleType:"conditional", conditionText:"Stockton Clinic, usually if Dr. Lin is in Modesto that day", description:"4th Thu: Stockton (conditional on Lin)" },
+  { id:"pr41", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"1", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 1st Friday" },
+  { id:"pr42", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"preferred", ruleType:"conditional", conditionText:"Stockton if Yang was in Manteca the Thursday prior; otherwise flexible", description:"2nd & 3rd Fri: based on prior day" },
+  { id:"pr43", staffId:"s4", dayOfWeek:"Fri", weekOfMonth:"4", period:"both", locationId:"l1", priority:"preferred", ruleType:"conditional", conditionText:"Manteca if Yang was in Stockton the Thursday prior; otherwise flexible", description:"4th Fri: based on prior day" },
 
   // ===== DR. TITTLER (s5) =====
-  { id:"pr44", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 1st–3rd Mondays" },
-  { id:"pr45", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", description:"4th Mon: Based on Dr. Yang's Modesto needs, or extra MSC day" },
-  { id:"pr46", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l7", priority:"required", description:"VLSC on 1st Tuesday" },
-  { id:"pr47", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd Tuesday" },
-  { id:"pr48", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 3rd Tuesday" },
-  { id:"pr49", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l7", priority:"required", description:"VLSC on 4th Tuesday" },
-  { id:"pr50", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"1,2", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st & 2nd Wednesdays" },
-  { id:"pr51", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l6", priority:"required", description:"Turlock on 3rd Wednesday" },
-  { id:"pr52", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 4th Wednesday" },
-  { id:"pr53", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", description:"MSC on 1st Thursday" },
-  { id:"pr54", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 2nd & 3rd Thursdays" },
-  { id:"pr55", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l9", priority:"required", description:"DHM on 4th Thursday" },
-  { id:"pr56", staffId:"s5", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", description:"Fridays: Make-up clinic / VLSC / NCSC (Merced) depending on month needs" },
+  { id:"pr44", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"1,2,3", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 1st–3rd Mondays" },
+  { id:"pr45", staffId:"s5", dayOfWeek:"Mon", weekOfMonth:"4", period:"both", locationId:"l5", priority:"preferred", ruleType:"conditional", conditionText:"Based on Dr. Yang's Modesto needs — if Yang needs Modesto, Tittler may go to extra MSC day instead", description:"4th Mon: conditional on Yang's schedule" },
+  { id:"pr46", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"1", period:"both", locationId:"l7", priority:"required", ruleType:"standard", description:"VLSC on 1st Tuesday" },
+  { id:"pr47", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"2", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 2nd Tuesday" },
+  { id:"pr48", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 3rd Tuesday" },
+  { id:"pr49", staffId:"s5", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l7", priority:"required", ruleType:"standard", description:"VLSC on 4th Tuesday" },
+  { id:"pr50", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"1,2", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 1st & 2nd Wednesdays" },
+  { id:"pr51", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"3", period:"both", locationId:"l6", priority:"required", ruleType:"standard", description:"Turlock on 3rd Wednesday" },
+  { id:"pr52", staffId:"s5", dayOfWeek:"Wed", weekOfMonth:"4", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 4th Wednesday" },
+  { id:"pr53", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l8", priority:"required", ruleType:"standard", description:"MSC on 1st Thursday" },
+  { id:"pr54", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"2,3", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 2nd & 3rd Thursdays" },
+  { id:"pr55", staffId:"s5", dayOfWeek:"Thu", weekOfMonth:"4", period:"both", locationId:"l9", priority:"required", ruleType:"standard", description:"DHM on 4th Thursday" },
+  { id:"pr56", staffId:"s5", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l7", priority:"preferred", ruleType:"complex", description:"Fridays: Make-up clinic / VLSC / NCSC (Merced) depending on month needs and surgical backlog" },
 
   // ===== DR. SAKAMOTO (s10) =====
-  { id:"pr57", staffId:"s10", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic every Wednesday (1st–4th)" },
+  { id:"pr57", staffId:"s10", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic every Wednesday (1st–4th)" },
 
   // ===== DR. MISELIS (s6) =====
-  { id:"pr58", staffId:"s6", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Monday" },
-  { id:"pr59", staffId:"s6", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday" },
-  { id:"pr60", staffId:"s6", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday" },
+  { id:"pr58", staffId:"s6", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Monday" },
+  { id:"pr59", staffId:"s6", dayOfWeek:"Tue", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Tuesday" },
+  { id:"pr60", staffId:"s6", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Wednesday" },
 
   // ===== DR. McCALL (s7) =====
-  { id:"pr61", staffId:"s7", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Monday" },
-  { id:"pr62", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"am", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday AM" },
-  { id:"pr63", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"pm", locationId:"l2", priority:"required", description:"Stockton Clinic every Tuesday PM" },
-  { id:"pr64", staffId:"s7", dayOfWeek:"Wed", weekOfMonth:"1", period:"both", locationId:"l5", priority:"preferred", description:"1st Wed: Modesto Clinic IF Dr. Lin was at MSC the day before (Tuesday)" },
-  { id:"pr65", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 1st Thursday" },
-  { id:"pr66", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"2,4", period:"both", locationId:"l5", priority:"preferred", description:"2nd & 4th Thu: Modesto Clinic if a surgeon was at MSC the day prior (Wednesday)" },
-  { id:"pr67", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 3rd Thursday" },
-  { id:"pr68", staffId:"s7", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Friday" },
+  { id:"pr61", staffId:"s7", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Monday" },
+  { id:"pr62", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"am", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Tuesday AM" },
+  { id:"pr63", staffId:"s7", dayOfWeek:"Tue", weekOfMonth:"all", period:"pm", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Tuesday PM" },
+  { id:"pr64", staffId:"s7", dayOfWeek:"Wed", weekOfMonth:"1", period:"both", locationId:"l5", priority:"preferred", ruleType:"conditional", conditionText:"Modesto Clinic IF Dr. Lin was at MSC the day before (Tuesday); otherwise Stockton", description:"1st Wed: Modesto if Lin was at MSC Tue" },
+  { id:"pr65", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"1", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 1st Thursday" },
+  { id:"pr66", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"2,4", period:"both", locationId:"l5", priority:"preferred", ruleType:"conditional", conditionText:"Modesto Clinic if a surgeon was at MSC the day prior (Wednesday); otherwise Stockton", description:"2nd & 4th Thu: Modesto if surgeon at MSC Wed" },
+  { id:"pr67", staffId:"s7", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 3rd Thursday" },
+  { id:"pr68", staffId:"s7", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic every Friday" },
 
   // ===== DR. MAHARAJ (s9) =====
-  { id:"pr69", staffId:"s9", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Wednesday (unless needed for Manteca coverage)" },
-  { id:"pr70", staffId:"s9", dayOfWeek:"Thu", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Thursday (unless needed for Manteca coverage)" },
-  { id:"pr71", staffId:"s9", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic every Friday (unless needed for Manteca coverage)" },
+  { id:"pr69", staffId:"s9", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"exception", exceptionText:"Unless needed for Manteca coverage due to staff shortages", description:"Stockton Clinic every Wednesday" },
+  { id:"pr70", staffId:"s9", dayOfWeek:"Thu", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"exception", exceptionText:"Unless needed for Manteca coverage due to staff shortages", description:"Stockton Clinic every Thursday" },
+  { id:"pr71", staffId:"s9", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l2", priority:"required", ruleType:"exception", exceptionText:"Unless needed for Manteca coverage due to staff shortages", description:"Stockton Clinic every Friday" },
 
   // ===== DR. GIRN (s8) =====
-  { id:"pr72", staffId:"s8", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"preferred", description:"Manteca Clinic every Monday (unless Stockton coverage needed)" },
-  { id:"pr73", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st–3rd Tuesdays" },
-  { id:"pr74", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l5", priority:"required", description:"Modesto Clinic on 4th Tuesday" },
-  { id:"pr75", staffId:"s8", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l13", priority:"preferred", description:"Admin Day every Wednesday (unless coverage needed)" },
-  { id:"pr76", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic on 1st, 2nd & 4th Thursdays" },
-  { id:"pr77", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"required", description:"Stockton Clinic on 3rd Thursday" },
-  { id:"pr78", staffId:"s8", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", description:"Manteca Clinic every Friday" },
+  { id:"pr72", staffId:"s8", dayOfWeek:"Mon", weekOfMonth:"all", period:"both", locationId:"l1", priority:"preferred", ruleType:"exception", exceptionText:"Unless Stockton coverage is needed due to other provider absences", description:"Manteca Clinic every Monday" },
+  { id:"pr73", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"1,2,3", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 1st–3rd Tuesdays" },
+  { id:"pr74", staffId:"s8", dayOfWeek:"Tue", weekOfMonth:"4", period:"both", locationId:"l5", priority:"required", ruleType:"standard", description:"Modesto Clinic on 4th Tuesday" },
+  { id:"pr75", staffId:"s8", dayOfWeek:"Wed", weekOfMonth:"all", period:"both", locationId:"l13", priority:"preferred", ruleType:"exception", exceptionText:"Unless coverage is needed at another clinic", description:"Admin Day every Wednesday" },
+  { id:"pr76", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"1,2,4", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic on 1st, 2nd & 4th Thursdays" },
+  { id:"pr77", staffId:"s8", dayOfWeek:"Thu", weekOfMonth:"3", period:"both", locationId:"l2", priority:"required", ruleType:"standard", description:"Stockton Clinic on 3rd Thursday" },
+  { id:"pr78", staffId:"s8", dayOfWeek:"Fri", weekOfMonth:"all", period:"both", locationId:"l1", priority:"required", ruleType:"standard", description:"Manteca Clinic every Friday" },
 ];
 
 // Holiday definitions — type: "fixed" (month/day) or "nth" (nth weekday of month) or "lastMon" (last Monday)
@@ -426,6 +427,11 @@ window.ScheduleHelper = function StaffScheduler() {
   const [chatLoading, setChatLoading] = useState(false);
   const [showChat, setShowChat] = useState(false);
 
+  // AI generation: pause/resume for critical ambiguities
+  const [genAmbiguities, setGenAmbiguities] = useState(null); // [{question, options, id}]
+  const [genAmbiguityAnswers, setGenAmbiguityAnswers] = useState({}); // {id: answer}
+  const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
+
   // Call Claude API via Netlify function (API key stays server-side)
   async function callClaudeAPI(body) {
     return fetch('/.netlify/functions/claude-proxy', {
@@ -452,6 +458,14 @@ window.ScheduleHelper = function StaffScheduler() {
   }, [locations]);
 
   // Get last name (handles "Steve Kim MD" → "Kim", "Kelsey McCall OD" → "McCall")
+  const RULE_TYPE_BADGES = {standard:'📋',conditional:'🔀',exception:'⚠️',negative:'🚫',rotation:'🔄',complex:'📝'};
+  function ruleTypeBadge(r) {
+    const rt = r.ruleType || 'standard';
+    if (rt === 'standard') return null;
+    const colors = {conditional:'#f59e0b',exception:'#ef4444',negative:'#ec4899',rotation:'#10b981',complex:'#8b5cf6'};
+    return React.createElement('span',{style:{fontSize:10,fontWeight:700,color:colors[rt]||'#6b7280',background:(colors[rt]||'#6b7280')+'22',padding:'1px 6px',borderRadius:4,marginLeft:6}}, (RULE_TYPE_BADGES[rt]||'') + ' ' + rt);
+  }
+
   function getLastName(fullName) {
     const parts = fullName.split(' ');
     const suffixes = ['MD', 'OD', 'DO', 'NP', 'PA', 'RN', 'Jr', 'Sr', 'II', 'III'];
@@ -502,7 +516,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   const [staffForm, setStaffForm] = useState({ name:'', role:'', color:defaultColors[0] });
   const [locationForm, setLocationForm] = useState({ name:'', address:'' });
-  const [ruleForm, setRuleForm] = useState({ staffId:'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:'', priority:'preferred', description:'' });
+  const [ruleForm, setRuleForm] = useState({ staffId:'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'' });
   const [vacationForm, setVacationForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
   const [showHolidayModal, setShowHolidayModal] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState(null);
@@ -738,10 +752,15 @@ window.ScheduleHelper = function StaffScheduler() {
   }
   function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
   function addRule() {
-    if (!ruleForm.staffId || !ruleForm.locationId) return;
+    if (!ruleForm.staffId) return;
+    // Standard/conditional/exception rules need locationId; negative/rotation/complex may not
+    if (ruleForm.ruleType === 'standard' && !ruleForm.locationId) return;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
     else { setRules(prev => [...prev, { id: 'r' + Date.now(), ...ruleForm }]); }
-    setRuleForm({ staffId:staff[0]?.id||'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:locations[0]?.id||'', priority:'preferred', description:'' }); setShowRuleModal(false);
+    resetRuleForm(); setShowRuleModal(false);
+  }
+  function resetRuleForm(overrides) {
+    setRuleForm({ staffId:staff[0]?.id||'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:locations[0]?.id||'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'', ...(overrides||{}) });
   }
   function removeRule(id) { setRules(prev => prev.filter(r => r.id !== id)); }
   function addVacation() {
@@ -806,7 +825,25 @@ window.ScheduleHelper = function StaffScheduler() {
       const locName = r.locationId === 'OFF' ? 'OFF' : (l?.name || '?');
       const womLabel = formatWeekOfMonth(r.weekOfMonth);
       const periodLabel = r.period === 'both' ? 'Full Day' : r.period.toUpperCase();
-      grouped[s.name].push(`${r.dayOfWeek} [${womLabel}] ${periodLabel} → ${locName} (${r.priority})${r.description ? ' — ' + r.description : ''}`);
+      const rType = r.ruleType || 'standard';
+
+      let line = '';
+      if (rType === 'standard') {
+        line = `${r.dayOfWeek} [${womLabel}] ${periodLabel} → ${locName} (${r.priority})${r.description ? ' — ' + r.description : ''}`;
+      } else if (rType === 'conditional') {
+        line = `[CONDITIONAL] ${r.dayOfWeek} [${womLabel}] → ${locName} (${r.priority}) IF: ${r.conditionText || r.description || '(no condition)'}`;
+      } else if (rType === 'exception') {
+        line = `${r.dayOfWeek} [${womLabel}] ${periodLabel} → ${locName} (${r.priority}) EXCEPTION: ${r.exceptionText || r.description || '(no exception)'}`;
+      } else if (rType === 'negative') {
+        line = `[NEGATIVE CONSTRAINT] ${r.negativeText || r.description || '(no constraint)'}`;
+      } else if (rType === 'rotation') {
+        const rotateWith = staff.find(x => x.id === r.rotateWithStaffId);
+        const rotateLoc = locations.find(x => x.id === r.rotateAtLocationId);
+        line = `[ROTATION] ${r.dayOfWeek} [${womLabel}] — Rotates monthly with ${rotateWith?.name || '?'} at ${rotateLoc?.name || locName} — Check previous month to determine whose turn`;
+      } else if (rType === 'complex') {
+        line = `[COMPLEX RULE] ${r.description || '(no description)'}`;
+      }
+      grouped[s.name].push(line);
     });
 
     let summary = '';
@@ -817,13 +854,82 @@ window.ScheduleHelper = function StaffScheduler() {
     return summary || 'No rules defined.';
   }
 
-  async function generateWithAI() {
+  // Get previous month's finalized schedule for cross-month context
+  function getPreviousMonthContext() {
+    let prevMonth = currentMonth - 1;
+    let prevYear = currentYear;
+    if (prevMonth < 0) { prevMonth = 11; prevYear--; }
+
+    const prevMonthKey = `${prevYear}-${prevMonth}`;
+    const prevFinalPlan = finalPlans[prevMonthKey];
+
+    if (!prevFinalPlan) {
+      return 'No finalized schedule found for previous month (' + MONTHS[prevMonth] + ' ' + prevYear + '). Use best judgment for rotations and cross-month dependencies.';
+    }
+
+    const prevScheduleKey = `schedule-${prevYear}-${prevMonth}-${prevFinalPlan}`;
+    const prevSchedule = schedules[prevScheduleKey];
+    if (!prevSchedule || Object.keys(prevSchedule).length === 0) {
+      return 'Previous month (' + MONTHS[prevMonth] + ' ' + prevYear + ') has a finalized plan (' + prevFinalPlan + ') but no schedule data found.';
+    }
+
+    // Summarize last week of previous month
+    const prevDays = new Date(prevYear, prevMonth + 1, 0).getDate();
+    const lastWeekStart = Math.max(prevDays - 6, 1);
+    let summary = `PREVIOUS MONTH CONTEXT (${MONTHS[prevMonth]} ${prevYear}, Plan ${prevFinalPlan}):\n`;
+    summary += `Last week assignments (for rotation/dependency tracking):\n`;
+
+    for (let d = lastWeekStart; d <= prevDays; d++) {
+      const dk = dateKey(prevYear, prevMonth, d);
+      const ds = prevSchedule[dk];
+      if (!ds) continue;
+      const dow = new Date(prevYear, prevMonth, d).getDay();
+      if (dow === 0 || dow === 6) continue;
+      summary += `  ${dk} (${DAYS_OF_WEEK[dow]}):\n`;
+      for (const [sid, periods] of Object.entries(ds)) {
+        const s = staff.find(x => x.id === sid);
+        if (!s) continue;
+        const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
+        const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
+        if (amLoc === pmLoc) summary += `    ${s.name}: ${amLoc}\n`;
+        else summary += `    ${s.name}: AM=${amLoc}, PM=${pmLoc}\n`;
+      }
+    }
+
+    // Identify rotation-relevant facts
+    const rotationRules = rules.filter(r => (r.ruleType || 'standard') === 'rotation');
+    if (rotationRules.length > 0) {
+      summary += `\nROTATION STATUS (based on previous month):\n`;
+      rotationRules.forEach(r => {
+        const s = staff.find(x => x.id === r.staffId);
+        const rotateWith = staff.find(x => x.id === r.rotateWithStaffId);
+        const rotateLoc = locations.find(x => x.id === (r.rotateAtLocationId || r.locationId));
+        if (!s || !rotateWith || !rotateLoc) return;
+        // Check who was at the rotation location in previous month
+        let wasThereLastMonth = 'unknown';
+        for (let d = 1; d <= prevDays; d++) {
+          const dk = dateKey(prevYear, prevMonth, d);
+          const ds = prevSchedule[dk];
+          if (!ds) continue;
+          if (ds[s.id]?.am === rotateLoc.id || ds[s.id]?.pm === rotateLoc.id) wasThereLastMonth = s.name;
+          if (ds[rotateWith.id]?.am === rotateLoc.id || ds[rotateWith.id]?.pm === rotateLoc.id) wasThereLastMonth = rotateWith.name;
+        }
+        summary += `  ${s.name} / ${rotateWith.name} rotation at ${rotateLoc.name}: Last month it was ${wasThereLastMonth}'s turn → This month should be ${wasThereLastMonth === s.name ? rotateWith.name : s.name}'s turn\n`;
+      });
+    }
+
+    return summary;
+  }
+
+  async function generateWithAI(userDecisions) {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
+    setGenAmbiguities(null);
     addLog('info', 'Starting AI schedule generation (biweekly batches)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
+    const prevMonthContext = getPreviousMonthContext();
 
     // Group weekdays into biweekly batches (W1+W2, W3+W4, overflow)
     const allWeekdays = [];
@@ -837,6 +943,8 @@ window.ScheduleHelper = function StaffScheduler() {
     const batch2 = allWeekdays.filter(d => d > 14);
     const batches = [batch1, batch2].filter(b => b.length > 0);
 
+    const decisionsBlock = userDecisions ? `\nUSER DECISIONS (from critical ambiguity prompts):\n${Object.entries(userDecisions).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nFollow these decisions exactly.\n` : '';
+
     const contextBlock = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
 
 MONTH: ${MONTHS[currentMonth]} ${currentYear} (${daysInMonth} days)
@@ -847,6 +955,8 @@ ${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('\n')}
 
 LOCATIONS:
 ${locations.map(l => `- ${l.name} (ID: ${l.id})`).join('\n')}
+
+${prevMonthContext}
 
 SCHEDULING RULES (by provider):
 ${rulesSummary}
@@ -868,11 +978,15 @@ ${(()=>{
   });
   return hols.length > 0 ? hols.join('\n') : 'None this month.';
 })()}
-
+${decisionsBlock}
 RULES:
 - "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.
 - Follow REQUIRED rules strictly. PREFERRED when possible.
 - Cross-provider dependencies: pay attention to rotations and conditional rules.
+- For ROTATION rules: check the PREVIOUS MONTH CONTEXT to determine whose turn it is.
+- For CONDITIONAL rules: evaluate the condition and apply accordingly.
+- For EXCEPTION rules: apply the base rule UNLESS the exception condition is met.
+- For NEGATIVE CONSTRAINT rules: ensure the constraint is satisfied (e.g., "no more than 2 Stockton Thursdays").
 - No rule or "OFF" → mark OFF. Vacation → OFF both AM/PM.
 - Holidays CLOSED → OFF both. Half-day → schedule AM, OFF PM.
 - 5th occurrence of a weekday → use W4 rules.`;
@@ -880,6 +994,8 @@ RULES:
     addLog('info', `Context: ${contextBlock.length} chars, ${allWeekdays.length} weekdays, ${batches.length} batches`);
 
     const allAssignments = {};
+    const allAmbiguities = [];
+    const allAutoResolved = [];
     let totalDays = 0;
 
     for (let bi = 0; bi < batches.length; bi++) {
@@ -904,9 +1020,17 @@ Respond ONLY with valid JSON, no markdown, no backticks:
     "YYYY-MM-DD": {
       "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }
     }
-  }
+  },
+  "ambiguities": [
+    { "id": "unique_id", "severity": "critical|minor", "question": "description of ambiguity", "chose": "what you chose and why", "alternatives": ["option A", "option B"] }
+  ],
+  "auto_resolved": [
+    { "description": "what minor conflict was auto-resolved and how" }
+  ]
 }
-Use exact IDs. Include every listed day and every staff member.`;
+Use exact IDs. Include every listed day and every staff member.
+For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules, unclear conditional): list them so the user can decide.
+For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling preference): auto-resolve with your best judgment and list in auto_resolved.`;
 
       addLog('request', `Batch ${bi+1} (${weeksInBatch}): ${batchDays.length} days, prompt ${batchPrompt.length} chars`);
 
@@ -953,7 +1077,13 @@ Use exact IDs. Include every listed day and every staff member.`;
         const dayData = parsed.assignments || parsed;
         Object.assign(allAssignments, dayData);
         totalDays += Object.keys(dayData).length;
-        addLog('success', `Batch ${bi+1} (${weeksInBatch}): ${Object.keys(dayData).length} days`);
+
+        // Collect ambiguities and auto-resolved
+        if (parsed.ambiguities) allAmbiguities.push(...parsed.ambiguities);
+        if (parsed.auto_resolved) allAutoResolved.push(...parsed.auto_resolved);
+
+        addLog('success', `Batch ${bi+1} (${weeksInBatch}): ${Object.keys(dayData).length} days${parsed.ambiguities?.length ? ', ' + parsed.ambiguities.length + ' ambiguities' : ''}`);
+
 
       } catch (err) {
         addLog('error', `Batch ${bi+1} failed: ${err.message}`);
@@ -984,15 +1114,28 @@ Use exact IDs. Include every listed day and every staff member.`;
     setSchedules(prev => ({ ...prev, [scheduleKey]: allAssignments }));
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
 
+    // Check for critical ambiguities that need user input
+    const criticals = allAmbiguities.filter(a => a.severity === 'critical');
+    if (criticals.length > 0 && !userDecisions) {
+      setGenAmbiguities(criticals);
+      setGenPendingContext({ allAssignments, allAmbiguities, allAutoResolved, totalDays, holidayEdits });
+      setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
+      setGenerating(false);
+      return;
+    }
+
     // Detect rule conflicts/violations
     const conflicts = detectRuleConflicts(allAssignments);
     if (conflicts.length > 0) {
       setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
       addLog('info', `Found ${conflicts.length} potential rule conflicts`);
-      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
     } else {
       setConflictsReport(null);
-      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+    }
+    if (allAutoResolved.length > 0) {
+      allAutoResolved.forEach(ar => addLog('info', `Auto-resolved: ${ar.description}`));
     }
     setGenerating(false);
   }
@@ -1289,59 +1432,157 @@ For questions (not changes), just respond normally without action blocks. Be con
   }
 
   function generatePDF() {
-    const schedule = getSchedule();
+    // Use final plan if set, otherwise active plan
+    const planToUse = finalPlanForMonth || activePlan;
+    const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
+    const schedule = schedules[pdfScheduleKey] || {};
     const calDays = getCalendarDays(currentYear, currentMonth);
+
+    // Count actual calendar rows (including leading empty cells)
+    const totalCells = calDays.length;
+    const rows = Math.ceil(totalCells / 7);
+
+    // Abbreviations for compact printing
+    const locAbbrev = {};
+    locations.forEach(l => {
+      // Use short name: first word or known abbreviation
+      const n = l.name;
+      locAbbrev[l.id] = n.length <= 8 ? n : n.split(/[\s\-\/]+/)[0];
+    });
+
+    const staffColors = {};
+    staff.forEach(s => { staffColors[s.id] = s.color; });
+
+    function getStaffLastName(s) { const parts = s.name.split(' '); return parts.length > 1 ? parts[parts.length - 2] : parts[0]; }
+
+    // Build cell HTML with hybrid grouping (matches calendar view)
+    function buildCellHtml(day) {
+      const dk = dateKey(currentYear, currentMonth, day);
+      const ds = schedule[dk] || {};
+      const wkend = isWeekend(currentYear, currentMonth, day);
+      if (wkend) return `<td class="wk"><div class="dn">${day}</div></td>`;
+
+      // Check holiday
+      const holiday = getHolidayForDate(currentYear, currentMonth, day);
+      if (holiday && holiday.halfDay === 'closed') {
+        return `<td><div class="dn">${day}</div><div class="hol">${holiday.name}</div></td>`;
+      }
+
+      let cellHtml = `<td><div class="dn">${day}</div>`;
+
+      if (holiday && holiday.halfDay === 'am') {
+        cellHtml += `<div class="holam">AM Only — ${holiday.name}</div>`;
+      }
+
+      // Hybrid grouping: all-day vs AM/PM split
+      const allDay = [];
+      const splitAm = [];
+      const splitPm = [];
+      const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
+
+      filteredStaff.forEach(s => {
+        const periods = ds[s.id];
+        if (!periods) return;
+        const am = periods.am || 'OFF';
+        const pm = periods.pm || 'OFF';
+        const amOk = am !== 'OFF';
+        const pmOk = pm !== 'OFF';
+        if (!amOk && !pmOk) { allDay.push({ staff: s, locId: 'OFF' }); return; }
+        if (amOk && pmOk && am === pm) { allDay.push({ staff: s, locId: am }); }
+        else { if (amOk) splitAm.push({ staff: s, locId: am }); if (pmOk) splitPm.push({ staff: s, locId: pm }); }
+      });
+
+      function groupByLoc(entries) {
+        const groups = {};
+        entries.forEach(e => { const key = e.locId === 'OFF' ? 'OFF' : e.locId; if (!groups[key]) groups[key] = { locId: e.locId, staff: [] }; groups[key].staff.push(e.staff); });
+        return Object.values(groups).sort((a, b) => { if (a.locId === 'OFF') return 1; if (b.locId === 'OFF') return -1; return 0; });
+      }
+
+      function renderGroup(g) {
+        const isOff = g.locId === 'OFF';
+        const locName = isOff ? '' : (locAbbrev[g.locId] || '?');
+        const staffList = g.staff.map(s => `<span style="color:${s.color}">${getStaffLastName(s)}</span>`).join(', ');
+        if (isOff) return `<div class="se off">${staffList} <i>OFF</i></div>`;
+        return `<div class="se"><b class="ln">${locName}</b> ${staffList}</div>`;
+      }
+
+      const allDayGroups = groupByLoc(allDay);
+      const amGroups = groupByLoc(splitAm);
+      const pmGroups = groupByLoc(splitPm);
+      const hasSplit = splitAm.length > 0 || splitPm.length > 0;
+
+      // Render all-day groups
+      allDayGroups.forEach(g => { cellHtml += renderGroup(g); });
+
+      // Render AM/PM split
+      if (hasSplit) {
+        cellHtml += `<div class="split"><div class="sp">`;
+        cellHtml += `<div class="pl">AM</div>`;
+        amGroups.forEach(g => { cellHtml += renderGroup(g); });
+        cellHtml += `</div><div class="sp">`;
+        cellHtml += `<div class="pl">PM</div>`;
+        pmGroups.forEach(g => { cellHtml += renderGroup(g); });
+        cellHtml += `</div></div>`;
+      }
+
+      cellHtml += `</td>`;
+      return cellHtml;
+    }
+
+    // Dynamic font sizing based on number of providers shown
+    const providerCount = staff.filter(s => visibleStaff.has(s.id)).length;
+    const cellFontSize = providerCount > 8 ? 6.5 : providerCount > 6 ? 7 : 7.5;
+    const dayNumSize = providerCount > 8 ? 9 : 10;
+    const locFontSize = cellFontSize;
+    const cellPad = providerCount > 8 ? '1px' : '2px';
 
     let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${MONTHS[currentMonth]} ${currentYear} Schedule</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
       *{margin:0;padding:0;box-sizing:border-box}
-      @page{size:landscape;margin:10mm}
-      body{font-family:'DM Sans',sans-serif;background:#fff;color:#1a1a2e;padding:12px}
-      h1{font-size:20px;font-weight:700;margin-bottom:2px}
-      .sub{font-size:11px;color:#666;margin-bottom:10px}
-      .legend{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;padding:6px 10px;background:#f8f9fa;border-radius:4px}
-      .li{display:flex;align-items:center;gap:3px;font-size:8px;font-weight:600}
-      .ld{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+      @page{size:landscape;margin:6mm 8mm}
+      body{font-family:'DM Sans',Arial,sans-serif;background:#fff;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;padding:0 2px}
+      h1{font-size:15px;font-weight:700}
+      .sub{font-size:9px;color:#666}
+      .plan{font-size:9px;color:#1a5;font-weight:700;background:#e6f9f0;padding:1px 6px;border-radius:3px}
+      .legend{display:flex;flex-wrap:wrap;gap:6px 10px;margin-bottom:5px;padding:3px 8px;background:#f5f5f5;border-radius:3px;border:1px solid #e0e0e0}
+      .li{display:flex;align-items:center;gap:2px;font-size:7.5px;font-weight:600}
+      .ld{width:6px;height:6px;border-radius:50%;flex-shrink:0}
       table{width:100%;border-collapse:collapse;table-layout:fixed}
-      th{background:#1a1a2e;color:#fff;padding:6px 2px;font-size:10px;font-weight:600;text-align:center}
-      td{border:1px solid #ddd;padding:2px;vertical-align:top;font-size:7px}
-      .dn{font-weight:700;font-size:12px;color:#1a1a2e;margin-bottom:1px}
-      .wk{background:#f3f4f6}
-      .se{padding:1px 2px;border-radius:1px;margin-bottom:1px;font-size:7px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .pl{font-weight:700;font-size:6.5px;text-transform:uppercase;color:#888;margin-top:1px;letter-spacing:0.3px}
+      th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:9px;font-weight:700;text-align:center;letter-spacing:0.5px}
+      td{border:1px solid #ccc;padding:${cellPad};vertical-align:top;font-size:${cellFontSize}px;line-height:1.25;overflow:hidden}
+      .dn{font-weight:700;font-size:${dayNumSize}px;color:#1a1a2e;margin-bottom:1px}
+      .wk{background:#f7f7f7}
+      .se{margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .se.off{color:#aaa;font-style:italic;font-size:${cellFontSize - 0.5}px}
+      .ln{font-weight:700;color:#333;font-size:${locFontSize}px}
+      .pl{font-weight:700;font-size:${cellFontSize - 0.5}px;text-transform:uppercase;color:#888;border-bottom:0.5px solid #ddd;margin:1px 0;letter-spacing:0.3px}
+      .split{display:flex;gap:2px}
+      .sp{flex:1;min-width:0}
+      .hol{background:#fee2e2;color:#b91c1c;font-size:${cellFontSize}px;font-weight:700;text-align:center;padding:2px;border-radius:2px;margin-top:1px}
+      .holam{background:#fef3c7;color:#92400e;font-size:${cellFontSize - 0.5}px;font-weight:600;text-align:center;padding:1px;border-radius:2px;margin-bottom:1px}
     </style></head><body>`;
 
-    html += `<h1>${MONTHS[currentMonth]} ${currentYear} — Provider Schedule</h1>`;
-    html += `<p class="sub">Generated ${new Date().toLocaleDateString()}</p>`;
+    html += `<div class="hdr"><h1>${MONTHS[currentMonth]} ${currentYear} — Provider Schedule</h1><div>`;
+    html += `<span class="plan">Plan ${planToUse}${finalPlanForMonth ? ' (Final)' : ''}</span> `;
+    html += `<span class="sub">Generated ${new Date().toLocaleDateString()}</span>`;
+    html += `</div></div>`;
+
     html += `<div class="legend">`;
-    staff.forEach(s => { html += `<div class="li"><div class="ld" style="background:${s.color}"></div>${getLastName(s.name)} (${s.name.split(' ')[0]})</div>`; });
-    html += `</div><table><thead><tr>`;
+    staff.filter(s => visibleStaff.has(s.id)).forEach(s => {
+      html += `<div class="li"><div class="ld" style="background:${s.color}"></div>${getStaffLastName(s)} (${s.name.split(' ')[0][0]}.)</div>`;
+    });
+    html += `</div>`;
+
+    html += `<table><thead><tr>`;
     DAYS_OF_WEEK.forEach(d => { html += `<th>${d}</th>`; });
     html += `</tr></thead><tbody><tr>`;
 
     calDays.forEach((day, i) => {
       if (i > 0 && i % 7 === 0) html += `</tr><tr>`;
       if (day === null) { html += `<td class="wk"></td>`; return; }
-      const dk = dateKey(currentYear, currentMonth, day);
-      const wkend = isWeekend(currentYear, currentMonth, day);
-      html += `<td class="${wkend?'wk':''}"><div class="dn">${day}</div>`;
-      if (!wkend) {
-        ['am','pm'].forEach(period => {
-          html += `<div class="pl">${period.toUpperCase()}</div>`;
-          staff.forEach(s => {
-            const a = schedule[dk]?.[s.id]?.[period];
-            if (!a) return;
-            if (a === 'OFF') {
-              html += `<div class="se" style="background:#f3f4f6;color:#999;font-style:italic">${getLastName(s.name)} — OFF</div>`;
-            } else {
-              const loc = locations.find(l => l.id === a);
-              html += `<div class="se" style="background:${s.color}12;color:${s.color};border-left:2px solid ${s.color}">${getLastName(s.name)} → ${loc?.name||'?'}</div>`;
-            }
-          });
-        });
-      }
-      html += `</td>`;
+      html += buildCellHtml(day);
     });
 
     const rem = calDays.length % 7;
@@ -1351,7 +1592,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
-    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 500); }; }
+    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
   }
 
   const calDays = getCalendarDays(currentYear, currentMonth);
@@ -2015,7 +2256,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                           <div style={{padding:'16px 24px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                               <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Scheduling Rules ({sr.length})</span>
-                              <Btn variant="ghost" onClick={()=>{setEditingRule(null);setRuleForm({staffId:s.id,dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:locations[0]?.id||'',priority:'preferred',description:''});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>
+                              <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({staffId:s.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>
                             </div>
                             {sr.length===0 ? (
                               <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules defined.</div>
@@ -2030,11 +2271,11 @@ For questions (not changes), just respond normally without action blocks. Be con
                                         <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
                                         {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
                                         <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
-                                        <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip></span>
+                                        <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
                                         {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                       </div>
                                       <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                        <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
+                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
                                         <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
                                       </div>
                                     </div>
@@ -2109,7 +2350,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         <div style={{borderTop:'1px solid #2a2a4a',padding:'16px 20px'}}>
                           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                             <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Rules at {l.name}</span>
-                            <Btn variant="ghost" onClick={()=>{setEditingRule(null);setRuleForm({staffId:staff[0]?.id||'',dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:l.id,priority:'preferred',description:''});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>
+                            <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({locationId:l.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>
                           </div>
                           {lr.length===0 ? (
                             <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules assigned to this location.</div>
@@ -2124,11 +2365,11 @@ For questions (not changes), just respond normally without action blocks. Be con
                                       <span style={{color:'#9ca3af',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
                                       <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
                                       {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
-                                      <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip></span>
+                                      <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
                                       {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                     </div>
                                     <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
+                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
                                       <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
                                     </div>
                                   </div>
@@ -2150,7 +2391,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
-                <Btn onClick={()=>{setEditingRule(null);setRuleForm({staffId:staff[0]?.id||'',dayOfWeek:'Mon',weekOfMonth:'all',period:'both',locationId:locations[0]?.id||'',priority:'preferred',description:''});setShowRuleModal(true)}}
+                <Btn onClick={()=>{setEditingRule(null);resetRuleForm();setShowRuleModal(true)}}
                   disabled={staff.length===0||locations.length===0}>+ Add Rule</Btn>
               </div>
 
@@ -2190,12 +2431,12 @@ For questions (not changes), just respond normally without action blocks. Be con
                             <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
                           </div>
                           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-                            <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>
+                            <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
                             {r.description && <span style={{fontSize:12,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
                           </div>
                         </div>
                         <div style={{display:'flex',gap:6,flexShrink:0}}>
-                          <span onClick={()=>{setEditingRule(r);setRuleForm({staffId:r.staffId,dayOfWeek:r.dayOfWeek,weekOfMonth:r.weekOfMonth||'all',period:r.period,locationId:r.locationId,priority:r.priority,description:r.description});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
+                          <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
                           <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>
                         </div>
                       </div>
@@ -2333,25 +2574,123 @@ For questions (not changes), just respond normally without action blocks. Be con
       </Modal>
 
       <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null)}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-          <Select label="Staff Member" value={ruleForm.staffId} onChange={v=>setRuleForm(p=>({...p,staffId:v}))}
-            options={staff.map(s=>({value:s.id,label:s.name}))} />
-          <Select label="Day of Week" value={ruleForm.dayOfWeek} onChange={v=>setRuleForm(p=>({...p,dayOfWeek:v}))}
-            options={WEEKDAYS_ONLY.map(d=>({value:d,label:d}))} />
+        {/* Rule Type Selector */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',marginBottom:6}}>Rule Type</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {[{v:'standard',l:'📋 Standard',c:'#6366f1'},{v:'conditional',l:'🔀 Conditional (IF/THEN)',c:'#f59e0b'},{v:'exception',l:'⚠️ Exception',c:'#ef4444'},{v:'negative',l:'🚫 Negative Constraint',c:'#ec4899'},{v:'rotation',l:'🔄 Rotation/Shared',c:'#10b981'},{v:'complex',l:'📝 Complex (Free Text)',c:'#8b5cf6'}].map(t=>(
+              <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))}
+                style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,
+                  background:ruleForm.ruleType===t.v?t.c+'22':'#12121f',color:ruleForm.ruleType===t.v?t.c:'#6b7280',
+                  border:'1px solid '+(ruleForm.ruleType===t.v?t.c:'#2a2a4a'),transition:'all 0.15s'}}>{t.l}</div>
+            ))}
+          </div>
         </div>
-        <WeekOfMonthPicker value={ruleForm.weekOfMonth} onChange={v=>setRuleForm(p=>({...p,weekOfMonth:v}))} />
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-          <Select label="Time Period" value={ruleForm.period} onChange={v=>setRuleForm(p=>({...p,period:v}))}
-            options={[{value:'both',label:'Full Day (AM & PM)'},{value:'am',label:'AM Only'},{value:'pm',label:'PM Only'}]} />
-          <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
-            options={[...locations.map(l=>({value:l.id,label:l.name+(l.address?` (${l.address})`:'')})),{value:'OFF',label:'OFF (Day Off)'}]} />
-          <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
-            options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
-        </div>
-        <Textarea label="Notes / Conditions (optional)" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))} placeholder="e.g., Only if Dr. Lin was at MSC the day before..." rows={3} />
+
+        {/* Common: Staff selector (all types) */}
+        <Select label="Staff Member" value={ruleForm.staffId} onChange={v=>setRuleForm(p=>({...p,staffId:v}))}
+          options={staff.map(s=>({value:s.id,label:s.name}))} />
+
+        {/* Standard, Conditional, Exception: Day/Week/Period/Location */}
+        {(ruleForm.ruleType === 'standard' || ruleForm.ruleType === 'conditional' || ruleForm.ruleType === 'exception' || ruleForm.ruleType === 'rotation') && (
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:12}}>
+              <Select label="Day of Week" value={ruleForm.dayOfWeek} onChange={v=>setRuleForm(p=>({...p,dayOfWeek:v}))}
+                options={WEEKDAYS_ONLY.map(d=>({value:d,label:d}))} />
+              <Select label="Time Period" value={ruleForm.period} onChange={v=>setRuleForm(p=>({...p,period:v}))}
+                options={[{value:'both',label:'Full Day'},{value:'am',label:'AM Only'},{value:'pm',label:'PM Only'}]} />
+            </div>
+            <WeekOfMonthPicker value={ruleForm.weekOfMonth} onChange={v=>setRuleForm(p=>({...p,weekOfMonth:v}))} />
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
+                options={[...locations.map(l=>({value:l.id,label:l.name})),{value:'OFF',label:'OFF (Day Off)'}]} />
+              <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
+                options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
+            </div>
+          </div>
+        )}
+
+        {/* Conditional: IF condition */}
+        {ruleForm.ruleType === 'conditional' && (
+          <Textarea label="IF Condition (when should this rule apply?)" value={ruleForm.conditionText} onChange={v=>setRuleForm(p=>({...p,conditionText:v}))}
+            placeholder="e.g., IF Dr. Choi was at DHM last month, THEN assign Dr. Yang to DHM this month" rows={3} />
+        )}
+
+        {/* Exception: base rule + exception condition */}
+        {ruleForm.ruleType === 'exception' && (
+          <Textarea label="EXCEPTION condition (when should this rule NOT apply?)" value={ruleForm.exceptionText} onChange={v=>setRuleForm(p=>({...p,exceptionText:v}))}
+            placeholder="e.g., EXCEPTION: If 1st Friday falls on 1st of month AND Dr. Tittler was NOT in surgery the day before → move to 2nd Friday" rows={3} />
+        )}
+
+        {/* Negative constraint */}
+        {ruleForm.ruleType === 'negative' && (
+          <Textarea label="Negative Constraint (what should NOT happen?)" value={ruleForm.negativeText} onChange={v=>setRuleForm(p=>({...p,negativeText:v}))}
+            placeholder="e.g., Does NOT want 3 Stockton Thursdays in a month. Maximum 2." rows={3} />
+        )}
+
+        {/* Rotation: who to rotate with and where */}
+        {ruleForm.ruleType === 'rotation' && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:8}}>
+            <Select label="Rotates With" value={ruleForm.rotateWithStaffId} onChange={v=>setRuleForm(p=>({...p,rotateWithStaffId:v}))}
+              options={staff.filter(s=>s.id!==ruleForm.staffId).map(s=>({value:s.id,label:s.name}))} />
+            <Select label="Rotation Location" value={ruleForm.rotateAtLocationId} onChange={v=>setRuleForm(p=>({...p,rotateAtLocationId:v}))}
+              options={locations.map(l=>({value:l.id,label:l.name}))} />
+          </div>
+        )}
+
+        {/* Complex: free text */}
+        {ruleForm.ruleType === 'complex' && (
+          <Textarea label="Describe the rule in plain English" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))}
+            placeholder="e.g., If Kim is at Turlock on 1st Friday AND Tittler was NOT in surgery Thursday, move Kim to 2nd Friday and notify Turlock Eye Care. Otherwise keep 1st Friday." rows={4} />
+        )}
+
+        {/* Notes (for all types except complex which uses description field) */}
+        {ruleForm.ruleType !== 'complex' && ruleForm.ruleType !== 'negative' && (
+          <Textarea label="Notes (optional)" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))} placeholder="Additional context..." rows={2} />
+        )}
+
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
           <Btn variant="ghost" onClick={()=>{setShowRuleModal(false);setEditingRule(null)}}>Cancel</Btn>
           <Btn onClick={addRule}>{editingRule?'Save':'Add Rule'}</Btn>
+        </div>
+      </Modal>
+
+      {/* Ambiguity Resolution Modal */}
+      <Modal open={!!genAmbiguities && genAmbiguities.length > 0} onClose={()=>{setGenAmbiguities(null);setGenPendingContext(null)}} title="⚠️ Critical Scheduling Decisions Needed" wide>
+        <div style={{fontSize:13,color:'#9ca3af',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
+        {genAmbiguities && genAmbiguities.map((amb, ai) => (
+          <div key={amb.id || ai} style={{background:'#1a1520',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600,color:'#fbbf24',marginBottom:6}}>{amb.question}</div>
+            <div style={{fontSize:12,color:'#9ca3af',marginBottom:8}}>AI chose: {amb.chose}</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+              {(amb.alternatives || []).map((alt, oi) => (
+                <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))}
+                  style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                    background:genAmbiguityAnswers[amb.id||ai]===alt?'#6366f133':'#12121f',
+                    color:genAmbiguityAnswers[amb.id||ai]===alt?'#818cf8':'#6b7280',
+                    border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===alt?'#6366f1':'#2a2a4a')}}>{alt}</div>
+              ))}
+              <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
+                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                  background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'#12121f',
+                  color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'#6b7280',
+                  border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'#2a2a4a')}}>Keep AI's choice</div>
+            </div>
+          </div>
+        ))}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
+          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({})}}>Cancel (keep current schedule)</Btn>
+          <Btn variant="success" onClick={()=>{
+            const decisions = {};
+            if (genAmbiguities) genAmbiguities.forEach((amb, ai) => {
+              const key = amb.id || 'ambiguity_' + ai;
+              decisions[amb.question] = genAmbiguityAnswers[key] || amb.chose;
+            });
+            setGenAmbiguities(null);
+            setGenPendingContext(null);
+            setGenAmbiguityAnswers({});
+            generateWithAI(decisions);
+          }}>Re-generate with My Decisions</Btn>
         </div>
       </Modal>
 
