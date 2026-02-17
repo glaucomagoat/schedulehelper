@@ -431,6 +431,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [genAmbiguities, setGenAmbiguities] = useState(null); // [{question, options, id}]
   const [genAmbiguityAnswers, setGenAmbiguityAnswers] = useState({}); // {id: answer}
   const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
+  const [showPdfMenu, setShowPdfMenu] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
   async function callClaudeAPI(body) {
@@ -655,6 +656,13 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  useEffect(() => {
+    if (!showPdfMenu) return;
+    const handler = (e) => { if (!e.target.closest('[data-pdf-menu]')) setShowPdfMenu(false); };
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, [showPdfMenu]);
 
   async function handleAuth() {
     const { username, password, isRegister } = loginForm;
@@ -1619,6 +1627,174 @@ For questions (not changes), just respond normally without action blocks. Be con
     if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
   }
 
+  // Classic PDF: grid with staff initials across top, location abbreviations per AM/PM row
+  function generateClassicPDF() {
+    const planToUse = finalPlanForMonth || activePlan;
+    const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
+    const schedule = schedules[pdfScheduleKey] || {};
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+    // Build staff initials (2-char max)
+    const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
+    function staffInitial(s) {
+      const parts = s.name.replace(/^Dr\.\s*/i,'').split(/\s+/);
+      if (parts.length >= 2) {
+        const last = parts[parts.length - 1];
+        return last.substring(0,2).toUpperCase();
+      }
+      return parts[0].substring(0,2).toUpperCase();
+    }
+
+    // Location abbreviation map — 1-5 chars to match classic style
+    const LOC_ABBREV = {};
+    locations.forEach(l => {
+      const n = l.name.toLowerCase();
+      if (n.includes('manteca')) LOC_ABBREV[l.id] = 'M';
+      else if (n.includes('stockton')) LOC_ABBREV[l.id] = 'S';
+      else if (n.includes('modesto')) LOC_ABBREV[l.id] = 'MOD';
+      else if (n.includes('vlsc')) LOC_ABBREV[l.id] = 'VLSC';
+      else if (n.includes('msc') || n.includes('surgery center')) LOC_ABBREV[l.id] = 'MSC';
+      else if (n.includes('dhm') || n.includes('delta')) LOC_ABBREV[l.id] = 'DHM';
+      else if (n.includes('turlock')) LOC_ABBREV[l.id] = 'T';
+      else if (n.includes('admin')) LOC_ABBREV[l.id] = 'ADM';
+      else if (n.includes('lvc') || n.includes('lasik')) LOC_ABBREV[l.id] = 'LVC';
+      else if (n.includes('sjlsc') || n.includes('san joaquin')) LOC_ABBREV[l.id] = 'SJ';
+      else if (n.includes('ncsc') || n.includes('merced')) LOC_ABBREV[l.id] = 'NC';
+      else if (n.includes('va') || n.includes('veteran')) LOC_ABBREV[l.id] = 'VA';
+      else LOC_ABBREV[l.id] = l.name.substring(0,4).toUpperCase();
+    });
+
+    const staffCount = filteredStaff.length;
+    const colW = Math.max(18, Math.floor(120 / staffCount)); // width per staff column
+    const dayColW = colW * staffCount + 8; // total day column width
+
+    // Collect weekdays grouped by week row
+    const weekRows = [];
+    let currentWeek = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(currentYear, currentMonth, d).getDay();
+      if (dow === 0) continue; // skip sunday
+      if (dow === 6) continue; // skip saturday for now
+      if (dow === 1 && currentWeek.length > 0) { weekRows.push(currentWeek); currentWeek = []; }
+      currentWeek.push({ day: d, dow: dow });
+    }
+    if (currentWeek.length > 0) weekRows.push(currentWeek);
+
+    // Dynamic font sizing
+    const fs = staffCount > 8 ? 6 : staffCount > 6 ? 6.5 : 7;
+    const initFs = staffCount > 8 ? 5.5 : 6;
+    const dayFs = 8;
+
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${MONTHS[currentMonth]} ${currentYear} Classic Schedule</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+      *{margin:0;padding:0;box-sizing:border-box}
+      @page{size:landscape;margin:4mm 6mm}
+      body{font-family:'DM Sans',Arial,Helvetica,sans-serif;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}
+      h1{font-size:13px;font-weight:700}
+      .sub{font-size:8px;color:#555}
+      .plan{font-size:8px;color:#1a5;font-weight:700}
+      table{width:100%;border-collapse:collapse;table-layout:fixed}
+      th{background:#1a1a2e;color:#fff;padding:2px 1px;font-size:${dayFs}px;font-weight:700;text-align:center;border:1px solid #999}
+      td{border:1px solid #999;padding:0;vertical-align:middle;text-align:center;font-size:${fs}px;font-weight:600;height:auto}
+      .daynum{font-weight:700;font-size:${dayFs}px;text-align:left;padding:1px 3px;background:#eee;border-bottom:1px solid #bbb}
+      .initrow{display:flex}
+      .init{flex:1;font-size:${initFs}px;font-weight:700;text-align:center;color:#333;border-right:0.5px solid #ddd;padding:1px 0;background:#f0f0f5}
+      .init:last-child{border-right:none}
+      .period{display:flex;align-items:stretch}
+      .plbl{writing-mode:vertical-lr;text-orientation:mixed;font-size:5.5px;font-weight:700;color:#666;padding:0 1px;background:#f5f5f5;border-right:0.5px solid #ccc;display:flex;align-items:center;justify-content:center;min-width:10px;letter-spacing:0.5px}
+      .slots{display:flex;flex:1}
+      .slot{flex:1;font-size:${fs}px;font-weight:600;padding:1px 0;text-align:center;border-right:0.5px solid #ddd;white-space:nowrap;overflow:hidden;line-height:1.15}
+      .slot:last-child{border-right:none}
+      .slot.off{color:#bbb;font-style:italic;font-size:${fs - 0.5}px}
+      .ampm-divider{border-top:0.5px solid #aaa}
+      .wkend{background:#f5f5f5}
+      .hol{background:#fee2e2;color:#b91c1c;font-weight:700;font-size:${fs}px;text-align:center;padding:3px}
+      .holam{background:#fef3c7;color:#92400e;font-size:${fs - 0.5}px;font-weight:600;text-align:center;padding:1px}
+      .empty{background:#f9f9f9}
+    </style></head><body>`;
+
+    html += `<div class="hdr"><h1>MONDAY ${MONTHS[currentMonth].toUpperCase()}.${currentYear}</h1>`;
+    html += `<div><span class="plan">Plan ${planToUse}${finalPlanForMonth ? ' (Final)' : ''}</span> `;
+    html += `<span class="sub">Updated ${new Date().toLocaleDateString()} </span></div></div>`;
+
+    // Build header row with day-of-week names
+    html += `<table><thead><tr>`;
+    const dayNames = ['Mon','Tue','Wed','Thu','Fri'];
+    dayNames.forEach(dn => {
+      html += `<th>${dn}</th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    // For each week
+    weekRows.forEach(week => {
+      // Pad to 5 columns (Mon-Fri)
+      const weekSlots = [null,null,null,null,null];
+      week.forEach(d => { weekSlots[d.dow - 1] = d; });
+
+      html += `<tr>`;
+      weekSlots.forEach(slot => {
+        if (!slot) { html += `<td class="empty"></td>`; return; }
+        const dk = dateKey(currentYear, currentMonth, slot.day);
+        const holiday = getHolidayForDate(currentYear, currentMonth, slot.day);
+
+        html += `<td>`;
+        // Day number row
+        html += `<div class="daynum">${slot.day}</div>`;
+
+        if (holiday && holiday.halfDay === 'closed') {
+          html += `<div class="hol">CLOSED — ${holiday.name}</div>`;
+          html += `</td>`;
+          return;
+        }
+
+        // Staff initials header
+        html += `<div class="initrow">`;
+        filteredStaff.forEach(s => {
+          html += `<div class="init">${staffInitial(s)}</div>`;
+        });
+        html += `</div>`;
+
+        if (holiday && holiday.halfDay === 'am') {
+          html += `<div class="holam">AM Only — ${holiday.name}</div>`;
+        }
+
+        // AM row
+        html += `<div class="period"><div class="plbl">AM</div><div class="slots">`;
+        filteredStaff.forEach(s => {
+          const a = schedule[dk]?.[s.id]?.am;
+          if (!a || a === 'OFF') { html += `<div class="slot off">OFF</div>`; }
+          else { html += `<div class="slot">${LOC_ABBREV[a] || '?'}</div>`; }
+        });
+        html += `</div></div>`;
+
+        // PM row
+        html += `<div class="period ampm-divider"><div class="plbl">PM</div><div class="slots">`;
+        filteredStaff.forEach(s => {
+          const a = schedule[dk]?.[s.id]?.pm;
+          if (holiday && holiday.halfDay === 'am') {
+            html += `<div class="slot off">OFF</div>`;
+          } else if (!a || a === 'OFF') {
+            html += `<div class="slot off">OFF</div>`;
+          } else {
+            html += `<div class="slot">${LOC_ABBREV[a] || '?'}</div>`;
+          }
+        });
+        html += `</div></div>`;
+        html += `</td>`;
+      });
+      html += `</tr>`;
+    });
+
+    html += `</tbody></table></body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
+  }
+
   const calDays = getCalendarDays(currentYear, currentMonth);
   const schedule = getSchedule();
   function prevMonth() { if (currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1)} else setCurrentMonth(m=>m-1); }
@@ -1718,7 +1894,23 @@ For questions (not changes), just respond normally without action blocks. Be con
                   <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
                   </Btn>
-                  <Btn variant="secondary" onClick={generatePDF}>📄 Export PDF</Btn>
+                  <div data-pdf-menu="true" style={{position:'relative'}}>
+                    <Btn variant="secondary" onClick={()=>setShowPdfMenu(p=>!p)}>📄 Export PDF ▾</Btn>
+                    {showPdfMenu && (
+                      <div style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'#1e1e35',border:'1px solid #2a2a4a',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,0.5)',zIndex:100,overflow:'hidden',minWidth:200}}>
+                        <div onClick={()=>{generateClassicPDF();setShowPdfMenu(false)}}
+                          style={{padding:'10px 16px',cursor:'pointer',fontSize:13,fontWeight:600,color:'#e8e8f0',borderBottom:'1px solid #2a2a4a',display:'flex',alignItems:'center',gap:8}}
+                          onMouseEnter={e=>e.target.style.background='#2a2a4a'} onMouseLeave={e=>e.target.style.background='transparent'}>
+                          <span>📊</span><div><div>Classic Style</div><div style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Initials grid — matches original PDF</div></div>
+                        </div>
+                        <div onClick={()=>{generatePDF();setShowPdfMenu(false)}}
+                          style={{padding:'10px 16px',cursor:'pointer',fontSize:13,fontWeight:600,color:'#e8e8f0',display:'flex',alignItems:'center',gap:8}}
+                          onMouseEnter={e=>e.target.style.background='#2a2a4a'} onMouseLeave={e=>e.target.style.background='transparent'}>
+                          <span>📋</span><div><div>New Style</div><div style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Location-grouped blocks — full names</div></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <Btn variant="danger" onClick={clearSchedule} style={{fontSize:12}}>Clear</Btn>
                 </div>
               </div>
