@@ -1455,11 +1455,11 @@ For questions (not changes), just respond normally without action blocks. Be con
 
     const locAbbrev = {};
     locations.forEach(l => { const n = l.name; locAbbrev[l.id] = n.length <= 10 ? n : n.split(/[\s\-\/]+/)[0]; });
-    function getStaffLastName(s) { const parts = s.name.split(' '); return parts.length > 1 ? parts[parts.length - 1] : parts[0]; }
+    function getStaffLastName(s) { return getLastName(s.name); }
 
     // Count calendar rows for dynamic sizing
     const rows = Math.ceil(calDays.length / 7);
-    const scaleFactor = rows <= 4 ? 1.3 : rows <= 5 ? 1.15 : 1.0;
+    const scaleFactor = rows <= 4 ? 1.6 : rows <= 5 ? 1.35 : 1.15;
     const provScale = providerCount > 8 ? 0.85 : providerCount > 6 ? 0.95 : 1.0;
     const baseFont = 9 * scaleFactor * provScale;
     const nameFont = baseFont * 0.95;
@@ -1515,7 +1515,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0}';
     html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
     html += 'th{background:#1a1a2e;color:#fff;padding:5px 2px;font-size:' + Math.max(10,baseFont*1.1) + 'px;font-weight:700;text-align:center}';
-    html += 'td{border:1px solid #ccc;padding:2px 3px;vertical-align:top;font-size:' + nameFont + 'px;line-height:1.3;overflow:hidden}';
+    html += 'td{border:1px solid #ccc;padding:3px 4px;vertical-align:top;font-size:' + nameFont + 'px;line-height:1.35;overflow:hidden;height:' + Math.floor(150 / rows) + 'mm}';
     html += '.dn{font-weight:700;font-size:' + dayNumFont + 'px;color:#1a1a2e;margin-bottom:1px}';
     html += '.wk{background:#f7f7f7}';
     html += '.se{margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:' + nameFont + 'px}';
@@ -1561,8 +1561,10 @@ For questions (not changes), just respond normally without action blocks. Be con
     const staffCount = filteredStaff.length;
 
     // Staff initials: first letter of first name + first letter of last name (SK for Steve Kim, MY for Mike Yang)
+    // Must strip MD/OD/DO suffixes first
+    const suffixes = ['MD','OD','DO','NP','PA','RN','Jr','Sr','II','III'];
     function staffInit(s) {
-      const parts = s.name.replace(/^Dr\.\s*/i,'').split(/\s+/);
+      const parts = s.name.replace(/^Dr\.\s*/i,'').split(/\s+/).filter(p => !suffixes.includes(p.replace(/[.,]/g,'')));
       if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
       return parts[0].substring(0,2).toUpperCase();
     }
@@ -1614,7 +1616,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '.meta{font-size:8px;color:#555}.plan{font-size:8px;color:#1a5;font-weight:700}';
     html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
     html += 'th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:11px;font-weight:700;text-align:center;border:1px solid #666}';
-    html += 'td{border:1px solid #888;padding:0;vertical-align:top}';
+    html += 'td{border:1px solid #888;padding:0;vertical-align:top;height:' + Math.floor(150 / weekRows.length) + 'mm}';
     html += '.daynum{font-weight:700;font-size:' + dayNumFs + 'px;padding:2px 4px;background:#eee;border-bottom:1px solid #bbb}';
     // Use table layout for initials, AM, PM rows so columns align perfectly
     html += '.row{display:table;width:100%;table-layout:fixed}';
@@ -1622,7 +1624,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '.row-cell{display:table-cell;font-size:' + initFs + 'px;font-weight:700;text-align:center;color:#333;padding:2px 0;background:#f0f0f5;border-right:0.5px solid #ddd}';
     html += '.row-cell:last-child{border-right:none}';
     html += '.row-lbl{display:table-cell;width:' + amLblW + 'px;font-size:' + lblFs + 'px;font-weight:700;color:#555;text-align:center;vertical-align:middle;background:#f5f5f5;border-right:0.5px solid #ccc}';
-    html += '.row-val{display:table-cell;font-size:' + cellFs + 'px;font-weight:600;padding:3px 0;text-align:center;border-right:0.5px solid #ddd;vertical-align:middle;line-height:1.2}';
+    html += '.row-val{display:table-cell;font-size:' + cellFs + 'px;font-weight:600;padding:2px 0;text-align:center;border-right:0.5px solid #ddd;vertical-align:middle;line-height:1.2;overflow:hidden;word-break:break-all}';
     html += '.row-val:last-child{border-right:none}';
     html += '.row-val.off{color:#bbb;font-style:italic}';
     html += '.pm-border{border-top:1px solid #bbb}';
