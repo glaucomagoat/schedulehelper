@@ -1445,6 +1445,30 @@ For questions (not changes), just respond normally without action blocks. Be con
     setChatLoading(false);
   }
 
+  // Shared: build unique staff initials with disambiguation (KMi vs KMc)
+  function buildStaffInitials(staffList) {
+    const suffixes = ['MD','OD','DO','NP','PA','RN','Jr','Sr','II','III'];
+    function cleanParts(s) {
+      return s.name.replace(/^Dr\.\s*/i,'').split(/\s+/).filter(p => !suffixes.includes(p.replace(/[.,]/g,'')));
+    }
+    // First pass: base initials
+    const base = staffList.map(s => {
+      const p = cleanParts(s);
+      return p.length >= 2 ? (p[0][0] + p[p.length-1][0]).toUpperCase() : p[0].substring(0,2).toUpperCase();
+    });
+    // Find duplicates and disambiguate with lowercase 2nd letter of last name
+    const counts = {};
+    base.forEach(b => { counts[b] = (counts[b]||0)+1; });
+    return staffList.map((s,i) => {
+      if (counts[base[i]] > 1) {
+        const p = cleanParts(s);
+        const last = p.length >= 2 ? p[p.length-1] : p[0];
+        return base[i] + last[1].toLowerCase();
+      }
+      return base[i];
+    });
+  }
+
   function generatePDF() {
     const planToUse = finalPlanForMonth || activePlan;
     const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
@@ -1452,19 +1476,19 @@ For questions (not changes), just respond normally without action blocks. Be con
     const calDays = getCalendarDays(currentYear, currentMonth);
     const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
     const providerCount = filteredStaff.length;
+    const initials = buildStaffInitials(filteredStaff);
 
     const locAbbrev = {};
     locations.forEach(l => { const n = l.name; locAbbrev[l.id] = n.length <= 10 ? n : n.split(/[\s\-\/]+/)[0]; });
-    function getStaffLastName(s) { return getLastName(s.name); }
 
-    // Count calendar rows for dynamic sizing
     const rows = Math.ceil(calDays.length / 7);
-    const scaleFactor = rows <= 4 ? 1.6 : rows <= 5 ? 1.35 : 1.15;
-    const provScale = providerCount > 8 ? 0.85 : providerCount > 6 ? 0.95 : 1.0;
-    const baseFont = 9 * scaleFactor * provScale;
-    const nameFont = baseFont * 0.95;
-    const dayNumFont = baseFont * 1.5;
-    const periodFont = baseFont * 0.85;
+    const scaleFactor = rows <= 4 ? 1.5 : rows <= 5 ? 1.25 : 1.05;
+    const provScale = providerCount > 8 ? 0.88 : providerCount > 6 ? 0.95 : 1.0;
+    const baseFont = 9.5 * scaleFactor * provScale;
+    const nameFont = baseFont;
+    const dayNumFont = baseFont * 1.4;
+    const periodFont = baseFont * 0.8;
+    const locFont = baseFont * 1.05;
 
     function buildCellHtml(day) {
       const dk = dateKey(currentYear, currentMonth, day);
@@ -1475,21 +1499,22 @@ For questions (not changes), just respond normally without action blocks. Be con
       let c = '<td><div class="dn">' + day + '</div>';
       if (holiday && holiday.halfDay === 'am') c += '<div class="holam">AM Only — ' + holiday.name + '</div>';
       const allDay = [], splitAm = [], splitPm = [];
-      filteredStaff.forEach(s => {
+      filteredStaff.forEach((s,si) => {
         const p = ds[s.id]; if (!p) return;
         const am = p.am || 'OFF', pm = p.pm || 'OFF';
-        if (am === 'OFF' && pm === 'OFF') { allDay.push({staff:s,locId:'OFF'}); return; }
-        if (am !== 'OFF' && pm !== 'OFF' && am === pm) allDay.push({staff:s,locId:am});
-        else { if (am !== 'OFF') splitAm.push({staff:s,locId:am}); if (pm !== 'OFF') splitPm.push({staff:s,locId:pm}); }
+        if (am === 'OFF' && pm === 'OFF') { allDay.push({staff:s,locId:'OFF',init:initials[si]}); return; }
+        if (am !== 'OFF' && pm !== 'OFF' && am === pm) allDay.push({staff:s,locId:am,init:initials[si]});
+        else { if (am !== 'OFF') splitAm.push({staff:s,locId:am,init:initials[si]}); if (pm !== 'OFF') splitPm.push({staff:s,locId:pm,init:initials[si]}); }
       });
       function groupByLoc(entries) {
-        const g = {}; entries.forEach(e => { if (!g[e.locId]) g[e.locId] = {locId:e.locId,staff:[]}; g[e.locId].staff.push(e.staff); });
+        const g = {}; entries.forEach(e => { if (!g[e.locId]) g[e.locId]={locId:e.locId,items:[]}; g[e.locId].items.push(e); });
         return Object.values(g).sort((a,b) => a.locId === 'OFF' ? 1 : b.locId === 'OFF' ? -1 : 0);
       }
       function renderGroup(g) {
-        const names = g.staff.map(s => '<span style="color:' + s.color + ';font-weight:600">' + getStaffLastName(s) + '</span>').join(', ');
-        if (g.locId === 'OFF') return '<div class="se off">' + names + ' <i>OFF</i></div>';
-        return '<div class="se"><b class="ln">' + (locAbbrev[g.locId]||'?') + '</b> ' + names + '</div>';
+        const isOff = g.locId === 'OFF';
+        const tags = g.items.map(e => '<span class="tag" style="color:' + e.staff.color + '">' + e.init + '</span>').join(' ');
+        if (isOff) return '<div class="grp off"><span class="tags">' + tags + '</span> <i>OFF</i></div>';
+        return '<div class="grp"><span class="loc">' + (locAbbrev[g.locId]||'?') + '</span> <span class="tags">' + tags + '</span></div>';
       }
       groupByLoc(allDay).forEach(g => { c += renderGroup(g); });
       if (splitAm.length > 0 || splitPm.length > 0) {
@@ -1502,28 +1527,30 @@ For questions (not changes), just respond normally without action blocks. Be con
       return c + '</td>';
     }
 
-    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Schedule</title>\n';
+    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Schedule</title>';
     html += '<style>@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap");';
     html += '*{margin:0;padding:0;box-sizing:border-box}';
     html += '@page{size:landscape;margin:5mm 6mm}';
     html += 'body{font-family:"DM Sans",Arial,sans-serif;background:#fff;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}';
-    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}';
+    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}';
     html += 'h1{font-size:16px;font-weight:700}';
     html += '.sub{font-size:9px;color:#666}.plan{font-size:9px;color:#1a5;font-weight:700;background:#e6f9f0;padding:1px 6px;border-radius:3px}';
-    html += '.legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:5px;padding:4px 10px;background:#f5f5f5;border-radius:3px;border:1px solid #e0e0e0}';
-    html += '.li{display:flex;align-items:center;gap:3px;font-size:' + Math.max(8,baseFont*0.85) + 'px;font-weight:600}';
+    html += '.legend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-bottom:4px;padding:3px 8px;background:#f5f5f5;border-radius:3px;border:1px solid #e0e0e0}';
+    html += '.li{display:flex;align-items:center;gap:3px;font-size:' + Math.max(9,baseFont*0.8) + 'px;font-weight:600}';
     html += '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0}';
     html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
-    html += 'th{background:#1a1a2e;color:#fff;padding:5px 2px;font-size:' + Math.max(10,baseFont*1.1) + 'px;font-weight:700;text-align:center}';
-    html += 'td{border:1px solid #ccc;padding:3px 4px;vertical-align:top;font-size:' + nameFont + 'px;line-height:1.35;overflow:hidden;height:' + Math.floor(150 / rows) + 'mm}';
-    html += '.dn{font-weight:700;font-size:' + dayNumFont + 'px;color:#1a1a2e;margin-bottom:1px}';
+    html += 'th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:' + Math.max(10,baseFont) + 'px;font-weight:700;text-align:center}';
+    html += 'td{border:1px solid #ccc;padding:3px 4px;vertical-align:top;font-size:' + nameFont + 'px;line-height:1.35;overflow:hidden}';
+    html += '.dn{font-weight:700;font-size:' + dayNumFont + 'px;color:#1a1a2e;margin-bottom:2px}';
     html += '.wk{background:#f7f7f7}';
-    html += '.se{margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:' + nameFont + 'px}';
-    html += '.se.off{color:#aaa;font-style:italic}';
-    html += '.ln{font-weight:700;color:#333;font-size:' + baseFont + 'px}';
+    html += '.grp{margin-bottom:2px;padding:2px 4px;border-radius:3px;background:#f8f8fb;border:1px solid #e5e5ea;white-space:normal;word-wrap:break-word}';
+    html += '.grp.off{background:transparent;border:none;color:#aaa;font-style:italic}';
+    html += '.loc{font-weight:700;color:#333;font-size:' + locFont + 'px}';
+    html += '.tag{font-weight:600;font-size:' + nameFont + 'px}';
+    html += '.tags{white-space:normal}';
     html += '.pl{font-weight:700;font-size:' + periodFont + 'px;text-transform:uppercase;color:#888;border-bottom:0.5px solid #ddd;margin:1px 0}';
     html += '.split{display:flex;gap:3px}.sp{flex:1;min-width:0}';
-    html += '.hol{background:#fee2e2;color:#b91c1c;font-size:' + nameFont + 'px;font-weight:700;text-align:center;padding:3px;border-radius:2px;margin-top:2px}';
+    html += '.hol{background:#fee2e2;color:#b91c1c;font-size:' + nameFont + 'px;font-weight:700;text-align:center;padding:4px;border-radius:3px;margin-top:2px}';
     html += '.holam{background:#fef3c7;color:#92400e;font-size:' + periodFont + 'px;font-weight:600;text-align:center;padding:1px;border-radius:2px;margin-bottom:2px}';
     html += '</style></head><body>';
 
@@ -1531,7 +1558,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '<span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> ';
     html += '<span class="sub">Generated ' + new Date().toLocaleDateString() + '</span></div></div>';
     html += '<div class="legend">';
-    filteredStaff.forEach(s => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div>' + getStaffLastName(s) + '</div>'; });
+    filteredStaff.forEach((s,i) => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div><b>' + initials[i] + '</b> = ' + getLastName(s.name) + '</div>'; });
     html += '</div><table><thead><tr>';
     DAYS_OF_WEEK.forEach(d => { html += '<th>' + d + '</th>'; });
     html += '</tr></thead><tbody><tr>';
@@ -1551,7 +1578,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
   }
 
-  // Classic PDF: staff initials across top, location abbreviations in AM/PM rows
+  // Classic PDF: staff initials across top, location abbreviations in AM/PM rows with vertical text
   function generateClassicPDF() {
     const planToUse = finalPlanForMonth || activePlan;
     const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
@@ -1559,33 +1586,28 @@ For questions (not changes), just respond normally without action blocks. Be con
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
     const staffCount = filteredStaff.length;
-
-    // Staff initials: first letter of first name + first letter of last name (SK for Steve Kim, MY for Mike Yang)
-    // Must strip MD/OD/DO suffixes first
-    const suffixes = ['MD','OD','DO','NP','PA','RN','Jr','Sr','II','III'];
-    function staffInit(s) {
-      const parts = s.name.replace(/^Dr\.\s*/i,'').split(/\s+/).filter(p => !suffixes.includes(p.replace(/[.,]/g,'')));
-      if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-      return parts[0].substring(0,2).toUpperCase();
-    }
+    const initials = buildStaffInitials(filteredStaff);
 
     // Location abbreviations: 1-5 chars
     const LA = {};
+    const locLegend = [];
     locations.forEach(l => {
       const n = l.name.toLowerCase();
-      if (n.includes('manteca')) LA[l.id] = 'M';
-      else if (n.includes('stockton')) LA[l.id] = 'S';
-      else if (n.includes('modesto')) LA[l.id] = 'MOD';
-      else if (n.includes('vlsc')) LA[l.id] = 'VLSC';
-      else if (n.includes('msc') || n.includes('surgery center')) LA[l.id] = 'MSC';
-      else if (n.includes('dhm') || n.includes('delta')) LA[l.id] = 'DHM';
-      else if (n.includes('turlock')) LA[l.id] = 'T';
-      else if (n.includes('admin')) LA[l.id] = 'ADM';
-      else if (n.includes('lvc') || n.includes('lasik')) LA[l.id] = 'LVC';
-      else if (n.includes('sjlsc') || n.includes('san joaquin')) LA[l.id] = 'SJ';
-      else if (n.includes('ncsc') || n.includes('merced')) LA[l.id] = 'NC';
-      else if (n.includes('va') || n.includes('veteran')) LA[l.id] = 'VA';
-      else LA[l.id] = l.name.substring(0,4).toUpperCase();
+      let abbr = l.name.substring(0,4).toUpperCase();
+      if (n.includes('manteca')) abbr = 'M';
+      else if (n.includes('stockton')) abbr = 'S';
+      else if (n.includes('modesto')) abbr = 'MOD';
+      else if (n.includes('vlsc')) abbr = 'VLSC';
+      else if (n.includes('msc') || n.includes('surgery center')) abbr = 'MSC';
+      else if (n.includes('dhm') || n.includes('delta')) abbr = 'DHM';
+      else if (n.includes('turlock')) abbr = 'T';
+      else if (n.includes('admin')) abbr = 'ADM';
+      else if (n.includes('lvc') || n.includes('lasik')) abbr = 'LVC';
+      else if (n.includes('sjlsc') || n.includes('san joaquin')) abbr = 'SJ';
+      else if (n.includes('ncsc') || n.includes('merced')) abbr = 'NC';
+      else if (n.includes('va') || n.includes('veteran')) abbr = 'VA';
+      LA[l.id] = abbr;
+      locLegend.push({ abbr: abbr, name: l.name });
     });
 
     // Group weekdays by week
@@ -1599,39 +1621,49 @@ For questions (not changes), just respond normally without action blocks. Be con
     }
     if (cw.length > 0) weekRows.push(cw);
 
-    // Dynamic sizing — maximize for landscape
-    const cellFs = staffCount > 8 ? 8.5 : staffCount > 6 ? 9.5 : 10.5;
-    const initFs = staffCount > 8 ? 7.5 : staffCount > 6 ? 8.5 : 9.5;
+    // Dynamic sizing
+    const cellFs = staffCount > 8 ? 9 : staffCount > 6 ? 10 : 11;
+    const initFs = staffCount > 8 ? 8 : staffCount > 6 ? 9 : 10;
     const dayNumFs = 12;
-    const lblFs = Math.max(7, cellFs - 1.5);
-    const amLblW = 18;
+    const lblFs = Math.max(8, cellFs - 1);
+    const amLblW = 20;
+    const rowH = Math.floor(155 / weekRows.length);
 
-    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Classic</title>\n';
+    // For vertical text: split abbreviation into single chars stacked
+    function vertLoc(abbr) {
+      if (abbr.length <= 1) return abbr;
+      return abbr.split('').join('<br>');
+    }
+
+    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Classic</title>';
     html += '<style>@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap");';
     html += '*{margin:0;padding:0;box-sizing:border-box}';
     html += '@page{size:landscape;margin:4mm 5mm}';
     html += 'body{font-family:"DM Sans",Arial,sans-serif;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}';
-    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}';
+    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}';
     html += 'h1{font-size:14px;font-weight:700}';
     html += '.meta{font-size:8px;color:#555}.plan{font-size:8px;color:#1a5;font-weight:700}';
     html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
     html += 'th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:11px;font-weight:700;text-align:center;border:1px solid #666}';
-    html += 'td{border:1px solid #888;padding:0;vertical-align:top;height:' + Math.floor(150 / weekRows.length) + 'mm}';
-    html += '.daynum{font-weight:700;font-size:' + dayNumFs + 'px;padding:2px 4px;background:#eee;border-bottom:1px solid #bbb}';
-    // Use table layout for initials, AM, PM rows so columns align perfectly
-    html += '.row{display:table;width:100%;table-layout:fixed}';
+    html += 'td{border:1px solid #888;padding:0;vertical-align:top}';
+    html += '.daynum{font-weight:700;font-size:' + dayNumFs + 'px;padding:1px 4px;background:#eee;border-bottom:1px solid #bbb}';
+    // Table layout for all inner rows
+    html += '.row{display:table;width:100%;table-layout:fixed;height:' + Math.floor((rowH - 8) / 2) + 'mm}';
     html += '.row-spacer{display:table-cell;width:' + amLblW + 'px;background:#f0f0f5;border-right:0.5px solid #ccc}';
+    html += '.irow{display:table;width:100%;table-layout:fixed;border-bottom:1px solid #bbb}';
+    html += '.irow .row-spacer{background:#f0f0f5}';
     html += '.row-cell{display:table-cell;font-size:' + initFs + 'px;font-weight:700;text-align:center;color:#333;padding:2px 0;background:#f0f0f5;border-right:0.5px solid #ddd}';
     html += '.row-cell:last-child{border-right:none}';
     html += '.row-lbl{display:table-cell;width:' + amLblW + 'px;font-size:' + lblFs + 'px;font-weight:700;color:#555;text-align:center;vertical-align:middle;background:#f5f5f5;border-right:0.5px solid #ccc}';
-    html += '.row-val{display:table-cell;font-size:' + cellFs + 'px;font-weight:600;padding:2px 0;text-align:center;border-right:0.5px solid #ddd;vertical-align:middle;line-height:1.2;overflow:hidden;word-break:break-all}';
+    html += '.row-val{display:table-cell;font-size:' + cellFs + 'px;font-weight:600;text-align:center;border-right:0.5px solid #ddd;vertical-align:middle;line-height:1.1;padding:1px 0}';
     html += '.row-val:last-child{border-right:none}';
     html += '.row-val.off{color:#bbb;font-style:italic}';
     html += '.pm-border{border-top:1px solid #bbb}';
-    html += '.init-border{border-bottom:1px solid #bbb}';
     html += '.hol{background:#fee2e2;color:#b91c1c;font-weight:700;font-size:' + cellFs + 'px;text-align:center;padding:8px 2px}';
     html += '.holam{background:#fef3c7;color:#92400e;font-size:' + (cellFs-1) + 'px;font-weight:600;text-align:center;padding:2px}';
     html += '.empty{background:#f9f9f9}';
+    html += '.foot{margin-top:3px;padding:3px 6px;background:#f8f8f8;border:1px solid #ddd;border-radius:3px;font-size:8px;display:flex;flex-wrap:wrap;gap:4px 12px}';
+    html += '.foot b{font-weight:700;margin-right:2px}';
     html += '</style></head><body>';
 
     html += '<div class="hdr"><h1>' + MONTHS[currentMonth].toUpperCase() + ' ' + currentYear + '</h1>';
@@ -1653,18 +1685,19 @@ For questions (not changes), just respond normally without action blocks. Be con
         html += '<div class="daynum">' + slot.day + '</div>';
         if (hol && hol.halfDay === 'closed') { html += '<div class="hol">CLOSED — ' + hol.name + '</div></td>'; return; }
 
-        // Initials row (with spacer for AM/PM label alignment)
-        html += '<div class="row init-border"><div class="row-spacer"></div>';
-        filteredStaff.forEach(s => { html += '<div class="row-cell">' + staffInit(s) + '</div>'; });
+        // Initials row
+        html += '<div class="irow"><div class="row-spacer"></div>';
+        filteredStaff.forEach((s,i) => { html += '<div class="row-cell">' + initials[i] + '</div>'; });
         html += '</div>';
 
         if (hol && hol.halfDay === 'am') html += '<div class="holam">AM Only</div>';
 
-        // AM row
+        // AM row — location text vertical for multi-char
         html += '<div class="row"><div class="row-lbl">AM</div>';
         filteredStaff.forEach(s => {
           const a = schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].am;
-          html += '<div class="row-val' + (!a || a === 'OFF' ? ' off' : '') + '">' + (!a || a === 'OFF' ? 'OFF' : (LA[a] || '?')) + '</div>';
+          if (!a || a === 'OFF') html += '<div class="row-val off">OFF</div>';
+          else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
         });
         html += '</div>';
 
@@ -1672,7 +1705,8 @@ For questions (not changes), just respond normally without action blocks. Be con
         html += '<div class="row pm-border"><div class="row-lbl">PM</div>';
         filteredStaff.forEach(s => {
           const a = (hol && hol.halfDay === 'am') ? null : (schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].pm);
-          html += '<div class="row-val' + (!a || a === 'OFF' ? ' off' : '') + '">' + (!a || a === 'OFF' ? 'OFF' : (LA[a] || '?')) + '</div>';
+          if (!a || a === 'OFF') html += '<div class="row-val off">OFF</div>';
+          else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
         });
         html += '</div>';
         html += '</td>';
@@ -1680,7 +1714,19 @@ For questions (not changes), just respond normally without action blocks. Be con
       html += '</tr>';
     });
 
-    html += '</tbody></table></body></html>';
+    html += '</tbody></table>';
+
+    // Legend at bottom
+    html += '<div class="foot">';
+    html += '<span><b>Staff:</b> ';
+    html += filteredStaff.map((s,i) => initials[i] + '=' + getLastName(s.name)).join(', ');
+    html += '</span>';
+    html += '<span><b>Locations:</b> ';
+    html += locLegend.map(ll => ll.abbr + '=' + ll.name).join(', ');
+    html += '</span>';
+    html += '</div>';
+
+    html += '</body></html>';
 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
