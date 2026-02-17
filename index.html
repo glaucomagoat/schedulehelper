@@ -1,32 +1,14 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Schedule Helper</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0a1a; color: #e8e8f0; font-family: 'DM Sans', sans-serif; }
-    #root { min-height: 100vh; }
-    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-  </style>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-</head>
-<body>
-  <div id="root"></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-  <script>
-    window.storage = {
-      async get(key) { var v = localStorage.getItem('sc:' + key); if (v === null) throw new Error('Key not found'); return { key: key, value: v, shared: false }; },
-      async set(key, value) { localStorage.setItem('sc:' + key, value); return { key: key, value: value, shared: false }; },
-      async delete(key) { localStorage.removeItem('sc:' + key); return { key: key, deleted: true, shared: false }; },
-      async list(prefix) { var keys = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.startsWith('sc:')) { var s = k.substring(3); if (!prefix || s.startsWith(prefix)) keys.push(s); } } return { keys: keys, prefix: prefix, shared: false }; }
-    };
-  </script>
-  <script type="text/babel">
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Schedule Helper</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a1a;color:#e8e8f0;font-family:'DM Sans',sans-serif}#root{min-height:100vh}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head><body><div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script>
+window.storage={async get(key){var v=localStorage.getItem('sc:'+key);if(v===null)throw new Error('Key not found');return{key:key,value:v,shared:false}},async set(key,value){localStorage.setItem('sc:'+key,value);return{key:key,value:value,shared:false}},async delete(key){localStorage.removeItem('sc:'+key);return{key:key,deleted:true,shared:false}},async list(prefix){var keys=[];for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.startsWith('sc:')){var s=k.substring(3);if(!prefix||s.startsWith(prefix))keys.push(s)}}return{keys:keys,prefix:prefix,shared:false}}};
+</script><script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1464,162 +1446,104 @@ For questions (not changes), just respond normally without action blocks. Be con
   }
 
   function generatePDF() {
-    // Use final plan if set, otherwise active plan
     const planToUse = finalPlanForMonth || activePlan;
     const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
     const schedule = schedules[pdfScheduleKey] || {};
     const calDays = getCalendarDays(currentYear, currentMonth);
+    const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
+    const providerCount = filteredStaff.length;
 
-    // Count actual calendar rows (including leading empty cells)
-    const totalCells = calDays.length;
-    const rows = Math.ceil(totalCells / 7);
-
-    // Abbreviations for compact printing
     const locAbbrev = {};
-    locations.forEach(l => {
-      // Use short name: first word or known abbreviation
-      const n = l.name;
-      locAbbrev[l.id] = n.length <= 8 ? n : n.split(/[\s\-\/]+/)[0];
-    });
+    locations.forEach(l => { const n = l.name; locAbbrev[l.id] = n.length <= 10 ? n : n.split(/[\s\-\/]+/)[0]; });
+    function getStaffLastName(s) { const parts = s.name.split(' '); return parts.length > 1 ? parts[parts.length - 1] : parts[0]; }
 
-    const staffColors = {};
-    staff.forEach(s => { staffColors[s.id] = s.color; });
+    // Count calendar rows for dynamic sizing
+    const rows = Math.ceil(calDays.length / 7);
+    const scaleFactor = rows <= 4 ? 1.3 : rows <= 5 ? 1.15 : 1.0;
+    const provScale = providerCount > 8 ? 0.85 : providerCount > 6 ? 0.95 : 1.0;
+    const baseFont = 9 * scaleFactor * provScale;
+    const nameFont = baseFont * 0.95;
+    const dayNumFont = baseFont * 1.5;
+    const periodFont = baseFont * 0.85;
 
-    function getStaffLastName(s) { const parts = s.name.split(' '); return parts.length > 1 ? parts[parts.length - 2] : parts[0]; }
-
-    // Build cell HTML with hybrid grouping (matches calendar view)
     function buildCellHtml(day) {
       const dk = dateKey(currentYear, currentMonth, day);
       const ds = schedule[dk] || {};
-      const wkend = isWeekend(currentYear, currentMonth, day);
-      if (wkend) return `<td class="wk"><div class="dn">${day}</div></td>`;
-
-      // Check holiday
+      if (isWeekend(currentYear, currentMonth, day)) return '<td class="wk"><div class="dn">' + day + '</div></td>';
       const holiday = getHolidayForDate(currentYear, currentMonth, day);
-      if (holiday && holiday.halfDay === 'closed') {
-        return `<td><div class="dn">${day}</div><div class="hol">${holiday.name}</div></td>`;
-      }
-
-      let cellHtml = `<td><div class="dn">${day}</div>`;
-
-      if (holiday && holiday.halfDay === 'am') {
-        cellHtml += `<div class="holam">AM Only — ${holiday.name}</div>`;
-      }
-
-      // Hybrid grouping: all-day vs AM/PM split
-      const allDay = [];
-      const splitAm = [];
-      const splitPm = [];
-      const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
-
+      if (holiday && holiday.halfDay === 'closed') return '<td><div class="dn">' + day + '</div><div class="hol">' + holiday.name + '</div></td>';
+      let c = '<td><div class="dn">' + day + '</div>';
+      if (holiday && holiday.halfDay === 'am') c += '<div class="holam">AM Only — ' + holiday.name + '</div>';
+      const allDay = [], splitAm = [], splitPm = [];
       filteredStaff.forEach(s => {
-        const periods = ds[s.id];
-        if (!periods) return;
-        const am = periods.am || 'OFF';
-        const pm = periods.pm || 'OFF';
-        const amOk = am !== 'OFF';
-        const pmOk = pm !== 'OFF';
-        if (!amOk && !pmOk) { allDay.push({ staff: s, locId: 'OFF' }); return; }
-        if (amOk && pmOk && am === pm) { allDay.push({ staff: s, locId: am }); }
-        else { if (amOk) splitAm.push({ staff: s, locId: am }); if (pmOk) splitPm.push({ staff: s, locId: pm }); }
+        const p = ds[s.id]; if (!p) return;
+        const am = p.am || 'OFF', pm = p.pm || 'OFF';
+        if (am === 'OFF' && pm === 'OFF') { allDay.push({staff:s,locId:'OFF'}); return; }
+        if (am !== 'OFF' && pm !== 'OFF' && am === pm) allDay.push({staff:s,locId:am});
+        else { if (am !== 'OFF') splitAm.push({staff:s,locId:am}); if (pm !== 'OFF') splitPm.push({staff:s,locId:pm}); }
       });
-
       function groupByLoc(entries) {
-        const groups = {};
-        entries.forEach(e => { const key = e.locId === 'OFF' ? 'OFF' : e.locId; if (!groups[key]) groups[key] = { locId: e.locId, staff: [] }; groups[key].staff.push(e.staff); });
-        return Object.values(groups).sort((a, b) => { if (a.locId === 'OFF') return 1; if (b.locId === 'OFF') return -1; return 0; });
+        const g = {}; entries.forEach(e => { if (!g[e.locId]) g[e.locId] = {locId:e.locId,staff:[]}; g[e.locId].staff.push(e.staff); });
+        return Object.values(g).sort((a,b) => a.locId === 'OFF' ? 1 : b.locId === 'OFF' ? -1 : 0);
       }
-
       function renderGroup(g) {
-        const isOff = g.locId === 'OFF';
-        const locName = isOff ? '' : (locAbbrev[g.locId] || '?');
-        const staffList = g.staff.map(s => `<span style="color:${s.color}">${getStaffLastName(s)}</span>`).join(', ');
-        if (isOff) return `<div class="se off">${staffList} <i>OFF</i></div>`;
-        return `<div class="se"><b class="ln">${locName}</b> ${staffList}</div>`;
+        const names = g.staff.map(s => '<span style="color:' + s.color + ';font-weight:600">' + getStaffLastName(s) + '</span>').join(', ');
+        if (g.locId === 'OFF') return '<div class="se off">' + names + ' <i>OFF</i></div>';
+        return '<div class="se"><b class="ln">' + (locAbbrev[g.locId]||'?') + '</b> ' + names + '</div>';
       }
-
-      const allDayGroups = groupByLoc(allDay);
-      const amGroups = groupByLoc(splitAm);
-      const pmGroups = groupByLoc(splitPm);
-      const hasSplit = splitAm.length > 0 || splitPm.length > 0;
-
-      // Render all-day groups
-      allDayGroups.forEach(g => { cellHtml += renderGroup(g); });
-
-      // Render AM/PM split
-      if (hasSplit) {
-        cellHtml += `<div class="split"><div class="sp">`;
-        cellHtml += `<div class="pl">AM</div>`;
-        amGroups.forEach(g => { cellHtml += renderGroup(g); });
-        cellHtml += `</div><div class="sp">`;
-        cellHtml += `<div class="pl">PM</div>`;
-        pmGroups.forEach(g => { cellHtml += renderGroup(g); });
-        cellHtml += `</div></div>`;
+      groupByLoc(allDay).forEach(g => { c += renderGroup(g); });
+      if (splitAm.length > 0 || splitPm.length > 0) {
+        c += '<div class="split"><div class="sp"><div class="pl">AM</div>';
+        groupByLoc(splitAm).forEach(g => { c += renderGroup(g); });
+        c += '</div><div class="sp"><div class="pl">PM</div>';
+        groupByLoc(splitPm).forEach(g => { c += renderGroup(g); });
+        c += '</div></div>';
       }
-
-      cellHtml += `</td>`;
-      return cellHtml;
+      return c + '</td>';
     }
 
-    // Dynamic font sizing based on number of providers shown
-    const providerCount = staff.filter(s => visibleStaff.has(s.id)).length;
-    const cellFontSize = providerCount > 8 ? 6.5 : providerCount > 6 ? 7 : 7.5;
-    const dayNumSize = providerCount > 8 ? 9 : 10;
-    const locFontSize = cellFontSize;
-    const cellPad = providerCount > 8 ? '1px' : '2px';
+    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Schedule</title>\n';
+    html += '<style>@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap");';
+    html += '*{margin:0;padding:0;box-sizing:border-box}';
+    html += '@page{size:landscape;margin:5mm 6mm}';
+    html += 'body{font-family:"DM Sans",Arial,sans-serif;background:#fff;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}';
+    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}';
+    html += 'h1{font-size:16px;font-weight:700}';
+    html += '.sub{font-size:9px;color:#666}.plan{font-size:9px;color:#1a5;font-weight:700;background:#e6f9f0;padding:1px 6px;border-radius:3px}';
+    html += '.legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:5px;padding:4px 10px;background:#f5f5f5;border-radius:3px;border:1px solid #e0e0e0}';
+    html += '.li{display:flex;align-items:center;gap:3px;font-size:' + Math.max(8,baseFont*0.85) + 'px;font-weight:600}';
+    html += '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0}';
+    html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
+    html += 'th{background:#1a1a2e;color:#fff;padding:5px 2px;font-size:' + Math.max(10,baseFont*1.1) + 'px;font-weight:700;text-align:center}';
+    html += 'td{border:1px solid #ccc;padding:2px 3px;vertical-align:top;font-size:' + nameFont + 'px;line-height:1.3;overflow:hidden}';
+    html += '.dn{font-weight:700;font-size:' + dayNumFont + 'px;color:#1a1a2e;margin-bottom:1px}';
+    html += '.wk{background:#f7f7f7}';
+    html += '.se{margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:' + nameFont + 'px}';
+    html += '.se.off{color:#aaa;font-style:italic}';
+    html += '.ln{font-weight:700;color:#333;font-size:' + baseFont + 'px}';
+    html += '.pl{font-weight:700;font-size:' + periodFont + 'px;text-transform:uppercase;color:#888;border-bottom:0.5px solid #ddd;margin:1px 0}';
+    html += '.split{display:flex;gap:3px}.sp{flex:1;min-width:0}';
+    html += '.hol{background:#fee2e2;color:#b91c1c;font-size:' + nameFont + 'px;font-weight:700;text-align:center;padding:3px;border-radius:2px;margin-top:2px}';
+    html += '.holam{background:#fef3c7;color:#92400e;font-size:' + periodFont + 'px;font-weight:600;text-align:center;padding:1px;border-radius:2px;margin-bottom:2px}';
+    html += '</style></head><body>';
 
-    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${MONTHS[currentMonth]} ${currentYear} Schedule</title>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-      *{margin:0;padding:0;box-sizing:border-box}
-      @page{size:landscape;margin:6mm 8mm}
-      body{font-family:'DM Sans',Arial,sans-serif;background:#fff;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;padding:0 2px}
-      h1{font-size:15px;font-weight:700}
-      .sub{font-size:9px;color:#666}
-      .plan{font-size:9px;color:#1a5;font-weight:700;background:#e6f9f0;padding:1px 6px;border-radius:3px}
-      .legend{display:flex;flex-wrap:wrap;gap:6px 10px;margin-bottom:5px;padding:3px 8px;background:#f5f5f5;border-radius:3px;border:1px solid #e0e0e0}
-      .li{display:flex;align-items:center;gap:2px;font-size:7.5px;font-weight:600}
-      .ld{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-      table{width:100%;border-collapse:collapse;table-layout:fixed}
-      th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:9px;font-weight:700;text-align:center;letter-spacing:0.5px}
-      td{border:1px solid #ccc;padding:${cellPad};vertical-align:top;font-size:${cellFontSize}px;line-height:1.25;overflow:hidden}
-      .dn{font-weight:700;font-size:${dayNumSize}px;color:#1a1a2e;margin-bottom:1px}
-      .wk{background:#f7f7f7}
-      .se{margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .se.off{color:#aaa;font-style:italic;font-size:${cellFontSize - 0.5}px}
-      .ln{font-weight:700;color:#333;font-size:${locFontSize}px}
-      .pl{font-weight:700;font-size:${cellFontSize - 0.5}px;text-transform:uppercase;color:#888;border-bottom:0.5px solid #ddd;margin:1px 0;letter-spacing:0.3px}
-      .split{display:flex;gap:2px}
-      .sp{flex:1;min-width:0}
-      .hol{background:#fee2e2;color:#b91c1c;font-size:${cellFontSize}px;font-weight:700;text-align:center;padding:2px;border-radius:2px;margin-top:1px}
-      .holam{background:#fef3c7;color:#92400e;font-size:${cellFontSize - 0.5}px;font-weight:600;text-align:center;padding:1px;border-radius:2px;margin-bottom:1px}
-    </style></head><body>`;
-
-    html += `<div class="hdr"><h1>${MONTHS[currentMonth]} ${currentYear} — Provider Schedule</h1><div>`;
-    html += `<span class="plan">Plan ${planToUse}${finalPlanForMonth ? ' (Final)' : ''}</span> `;
-    html += `<span class="sub">Generated ${new Date().toLocaleDateString()}</span>`;
-    html += `</div></div>`;
-
-    html += `<div class="legend">`;
-    staff.filter(s => visibleStaff.has(s.id)).forEach(s => {
-      html += `<div class="li"><div class="ld" style="background:${s.color}"></div>${getStaffLastName(s)} (${s.name.split(' ')[0][0]}.)</div>`;
-    });
-    html += `</div>`;
-
-    html += `<table><thead><tr>`;
-    DAYS_OF_WEEK.forEach(d => { html += `<th>${d}</th>`; });
-    html += `</tr></thead><tbody><tr>`;
+    html += '<div class="hdr"><h1>' + MONTHS[currentMonth] + ' ' + currentYear + ' — Provider Schedule</h1><div>';
+    html += '<span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> ';
+    html += '<span class="sub">Generated ' + new Date().toLocaleDateString() + '</span></div></div>';
+    html += '<div class="legend">';
+    filteredStaff.forEach(s => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div>' + getStaffLastName(s) + '</div>'; });
+    html += '</div><table><thead><tr>';
+    DAYS_OF_WEEK.forEach(d => { html += '<th>' + d + '</th>'; });
+    html += '</tr></thead><tbody><tr>';
 
     calDays.forEach((day, i) => {
-      if (i > 0 && i % 7 === 0) html += `</tr><tr>`;
-      if (day === null) { html += `<td class="wk"></td>`; return; }
+      if (i > 0 && i % 7 === 0) html += '</tr><tr>';
+      if (day === null) { html += '<td class="wk"></td>'; return; }
       html += buildCellHtml(day);
     });
-
     const rem = calDays.length % 7;
-    if (rem > 0) { for (let i = 0; i < 7 - rem; i++) html += `<td class="wk"></td>`; }
-    html += `</tr></tbody></table></body></html>`;
+    if (rem > 0) for (let i = 0; i < 7 - rem; i++) html += '<td class="wk"></td>';
+    html += '</tr></tbody></table></body></html>';
 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
@@ -1627,167 +1551,134 @@ For questions (not changes), just respond normally without action blocks. Be con
     if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
   }
 
-  // Classic PDF: grid with staff initials across top, location abbreviations per AM/PM row
+  // Classic PDF: staff initials across top, location abbreviations in AM/PM rows
   function generateClassicPDF() {
     const planToUse = finalPlanForMonth || activePlan;
     const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
     const schedule = schedules[pdfScheduleKey] || {};
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-
-    // Build staff initials (2-char max)
     const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
-    function staffInitial(s) {
+    const staffCount = filteredStaff.length;
+
+    // Staff initials: first letter of first name + first letter of last name (SK for Steve Kim, MY for Mike Yang)
+    function staffInit(s) {
       const parts = s.name.replace(/^Dr\.\s*/i,'').split(/\s+/);
-      if (parts.length >= 2) {
-        const last = parts[parts.length - 1];
-        return last.substring(0,2).toUpperCase();
-      }
+      if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
       return parts[0].substring(0,2).toUpperCase();
     }
 
-    // Location abbreviation map — 1-5 chars to match classic style
-    const LOC_ABBREV = {};
+    // Location abbreviations: 1-5 chars
+    const LA = {};
     locations.forEach(l => {
       const n = l.name.toLowerCase();
-      if (n.includes('manteca')) LOC_ABBREV[l.id] = 'M';
-      else if (n.includes('stockton')) LOC_ABBREV[l.id] = 'S';
-      else if (n.includes('modesto')) LOC_ABBREV[l.id] = 'MOD';
-      else if (n.includes('vlsc')) LOC_ABBREV[l.id] = 'VLSC';
-      else if (n.includes('msc') || n.includes('surgery center')) LOC_ABBREV[l.id] = 'MSC';
-      else if (n.includes('dhm') || n.includes('delta')) LOC_ABBREV[l.id] = 'DHM';
-      else if (n.includes('turlock')) LOC_ABBREV[l.id] = 'T';
-      else if (n.includes('admin')) LOC_ABBREV[l.id] = 'ADM';
-      else if (n.includes('lvc') || n.includes('lasik')) LOC_ABBREV[l.id] = 'LVC';
-      else if (n.includes('sjlsc') || n.includes('san joaquin')) LOC_ABBREV[l.id] = 'SJ';
-      else if (n.includes('ncsc') || n.includes('merced')) LOC_ABBREV[l.id] = 'NC';
-      else if (n.includes('va') || n.includes('veteran')) LOC_ABBREV[l.id] = 'VA';
-      else LOC_ABBREV[l.id] = l.name.substring(0,4).toUpperCase();
+      if (n.includes('manteca')) LA[l.id] = 'M';
+      else if (n.includes('stockton')) LA[l.id] = 'S';
+      else if (n.includes('modesto')) LA[l.id] = 'MOD';
+      else if (n.includes('vlsc')) LA[l.id] = 'VLSC';
+      else if (n.includes('msc') || n.includes('surgery center')) LA[l.id] = 'MSC';
+      else if (n.includes('dhm') || n.includes('delta')) LA[l.id] = 'DHM';
+      else if (n.includes('turlock')) LA[l.id] = 'T';
+      else if (n.includes('admin')) LA[l.id] = 'ADM';
+      else if (n.includes('lvc') || n.includes('lasik')) LA[l.id] = 'LVC';
+      else if (n.includes('sjlsc') || n.includes('san joaquin')) LA[l.id] = 'SJ';
+      else if (n.includes('ncsc') || n.includes('merced')) LA[l.id] = 'NC';
+      else if (n.includes('va') || n.includes('veteran')) LA[l.id] = 'VA';
+      else LA[l.id] = l.name.substring(0,4).toUpperCase();
     });
 
-    const staffCount = filteredStaff.length;
-    const colW = Math.max(18, Math.floor(120 / staffCount)); // width per staff column
-    const dayColW = colW * staffCount + 8; // total day column width
-
-    // Collect weekdays grouped by week row
+    // Group weekdays by week
     const weekRows = [];
-    let currentWeek = [];
+    let cw = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
-      if (dow === 0) continue; // skip sunday
-      if (dow === 6) continue; // skip saturday for now
-      if (dow === 1 && currentWeek.length > 0) { weekRows.push(currentWeek); currentWeek = []; }
-      currentWeek.push({ day: d, dow: dow });
+      if (dow === 0 || dow === 6) continue;
+      if (dow === 1 && cw.length > 0) { weekRows.push(cw); cw = []; }
+      cw.push({ day: d, dow });
     }
-    if (currentWeek.length > 0) weekRows.push(currentWeek);
+    if (cw.length > 0) weekRows.push(cw);
 
-    // Dynamic font sizing
-    const fs = staffCount > 8 ? 6 : staffCount > 6 ? 6.5 : 7;
-    const initFs = staffCount > 8 ? 5.5 : 6;
-    const dayFs = 8;
+    // Dynamic sizing — maximize for landscape
+    const cellFs = staffCount > 8 ? 8.5 : staffCount > 6 ? 9.5 : 10.5;
+    const initFs = staffCount > 8 ? 7.5 : staffCount > 6 ? 8.5 : 9.5;
+    const dayNumFs = 12;
+    const lblFs = Math.max(7, cellFs - 1.5);
+    const amLblW = 18;
 
-    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${MONTHS[currentMonth]} ${currentYear} Classic Schedule</title>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-      *{margin:0;padding:0;box-sizing:border-box}
-      @page{size:landscape;margin:4mm 6mm}
-      body{font-family:'DM Sans',Arial,Helvetica,sans-serif;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}
-      h1{font-size:13px;font-weight:700}
-      .sub{font-size:8px;color:#555}
-      .plan{font-size:8px;color:#1a5;font-weight:700}
-      table{width:100%;border-collapse:collapse;table-layout:fixed}
-      th{background:#1a1a2e;color:#fff;padding:2px 1px;font-size:${dayFs}px;font-weight:700;text-align:center;border:1px solid #999}
-      td{border:1px solid #999;padding:0;vertical-align:middle;text-align:center;font-size:${fs}px;font-weight:600;height:auto}
-      .daynum{font-weight:700;font-size:${dayFs}px;text-align:left;padding:1px 3px;background:#eee;border-bottom:1px solid #bbb}
-      .initrow{display:flex}
-      .init{flex:1;font-size:${initFs}px;font-weight:700;text-align:center;color:#333;border-right:0.5px solid #ddd;padding:1px 0;background:#f0f0f5}
-      .init:last-child{border-right:none}
-      .period{display:flex;align-items:stretch}
-      .plbl{writing-mode:vertical-lr;text-orientation:mixed;font-size:5.5px;font-weight:700;color:#666;padding:0 1px;background:#f5f5f5;border-right:0.5px solid #ccc;display:flex;align-items:center;justify-content:center;min-width:10px;letter-spacing:0.5px}
-      .slots{display:flex;flex:1}
-      .slot{flex:1;font-size:${fs}px;font-weight:600;padding:1px 0;text-align:center;border-right:0.5px solid #ddd;white-space:nowrap;overflow:hidden;line-height:1.15}
-      .slot:last-child{border-right:none}
-      .slot.off{color:#bbb;font-style:italic;font-size:${fs - 0.5}px}
-      .ampm-divider{border-top:0.5px solid #aaa}
-      .wkend{background:#f5f5f5}
-      .hol{background:#fee2e2;color:#b91c1c;font-weight:700;font-size:${fs}px;text-align:center;padding:3px}
-      .holam{background:#fef3c7;color:#92400e;font-size:${fs - 0.5}px;font-weight:600;text-align:center;padding:1px}
-      .empty{background:#f9f9f9}
-    </style></head><body>`;
+    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Classic</title>\n';
+    html += '<style>@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap");';
+    html += '*{margin:0;padding:0;box-sizing:border-box}';
+    html += '@page{size:landscape;margin:4mm 5mm}';
+    html += 'body{font-family:"DM Sans",Arial,sans-serif;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}';
+    html += '.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}';
+    html += 'h1{font-size:14px;font-weight:700}';
+    html += '.meta{font-size:8px;color:#555}.plan{font-size:8px;color:#1a5;font-weight:700}';
+    html += 'table{width:100%;border-collapse:collapse;table-layout:fixed}';
+    html += 'th{background:#1a1a2e;color:#fff;padding:4px 2px;font-size:11px;font-weight:700;text-align:center;border:1px solid #666}';
+    html += 'td{border:1px solid #888;padding:0;vertical-align:top}';
+    html += '.daynum{font-weight:700;font-size:' + dayNumFs + 'px;padding:2px 4px;background:#eee;border-bottom:1px solid #bbb}';
+    // Use table layout for initials, AM, PM rows so columns align perfectly
+    html += '.row{display:table;width:100%;table-layout:fixed}';
+    html += '.row-spacer{display:table-cell;width:' + amLblW + 'px;background:#f0f0f5;border-right:0.5px solid #ccc}';
+    html += '.row-cell{display:table-cell;font-size:' + initFs + 'px;font-weight:700;text-align:center;color:#333;padding:2px 0;background:#f0f0f5;border-right:0.5px solid #ddd}';
+    html += '.row-cell:last-child{border-right:none}';
+    html += '.row-lbl{display:table-cell;width:' + amLblW + 'px;font-size:' + lblFs + 'px;font-weight:700;color:#555;text-align:center;vertical-align:middle;background:#f5f5f5;border-right:0.5px solid #ccc}';
+    html += '.row-val{display:table-cell;font-size:' + cellFs + 'px;font-weight:600;padding:3px 0;text-align:center;border-right:0.5px solid #ddd;vertical-align:middle;line-height:1.2}';
+    html += '.row-val:last-child{border-right:none}';
+    html += '.row-val.off{color:#bbb;font-style:italic}';
+    html += '.pm-border{border-top:1px solid #bbb}';
+    html += '.init-border{border-bottom:1px solid #bbb}';
+    html += '.hol{background:#fee2e2;color:#b91c1c;font-weight:700;font-size:' + cellFs + 'px;text-align:center;padding:8px 2px}';
+    html += '.holam{background:#fef3c7;color:#92400e;font-size:' + (cellFs-1) + 'px;font-weight:600;text-align:center;padding:2px}';
+    html += '.empty{background:#f9f9f9}';
+    html += '</style></head><body>';
 
-    html += `<div class="hdr"><h1>MONDAY ${MONTHS[currentMonth].toUpperCase()}.${currentYear}</h1>`;
-    html += `<div><span class="plan">Plan ${planToUse}${finalPlanForMonth ? ' (Final)' : ''}</span> `;
-    html += `<span class="sub">Updated ${new Date().toLocaleDateString()} </span></div></div>`;
+    html += '<div class="hdr"><h1>' + MONTHS[currentMonth].toUpperCase() + ' ' + currentYear + '</h1>';
+    html += '<div><span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> <span class="meta">Updated ' + new Date().toLocaleDateString() + '</span></div></div>';
 
-    // Build header row with day-of-week names
-    html += `<table><thead><tr>`;
-    const dayNames = ['Mon','Tue','Wed','Thu','Fri'];
-    dayNames.forEach(dn => {
-      html += `<th>${dn}</th>`;
-    });
-    html += `</tr></thead><tbody>`;
+    html += '<table><thead><tr>';
+    ['Monday','Tuesday','Wednesday','Thursday','Friday'].forEach(dn => { html += '<th>' + dn + '</th>'; });
+    html += '</tr></thead><tbody>';
 
-    // For each week
     weekRows.forEach(week => {
-      // Pad to 5 columns (Mon-Fri)
-      const weekSlots = [null,null,null,null,null];
-      week.forEach(d => { weekSlots[d.dow - 1] = d; });
-
-      html += `<tr>`;
-      weekSlots.forEach(slot => {
-        if (!slot) { html += `<td class="empty"></td>`; return; }
+      const ws = [null,null,null,null,null];
+      week.forEach(d => { ws[d.dow - 1] = d; });
+      html += '<tr>';
+      ws.forEach(slot => {
+        if (!slot) { html += '<td class="empty"></td>'; return; }
         const dk = dateKey(currentYear, currentMonth, slot.day);
-        const holiday = getHolidayForDate(currentYear, currentMonth, slot.day);
+        const hol = getHolidayForDate(currentYear, currentMonth, slot.day);
+        html += '<td>';
+        html += '<div class="daynum">' + slot.day + '</div>';
+        if (hol && hol.halfDay === 'closed') { html += '<div class="hol">CLOSED — ' + hol.name + '</div></td>'; return; }
 
-        html += `<td>`;
-        // Day number row
-        html += `<div class="daynum">${slot.day}</div>`;
+        // Initials row (with spacer for AM/PM label alignment)
+        html += '<div class="row init-border"><div class="row-spacer"></div>';
+        filteredStaff.forEach(s => { html += '<div class="row-cell">' + staffInit(s) + '</div>'; });
+        html += '</div>';
 
-        if (holiday && holiday.halfDay === 'closed') {
-          html += `<div class="hol">CLOSED — ${holiday.name}</div>`;
-          html += `</td>`;
-          return;
-        }
-
-        // Staff initials header
-        html += `<div class="initrow">`;
-        filteredStaff.forEach(s => {
-          html += `<div class="init">${staffInitial(s)}</div>`;
-        });
-        html += `</div>`;
-
-        if (holiday && holiday.halfDay === 'am') {
-          html += `<div class="holam">AM Only — ${holiday.name}</div>`;
-        }
+        if (hol && hol.halfDay === 'am') html += '<div class="holam">AM Only</div>';
 
         // AM row
-        html += `<div class="period"><div class="plbl">AM</div><div class="slots">`;
+        html += '<div class="row"><div class="row-lbl">AM</div>';
         filteredStaff.forEach(s => {
-          const a = schedule[dk]?.[s.id]?.am;
-          if (!a || a === 'OFF') { html += `<div class="slot off">OFF</div>`; }
-          else { html += `<div class="slot">${LOC_ABBREV[a] || '?'}</div>`; }
+          const a = schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].am;
+          html += '<div class="row-val' + (!a || a === 'OFF' ? ' off' : '') + '">' + (!a || a === 'OFF' ? 'OFF' : (LA[a] || '?')) + '</div>';
         });
-        html += `</div></div>`;
+        html += '</div>';
 
         // PM row
-        html += `<div class="period ampm-divider"><div class="plbl">PM</div><div class="slots">`;
+        html += '<div class="row pm-border"><div class="row-lbl">PM</div>';
         filteredStaff.forEach(s => {
-          const a = schedule[dk]?.[s.id]?.pm;
-          if (holiday && holiday.halfDay === 'am') {
-            html += `<div class="slot off">OFF</div>`;
-          } else if (!a || a === 'OFF') {
-            html += `<div class="slot off">OFF</div>`;
-          } else {
-            html += `<div class="slot">${LOC_ABBREV[a] || '?'}</div>`;
-          }
+          const a = (hol && hol.halfDay === 'am') ? null : (schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].pm);
+          html += '<div class="row-val' + (!a || a === 'OFF' ? ' off' : '') + '">' + (!a || a === 'OFF' ? 'OFF' : (LA[a] || '?')) + '</div>';
         });
-        html += `</div></div>`;
-        html += `</td>`;
+        html += '</div>';
+        html += '</td>';
       });
-      html += `</tr>`;
+      html += '</tr>';
     });
 
-    html += `</tbody></table></body></html>`;
+    html += '</tbody></table></body></html>';
 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
@@ -2988,6 +2879,4 @@ For questions (not changes), just respond normally without action blocks. Be con
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.ScheduleHelper));
-  </script>
-</body>
-</html>
+</script></body></html>
