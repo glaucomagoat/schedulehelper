@@ -410,11 +410,13 @@ window.ScheduleHelper = function StaffScheduler() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [isDev, setIsDev] = useState(false);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '', email: '', isRegister: false, forgotMode: false, forgotEmail: '', forgotSent: false, resetToken: '', resetStep: false, newPassword: '' });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '', email: '', userType: 'admin', isRegister: false, forgotMode: false, forgotEmail: '', forgotSent: false, resetToken: '', resetStep: false, newPassword: '' });
+  const isAdmin = isDev || (user && (user.userType === 'admin'));
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
+  const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:''} }
 
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -621,10 +623,16 @@ window.ScheduleHelper = function StaffScheduler() {
       const sess = await window.storage.get('session');
         if (sess) {
           const u = JSON.parse(sess.value);
-          setUser(u);
-          setIsDev(u.isDev || false);
+          // Re-read user record to get latest userType (may have been updated)
+          let fullU = { ...u };
+          try {
+            const rec = await window.storage.get(`user:${u.username}`);
+            if (rec) { const p = JSON.parse(rec.value); fullU = { ...u, userType: p.userType || u.userType || 'admin', email: p.email || u.email || '' }; }
+          } catch(e) {}
+          setUser(fullU);
+          setIsDev(fullU.isDev || false);
 
-          if (u.isDev) {
+          if (fullU.isDev) {
             // For dev account, verify all presets exist before loading
             let hasCompleteData = false;
             try {
@@ -657,7 +665,7 @@ window.ScheduleHelper = function StaffScheduler() {
               await loadUserData(u.username);
             }
           } else {
-            await loadUserData(u.username);
+            await loadUserData(fullU.username);
           }
         }
       } catch(e) {}
@@ -710,6 +718,9 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function saveData(key, data) {
     if (!user) return;
+    // Staff users are read-only — never write schedule data back
+    const uType = user.userType || 'admin';
+    if (uType === 'staff' && !user.isDev) return;
     try { await window.storage.set(`${user.username}:${key}`, JSON.stringify(data)); } catch(e) {}
   }
 
@@ -721,6 +732,13 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
   useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
   useEffect(() => { if (user) saveData('dayNotes', dayNotes); }, [dayNotes]);
+
+  // Staff users: auto-follow the final plan for the current month
+  useEffect(() => {
+    if (!isAdmin && finalPlanForMonth && finalPlanForMonth !== activePlan) {
+      setActivePlan(finalPlanForMonth);
+    }
+  }, [isAdmin, finalPlanForMonth]);
 
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -746,7 +764,8 @@ window.ScheduleHelper = function StaffScheduler() {
     if (isRegister) {
       if (!email || !email.includes('@')) { alert('Please enter a valid email address.'); return; }
       try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username already taken. Please choose another.'); return; } } catch(e) {}
-      const u = { username, email, created: Date.now() };
+      const userType = loginForm.userType || 'admin';
+      const u = { username, email, userType, created: Date.now() };
       await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
       await window.storage.set('session', JSON.stringify(u));
       setUser(u); setIsDev(false);
@@ -756,7 +775,7 @@ window.ScheduleHelper = function StaffScheduler() {
         if (!userData) { alert('User not found'); return; }
         const parsed = JSON.parse(userData.value);
         if (parsed.password !== password) { alert('Incorrect password'); return; }
-        const u = { username, email: parsed.email || '', created: parsed.created };
+        const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created };
         await window.storage.set('session', JSON.stringify(u));
         setUser(u); setIsDev(false);
         await loadUserData(username);
@@ -851,6 +870,30 @@ window.ScheduleHelper = function StaffScheduler() {
     } catch(e) { setProfileMsg('An error occurred. Please try again.'); }
   }
 
+  async function createStaffAccount(staffMember) {
+    const form = staffAccountForm[staffMember.id] || {};
+    const { username, password } = form;
+    if (!username || username.length < 2) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Username must be at least 2 characters.'}})); return; }
+    if (!password || password.length < 4) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Password must be at least 4 characters.'}})); return; }
+    setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:true,msg:''}}));
+    try {
+      // Check if username taken
+      let existing = null;
+      try { existing = await window.storage.get(`user:${username}`); } catch(e) {}
+      if (existing) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:false,msg:'❌ Username already taken.'}})); return; }
+      // Create user record with staff type, linked to this staff member
+      const newUser = { username, userType: 'staff', staffId: staffMember.id, created: Date.now() };
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password }));
+      // Copy current admin's data to the new user namespace so they can read schedules
+      const adminUsername = user.username;
+      const keys = ['staff','locations','rules','holidays','vacations','schedules','finalPlans','dayNotes'];
+      for (const key of keys) {
+        try { const data = await window.storage.get(`${adminUsername}:${key}`); if (data) await window.storage.set(`${username}:${key}`, data.value); } catch(e) {}
+      }
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{username:'',password:'',saving:false,msg:`✅ Account created! Login: ${username}`}}));
+    } catch(e) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...(staffAccountForm[staffMember.id]||{}),saving:false,msg:'❌ Failed to create account.'}})); }
+  }
+
   async function handleDevLogin() {
     const devPw = prompt('Developer password:');
     if (devPw !== DEV_PASSWORD) { alert('Wrong password'); return; }
@@ -911,7 +954,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const CVE_PASS = 'brandy';
     try { await window.storage.get(`user:${CVE_USER}`); return; } catch(e) {} // already exists
     // Create user record
-    await window.storage.set(`user:${CVE_USER}`, JSON.stringify({ username: CVE_USER, password: CVE_PASS, created: Date.now() }));
+    await window.storage.set(`user:${CVE_USER}`, JSON.stringify({ username: CVE_USER, password: CVE_PASS, userType: 'admin', created: Date.now() }));
     // Copy all dev data to cve namespace
     const keys = ['staff','locations','rules','holidays','vacations','schedules','finalPlans'];
     for (const key of keys) {
@@ -2050,7 +2093,22 @@ For questions (not changes), just respond normally without action blocks. Be con
           {logo}
           <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
           {loginForm.isRegister && (
-            <Input label="Email Address" value={loginForm.email} onChange={v=>setLoginForm(p=>({...p,email:v}))} placeholder="your@email.com (for password recovery)" type="email" />
+            <div>
+              <Input label="Email Address" value={loginForm.email} onChange={v=>setLoginForm(p=>({...p,email:v}))} placeholder="your@email.com (for password recovery)" type="email" />
+              <div style={{marginBottom:16}}>
+                <label style={{display:'block',fontSize:12,color:'#9ca3af',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Account Type</label>
+                <div style={{display:'flex',gap:10}}>
+                  {[{v:'admin',icon:'🔑',label:'Admin',desc:'Full access — edit schedules, staff & rules'},{v:'staff',icon:'👤',label:'Staff',desc:'View-only — read final schedules'}].map(opt=>(
+                    <div key={opt.v} onClick={()=>setLoginForm(p=>({...p,userType:opt.v}))}
+                      style={{flex:1,padding:'10px 12px',borderRadius:10,cursor:'pointer',border:`2px solid ${loginForm.userType===opt.v?'#6366f1':'#2a2a4a'}`,background:loginForm.userType===opt.v?'#6366f115':'#12121f',transition:'all 0.15s'}}>
+                      <div style={{fontSize:16,marginBottom:4}}>{opt.icon}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:loginForm.userType===opt.v?'#818cf8':'#e8e8f0'}}>{opt.label}</div>
+                      <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{opt.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
           <Input label="Password" value={loginForm.password} onChange={v=>setLoginForm(p=>({...p,password:v}))} placeholder="Enter password" type="password" />
           {!loginForm.isRegister && (
@@ -2092,6 +2150,13 @@ For questions (not changes), just respond normally without action blocks. Be con
             <span style={{fontSize:10,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>
           </div>
           {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
+          {!isDev && user && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,
+            background:isAdmin?'#1e1e3555':'#1e2a1e55',
+            color:isAdmin?'#818cf8':'#6ee7b7',
+            border:`1px solid ${isAdmin?'#6366f155':'#065f4655'}`,
+            textTransform:'uppercase',letterSpacing:'0.08em'}}>
+            {isAdmin?'Admin':'Staff'}
+          </span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           {isDev && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
@@ -2147,11 +2212,13 @@ For questions (not changes), just respond normally without action blocks. Be con
         <div style={{width:220,background:'#12121f',borderRight:'1px solid #1e1e35',padding:'20px 0',flexShrink:0}}>
           {[
             {id:'schedule',icon:'📅',label:'Schedule'},
-            {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
-            {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
-            {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
-            {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
-            {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+            ...(isAdmin ? [
+              {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
+              {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
+              {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
+              {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
+              {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+            ] : []),
           ].map(tab => (
             <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
               style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:14,fontWeight:activeTab===tab.id?600:400,
@@ -2173,10 +2240,11 @@ For questions (not changes), just respond normally without action blocks. Be con
                   <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Monthly Schedule</h2>
                   <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>
                 </div>
-                <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-                  <Btn variant="success" onClick={generateWithAI} disabled={generating}>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+                  {!isAdmin && <span style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>}
+                  {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
-                  </Btn>
+                  </Btn>}
                   <div data-pdf-menu="true" style={{position:'relative'}}>
                     <Btn variant="secondary" onClick={()=>setShowPdfMenu(p=>!p)}>📄 Export PDF ▾</Btn>
                     {showPdfMenu && (
@@ -2194,7 +2262,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                       </div>
                     )}
                   </div>
-                  <Btn variant="danger" onClick={clearSchedule} style={{fontSize:12}}>Clear</Btn>
+                  {isAdmin && <Btn variant="danger" onClick={clearSchedule} style={{fontSize:12}}>Clear</Btn>}
                 </div>
               </div>
 
@@ -2396,12 +2464,12 @@ For questions (not changes), just respond normally without action blocks. Be con
                   const mon = new Date(today); mon.setDate(today.getDate() + diff);
                   setCurrentWeekStart(mon);
                 }} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
-                <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
+                {isAdmin && <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
                   style={{padding:'8px 12px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
-                  title="Undo last schedule change">↩</Btn>
-                <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
+                  title="Undo last schedule change">↩</Btn>}
+                {isAdmin && <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
                   style={{padding:'8px 12px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
-                  title="Redo last undone change">↪</Btn>
+                  title="Redo last undone change">↪</Btn>}
                 <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
                   {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
                     <div key={v} onClick={()=>{
@@ -2421,7 +2489,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               </div>
 
               {/* Plan Selector */}
-              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
+              {isAdmin && <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
                 <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Plans:</span>
                 {['A','B','C'].map(plan => {
                   const hasData = planHasData(plan);
@@ -2461,7 +2529,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                     </div>
                   )}
                 </div>
-              </div>
+              </div>}
 
               <div style={{borderRadius:14,overflow:'hidden',border:'1px solid #1e1e35',background:'#12121f'}}>
                 {/* Day headers */}
@@ -2553,20 +2621,25 @@ For questions (not changes), just respond normally without action blocks. Be con
                         return (
                           <div key={cellYear+'-'+cellMonth+'-'+day}
                             style={{minHeight:cellMinH,padding:isWk?'6px 6px':'4px 4px',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':(isCurMonth?'#12121f':'#0e0e1a'),cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
-                            onClick={function(){if(!wkend)setEditCell({day:day,dk:dk})}}
-                            onMouseEnter={function(e){if(!wkend)e.currentTarget.style.background='#1a1a30'}}
-                            onMouseLeave={function(e){if(!wkend)e.currentTarget.style.background=wkend?'#0d0d18':'#12121f'}}>
+                            onClick={function(){if(!wkend && isAdmin)setEditCell({day:day,dk:dk})}}
+                            onMouseEnter={function(e){if(!wkend && isAdmin)e.currentTarget.style.background='#1a1a30'}}
+                            onMouseLeave={function(e){if(!wkend && isAdmin)e.currentTarget.style.background=wkend?'#0d0d18':'#12121f'}}>
                             {(()=>{
                               const hasNote = !wkend && !!getNotes()[dk];
                               return (
                                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
                                   <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
                                   <div style={{display:'flex',alignItems:'center',gap:4}}>
-                                    {hasNote && (
+                                    {!wkend && (
                                       <span
-                                        title="View/edit note"
-                                        onClick={e=>{e.stopPropagation();const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
-                                        style={{fontSize:isWk?13:11,cursor:'pointer',lineHeight:1,opacity:0.9,filter:'drop-shadow(0 0 3px #f59e0b88)'}}>📝</span>
+                                        title={hasNote ? 'View/edit note' : 'Add note'}
+                                        onClick={e=>{e.stopPropagation();if(!isAdmin)return;const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
+                                        style={{fontSize:isWk?13:11,cursor:isAdmin?'pointer':'default',lineHeight:1,
+                                          opacity:hasNote?0.9:0.2,
+                                          filter:hasNote?'drop-shadow(0 0 3px #f59e0b88)':'none',
+                                          transition:'opacity 0.15s'}}
+                                        onMouseEnter={e=>e.currentTarget.style.opacity='0.9'}
+                                        onMouseLeave={e=>e.currentTarget.style.opacity=hasNote?'0.9':'0.2'}>📝</span>
                                     )}
                                     {!wkend&&<span style={{fontSize:fs.wk,color:'#4b5563',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
                                   </div>
@@ -2724,7 +2797,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Staff Members</h2>
-                <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});setShowStaffModal(true)}}>+ Add Staff</Btn>
+                {isAdmin && <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});setShowStaffModal(true)}}>+ Add Staff</Btn>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:14}}>
                 {staff.map(s=>{
@@ -2746,8 +2819,8 @@ For questions (not changes), just respond normally without action blocks. Be con
                           </div>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
-                          <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
-                          <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>}
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                           <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
@@ -2821,7 +2894,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                           <div style={{padding:'16px 24px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                               <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Scheduling Rules ({sr.length})</span>
-                              <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({staffId:s.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>
+                              {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({staffId:s.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>}
                             </div>
                             {sr.length===0 ? (
                               <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules defined.</div>
@@ -2839,10 +2912,10 @@ For questions (not changes), just respond normally without action blocks. Be con
                                         <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
                                         {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                       </div>
-                                      <div style={{display:'flex',gap:6,flexShrink:0}}>
+                                      {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
                                         <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
-                                        <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
-                                      </div>
+                                        {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
+                                      </div>}
                                     </div>
                                   );
                                 })}
@@ -2850,11 +2923,49 @@ For questions (not changes), just respond normally without action blocks. Be con
                             )}
                           </div>
 
+                          {/* Portal Account section — admin only */}
+                          {isAdmin && (
+                            <div style={{padding:'16px 24px',borderTop:'1px solid #2a2a4a'}}>
+                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:12}}>🔐 Portal Account</span>
+                              {(()=>{
+                                const sf = staffAccountForm[s.id] || {};
+                                return (
+                                  <div>
+                                    <p style={{fontSize:12,color:'#6b7280',marginBottom:12}}>Create a login for this staff member. They'll have read-only access to final schedules.</p>
+                                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                                      <div>
+                                        <label style={{display:'block',fontSize:10,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Username</label>
+                                        <input value={sf.username||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,username:e.target.value,msg:''}}))}
+                                          placeholder="e.g. jsmith"
+                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}} />
+                                      </div>
+                                      <div>
+                                        <label style={{display:'block',fontSize:10,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Password</label>
+                                        <input value={sf.password||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,password:e.target.value,msg:''}}))} type="password"
+                                          placeholder="Min 4 characters"
+                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}} />
+                                      </div>
+                                    </div>
+                                    {sf.msg && (
+                                      <div style={{fontSize:12,padding:'7px 10px',borderRadius:8,marginBottom:10,
+                                        background:sf.msg.startsWith('✅')?'#052e16':'#2a1010',
+                                        color:sf.msg.startsWith('✅')?'#86efac':'#fca5a5',
+                                        border:`1px solid ${sf.msg.startsWith('✅')?'#166534':'#7f1d1d'}`}}>{sf.msg}</div>
+                                    )}
+                                    <Btn onClick={()=>createStaffAccount(s)} disabled={sf.saving} style={{fontSize:12,padding:'6px 16px'}}>
+                                      {sf.saving ? 'Creating...' : '+ Create Account'}
+                                    </Btn>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
                           {/* Vacations section */}
                           <div style={{padding:'16px 24px',borderTop:'1px solid #2a2a4a'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                               <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Vacation ({sv.length})</span>
-                              <Btn variant="ghost" onClick={()=>{setVacationForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Vacation</Btn>
+                              {isAdmin && <Btn variant="ghost" onClick={()=>{setVacationForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Vacation</Btn>}
                             </div>
                             {sv.length===0 ? (
                               <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No vacations scheduled.</div>
@@ -2866,7 +2977,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                                       <div style={{fontSize:13,color:'#9ca3af',fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
                                       {v.reason&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{v.reason}</div>}
                                     </div>
-                                    <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                                    {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
                                   </div>
                                 ))}
                               </div>
@@ -2886,7 +2997,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Office Locations</h2>
-                <Btn onClick={()=>{setEditingLocation(null);setLocationForm({name:'',address:''});setShowLocationModal(true)}}>+ Add Location</Btn>
+                {isAdmin && <Btn onClick={()=>{setEditingLocation(null);setLocationForm({name:'',address:''});setShowLocationModal(true)}}>+ Add Location</Btn>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:12}}>
                 {locations.map(l=>{
@@ -2906,7 +3017,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
                           <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
-                          <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
                           <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
@@ -2915,7 +3026,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         <div style={{borderTop:'1px solid #2a2a4a',padding:'16px 20px'}}>
                           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                             <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Rules at {l.name}</span>
-                            <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({locationId:l.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>
+                            {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({locationId:l.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>}
                           </div>
                           {lr.length===0 ? (
                             <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules assigned to this location.</div>
@@ -2957,7 +3068,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
                 <Btn onClick={()=>{setEditingRule(null);resetRuleForm();setShowRuleModal(true)}}
-                  disabled={staff.length===0||locations.length===0}>+ Add Rule</Btn>
+                  disabled={!isAdmin||staff.length===0||locations.length===0}>+ Add Rule</Btn>
               </div>
 
               {/* Filter by provider */}
@@ -3002,7 +3113,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         </div>
                         <div style={{display:'flex',gap:6,flexShrink:0}}>
                           <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
-                          <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>
+                          {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>}
                         </div>
                       </div>
                     </div>
@@ -3017,7 +3128,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Vacation</h2>
-                <Btn onClick={()=>{setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} disabled={staff.length===0}>+ Add Vacation</Btn>
+                {isAdmin && <Btn onClick={()=>{setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} disabled={staff.length===0}>+ Add Vacation</Btn>}
               </div>
               {vacations.length===0?(
                 <div style={{textAlign:'center',padding:60,color:'#4b5563'}}><div style={{fontSize:48,marginBottom:16}}>🏖️</div><p>No vacations scheduled.</p></div>
@@ -3032,7 +3143,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                           <div style={{fontSize:13,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
                           {v.reason&&<div style={{fontSize:12,color:'#6b7280',marginTop:4}}>{v.reason}</div>}
                         </div>
-                        <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>
+                        {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>}
                       </div>
                     );
                   })}
@@ -3049,7 +3160,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                   <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Company Holidays</h2>
                   <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
                 </div>
-                <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>
+                {isAdmin && <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>}
               </div>
               {holidays.length===0?(
                 <div style={{textAlign:'center',padding:60,color:'#4b5563'}}><div style={{fontSize:48,marginBottom:16}}>📆</div><p>No holidays defined.</p></div>
@@ -3080,7 +3191,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                             setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||''});
                             setShowHolidayModal(true);
                           }} style={{cursor:'pointer',fontSize:14}}>✏️</span>
-                          <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
+                          {isAdmin && <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                         </div>
                       </div>
                     );
@@ -3363,40 +3474,90 @@ For questions (not changes), just respond normally without action blocks. Be con
       {/* Floating Note Box */}
       {floatingNote && (()=>{
         const noteText = getNotes()[floatingNote.dk] || '';
-        // Clamp position to viewport
         const boxW = 300;
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
-        const left = Math.min(floatingNote.x, vw - boxW - 16);
-        return (
-          <div>
-            {/* Click-away overlay */}
-            <div onClick={()=>setFloatingNote(null)} style={{position:'fixed',inset:0,zIndex:999}} />
-            <div onClick={e=>e.stopPropagation()} style={{
-              position:'fixed',left:left,top:floatingNote.y,width:boxW,zIndex:1000,
-              background:'#1a1a2e',border:'1px solid #4b5563',borderRadius:12,
-              boxShadow:'0 8px 32px #0008',padding:'14px 16px'
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        const initLeft = Math.min(Math.max(8, floatingNote.x), vw - boxW - 16);
+        const initTop  = Math.min(Math.max(8, floatingNote.y), vh - 260);
+
+        function DraggableNote() {
+          const [pos, setPos] = React.useState({ x: initLeft, y: initTop });
+          const dragRef = React.useRef(null);
+          const isDragging = React.useRef(false);
+          const dragStart = React.useRef({ mx: 0, my: 0, px: 0, py: 0 });
+
+          function onMouseDown(e) {
+            // Only drag from the header bar, not textarea
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SPAN') return;
+            isDragging.current = true;
+            dragStart.current = { mx: e.clientX, my: e.clientY, px: pos.x, py: pos.y };
+            e.preventDefault();
+          }
+          React.useEffect(() => {
+            function onMouseMove(e) {
+              if (!isDragging.current) return;
+              const dx = e.clientX - dragStart.current.mx;
+              const dy = e.clientY - dragStart.current.my;
+              const nx = Math.max(0, Math.min(vw - boxW - 4, dragStart.current.px + dx));
+              const ny = Math.max(0, Math.min(vh - 80, dragStart.current.py + dy));
+              setPos({ x: nx, y: ny });
+            }
+            function onMouseUp() { isDragging.current = false; }
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+            return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+          }, []);
+
+          return (
+            <div ref={dragRef} onClick={e=>e.stopPropagation()} style={{
+              position:'fixed', left:pos.x, top:pos.y, width:boxW, zIndex:1000,
+              background:'#1a1a2e', border:'1px solid #4b5563', borderRadius:12,
+              boxShadow:'0 8px 32px #000a'
             }}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              {/* Drag handle header */}
+              <div onMouseDown={onMouseDown} style={{
+                display:'flex', justifyContent:'space-between', alignItems:'center',
+                padding:'10px 14px 8px', cursor:'grab', borderBottom:'1px solid #2a2a4a',
+                borderRadius:'12px 12px 0 0', background:'#1e1e35', userSelect:'none'
+              }}>
                 <span style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  {noteText && <span onClick={()=>{setNote(floatingNote.dk,'');setFloatingNote(null);}}
-                    style={{fontSize:11,color:'#ef4444',cursor:'pointer',fontWeight:600}}>Clear</span>}
-                  <span onClick={()=>setFloatingNote(null)}
-                    style={{fontSize:16,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:700}}>×</span>
+                <span onClick={()=>setFloatingNote(null)}
+                  style={{fontSize:18,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:400,padding:'0 2px'}}>×</span>
+              </div>
+              {/* Body */}
+              <div style={{padding:'12px 14px 10px'}}>
+                <textarea
+                  autoFocus
+                  value={noteText}
+                  onChange={e=>setNote(floatingNote.dk,e.target.value)}
+                  placeholder="Add a note for this day…"
+                  rows={4}
+                  style={{width:'100%',background:'#12121f',border:'1px solid #374151',borderRadius:8,
+                    color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',
+                    padding:'8px 10px',resize:'vertical',lineHeight:1.5,outline:'none',display:'block'}}
+                />
+                {/* Footer */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
+                  {noteText ? (
+                    <span
+                      onClick={()=>{if(window.confirm('Clear this note? This cannot be undone.')){setNote(floatingNote.dk,'');}}}
+                      style={{fontSize:11,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
+                      onMouseEnter={e=>{e.currentTarget.style.color='#ef4444';e.currentTarget.style.borderColor='#ef4444';}}
+                      onMouseLeave={e=>{e.currentTarget.style.color='#6b7280';e.currentTarget.style.borderColor='#374151';}}>
+                      Clear
+                    </span>
+                  ) : <span />}
+                  <span style={{fontSize:10,color:'#4b5563'}}>Saves automatically</span>
                 </div>
               </div>
-              <textarea
-                autoFocus
-                value={noteText}
-                onChange={e=>setNote(floatingNote.dk,e.target.value)}
-                placeholder="Add a note for this day…"
-                rows={4}
-                style={{width:'100%',background:'#12121f',border:'1px solid #374151',borderRadius:8,
-                  color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',
-                  padding:'8px 10px',resize:'vertical',lineHeight:1.5,outline:'none'}}
-              />
-              <div style={{fontSize:11,color:'#4b5563',marginTop:6,textAlign:'right'}}>Changes save automatically</div>
             </div>
+          );
+        }
+
+        return (
+          <div>
+            <div onClick={()=>setFloatingNote(null)} style={{position:'fixed',inset:0,zIndex:999}} />
+            <DraggableNote />
           </div>
         );
       })()}
