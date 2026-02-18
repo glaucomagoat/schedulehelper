@@ -1436,12 +1436,32 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
     setChatLoading(true);
 
     const currentSchedule = getSchedule();
-    const scheduleSummary = Object.keys(currentSchedule).length > 0
-      ? `Current schedule for ${MONTHS[currentMonth]} ${currentYear} (Plan ${activePlan}) has ${Object.keys(currentSchedule).length} days filled.`
-      : `No schedule generated yet for ${MONTHS[currentMonth]} ${currentYear} Plan ${activePlan}.`;
-
     const staffContext = staff.map(s => `${s.id}: ${s.name} (${s.role})`).join('\n');
     const locContext = locations.map(l => `${l.id}: ${l.name}`).join('\n');
+
+    // Build full schedule dump so agent always reflects current live state (including undo/redo)
+    let scheduleSummary;
+    if (Object.keys(currentSchedule).length === 0) {
+      scheduleSummary = `No schedule generated yet for ${MONTHS[currentMonth]} ${currentYear} Plan ${activePlan}.`;
+    } else {
+      const schedLines = [`Current schedule for ${MONTHS[currentMonth]} ${currentYear} (Plan ${activePlan}):`];
+      const sortedDays = Object.keys(currentSchedule).sort();
+      for (const dk of sortedDays) {
+        const dayData = currentSchedule[dk];
+        const dayLines = [];
+        for (const sId of Object.keys(dayData)) {
+          const sm = staff.find(x => x.id === sId);
+          const sName = sm ? sm.name : sId;
+          const am = dayData[sId]?.am;
+          const pm = dayData[sId]?.pm;
+          const amLoc = am ? (am === 'OFF' ? 'OFF' : (locations.find(l => l.id === am)?.name || am)) : '—';
+          const pmLoc = pm ? (pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === pm)?.name || pm)) : '—';
+          if (am || pm) dayLines.push(`  ${sName}: AM=${amLoc}, PM=${pmLoc}`);
+        }
+        if (dayLines.length > 0) schedLines.push(`${dk}:\n${dayLines.join('\n')}`);
+      }
+      scheduleSummary = schedLines.join('\n');
+    }
     const vacContext = vacations.length > 0 ? vacations.map(v => {
       const s = staff.find(x => x.id === v.staffId);
       return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
