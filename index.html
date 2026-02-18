@@ -410,7 +410,11 @@ window.ScheduleHelper = function StaffScheduler() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [isDev, setIsDev] = useState(false);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '', isRegister: false });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '', email: '', isRegister: false, forgotMode: false, forgotEmail: '', forgotSent: false, resetToken: '', resetStep: false, newPassword: '' });
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
+  const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
+  const [profileMsg, setProfileMsg] = useState('');
 
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -418,6 +422,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [vacations, setVacations] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [schedules, setSchedules] = useState({});
+  const [dayNotes, setDayNotes] = useState({});        // { [scheduleKey]: { [dk]: "text" } }
+  const [floatingNote, setFloatingNote] = useState(null); // { dk, x, y }
   const scheduleHistoryRef = useRef([]);
   const scheduleHistoryIndexRef = useRef(-1);
   const [canUndo, setCanUndo] = useState(false);
@@ -462,6 +468,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [rulesFilter, setRulesFilter] = useState('all');
   const [devLogs, setDevLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(true);
+  const [showUserLogs, setShowUserLogs] = useState(false);
   const [visibleStaff, setVisibleStaff] = useState(new Set());
   const [visibleLocations, setVisibleLocations] = useState(new Set());
   const [expandedLocation, setExpandedLocation] = useState(null);
@@ -603,7 +610,15 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => {
     (async () => {
       try {
-        const sess = await window.storage.get('session');
+        // Check for password reset token in URL
+      const params = new URLSearchParams(window.location.search);
+      const resetToken = params.get('reset');
+      if (resetToken) {
+        setLoginForm(p => ({ ...p, resetToken, resetStep: true, forgotMode: false }));
+        setLoading(false);
+        return;
+      }
+      const sess = await window.storage.get('session');
         if (sess) {
           const u = JSON.parse(sess.value);
           setUser(u);
@@ -689,6 +704,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const v = await d('vacations'); if (v) setVacations(v);
       const h = await d('holidays'); if (h) setHolidays(h); else setHolidays(PRESET_HOLIDAYS);
       const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
+      const dn = await d('dayNotes'); if (dn) setDayNotes(dn);
     } catch(e) {}
   }
 
@@ -704,6 +720,7 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('holidays', holidays); }, [holidays]);
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
   useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
+  useEffect(() => { if (user) saveData('dayNotes', dayNotes); }, [dayNotes]);
 
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -716,12 +733,20 @@ window.ScheduleHelper = function StaffScheduler() {
     return () => document.removeEventListener('click', handler, true);
   }, [showPdfMenu]);
 
+  useEffect(() => {
+    if (!showProfileMenu) return;
+    const handler = (e) => { if (!e.target.closest('[data-profile-menu]')) setShowProfileMenu(false); };
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, [showProfileMenu]);
+
   async function handleAuth() {
-    const { username, password, isRegister } = loginForm;
+    const { username, password, email, isRegister } = loginForm;
     if (!username || !password) return;
     if (isRegister) {
-      try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username taken'); return; } } catch(e) {}
-      const u = { username, created: Date.now() };
+      if (!email || !email.includes('@')) { alert('Please enter a valid email address.'); return; }
+      try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username already taken. Please choose another.'); return; } } catch(e) {}
+      const u = { username, email, created: Date.now() };
       await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
       await window.storage.set('session', JSON.stringify(u));
       setUser(u); setIsDev(false);
@@ -730,13 +755,100 @@ window.ScheduleHelper = function StaffScheduler() {
         const userData = await window.storage.get(`user:${username}`);
         if (!userData) { alert('User not found'); return; }
         const parsed = JSON.parse(userData.value);
-        if (parsed.password !== password) { alert('Wrong password'); return; }
-        const u = { username, created: parsed.created };
+        if (parsed.password !== password) { alert('Incorrect password'); return; }
+        const u = { username, email: parsed.email || '', created: parsed.created };
         await window.storage.set('session', JSON.stringify(u));
         setUser(u); setIsDev(false);
         await loadUserData(username);
       } catch(e) { alert('Login failed'); }
     }
+  }
+
+  async function handleForgotPassword() {
+    const { forgotEmail } = loginForm;
+    if (!forgotEmail || !forgotEmail.includes('@')) { alert('Please enter a valid email address.'); return; }
+    // Find user with this email
+    try {
+      const allKeys = await window.storage.list('user:');
+      let foundUser = null;
+      for (const key of (allKeys.keys || [])) {
+        try {
+          const rec = await window.storage.get(key);
+          if (rec) {
+            const parsed = JSON.parse(rec.value);
+            if (parsed.email && parsed.email.toLowerCase() === forgotEmail.toLowerCase()) {
+              foundUser = { key, ...parsed };
+              break;
+            }
+          }
+        } catch(e) {}
+      }
+      if (!foundUser) {
+        // Don't reveal whether email exists - show same success message
+        setLoginForm(p => ({ ...p, forgotSent: true }));
+        return;
+      }
+      // Generate token
+      const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      const expiry = Date.now() + 1000 * 60 * 60; // 1 hour
+      await window.storage.set(`reset:${token}`, JSON.stringify({ username: foundUser.username, expiry }));
+      // Build reset URL
+      const resetUrl = window.location.origin + window.location.pathname + '?reset=' + token;
+      setLoginForm(p => ({ ...p, forgotSent: true, resetUrl }));
+    } catch(e) { alert('An error occurred. Please try again.'); }
+  }
+
+  async function handleResetPassword() {
+    const { resetToken, newPassword } = loginForm;
+    if (!newPassword || newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+    try {
+      const tokenData = await window.storage.get(`reset:${resetToken}`);
+      if (!tokenData) { alert('Invalid or expired reset link.'); return; }
+      const { username, expiry } = JSON.parse(tokenData.value);
+      if (Date.now() > expiry) { alert('This reset link has expired. Please request a new one.'); return; }
+      const userData = await window.storage.get(`user:${username}`);
+      if (!userData) { alert('User not found.'); return; }
+      const parsed = JSON.parse(userData.value);
+      parsed.password = newPassword;
+      await window.storage.set(`user:${username}`, JSON.stringify(parsed));
+      await window.storage.delete(`reset:${resetToken}`);
+      alert('Password reset successfully! Please sign in with your new password.');
+      setLoginForm(p => ({ ...p, resetToken: '', resetStep: false, newPassword: '', forgotMode: false }));
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch(e) { alert('Reset failed. Please try again.'); }
+  }
+
+  async function handleChangePassword() {
+    const { currentPassword, newPassword, confirmPassword } = profileForm;
+    if (!currentPassword || !newPassword || !confirmPassword) { setProfileMsg('Please fill in all fields.'); return; }
+    if (newPassword !== confirmPassword) { setProfileMsg('New passwords do not match.'); return; }
+    if (newPassword.length < 6) { setProfileMsg('New password must be at least 6 characters.'); return; }
+    try {
+      const userData = await window.storage.get(`user:${user.username}`);
+      if (!userData) { setProfileMsg('Account not found.'); return; }
+      const parsed = JSON.parse(userData.value);
+      if (parsed.password !== currentPassword) { setProfileMsg('Current password is incorrect.'); return; }
+      parsed.password = newPassword;
+      await window.storage.set(`user:${user.username}`, JSON.stringify(parsed));
+      setProfileMsg('✅ Password changed successfully!');
+      setProfileForm(p => ({ ...p, currentPassword: '', newPassword: '', confirmPassword: '' }));
+    } catch(e) { setProfileMsg('An error occurred. Please try again.'); }
+  }
+
+  async function handleUpdateEmail() {
+    const { email } = profileForm;
+    if (!email || !email.includes('@')) { setProfileMsg('Please enter a valid email address.'); return; }
+    try {
+      const userData = await window.storage.get(`user:${user.username}`);
+      if (!userData) { setProfileMsg('Account not found.'); return; }
+      const parsed = JSON.parse(userData.value);
+      parsed.email = email;
+      await window.storage.set(`user:${user.username}`, JSON.stringify(parsed));
+      const updatedUser = { ...user, email };
+      await window.storage.set('session', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      setProfileMsg('✅ Email updated successfully!');
+    } catch(e) { setProfileMsg('An error occurred. Please try again.'); }
   }
 
   async function handleDevLogin() {
@@ -876,6 +988,14 @@ window.ScheduleHelper = function StaffScheduler() {
   }
 
   function getSchedule() { return schedules[scheduleKey] || {}; }
+  function getNotes() { return dayNotes[scheduleKey] || {}; }
+  function setNote(dk, text) {
+    setDayNotes(prev => {
+      const updated = { ...prev, [scheduleKey]: { ...(prev[scheduleKey] || {}), [dk]: text } };
+      if (!text) delete updated[scheduleKey][dk];
+      return updated;
+    });
+  }
 
   function setDayAssignment(day, staffId, period, locationId) {
     const dk = dateKey(currentYear, currentMonth, day);
@@ -1603,6 +1723,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     const periodFont = baseFont * 0.8;
     const locFont = baseFont * 1.05;
 
+    const pdfNotes = dayNotes[pdfScheduleKey] || {};
     function buildCellHtml(day) {
       const dk = dateKey(currentYear, currentMonth, day);
       const ds = schedule[dk] || {};
@@ -1637,6 +1758,7 @@ For questions (not changes), just respond normally without action blocks. Be con
         groupByLoc(splitPm).forEach(g => { c += renderGroup(g); });
         c += '</div></div>';
       }
+      if (pdfNotes[dk]) c += '<div class="note">📝 ' + pdfNotes[dk].replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
       return c + '</td>';
     }
 
@@ -1665,6 +1787,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '.split{display:flex;gap:3px}.sp{flex:1;min-width:0}';
     html += '.hol{background:#fee2e2;color:#b91c1c;font-size:' + nameFont + 'px;font-weight:700;text-align:center;padding:4px;border-radius:3px;margin-top:2px}';
     html += '.holam{background:#fef3c7;color:#92400e;font-size:' + periodFont + 'px;font-weight:600;text-align:center;padding:1px;border-radius:2px;margin-bottom:2px}';
+    html += '.note{margin-top:3px;padding:2px 4px;background:#fffbeb;border-left:2px solid #f59e0b;border-radius:2px;font-size:' + Math.max(7, baseFont*0.75) + 'px;color:#78350f;font-style:italic;word-wrap:break-word}';
     html += '</style></head><body>';
 
     html += '<div class="hdr"><h1>' + MONTHS[currentMonth] + ' ' + currentYear + ' — Provider Schedule</h1><div>';
@@ -1696,6 +1819,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     const planToUse = finalPlanForMonth || activePlan;
     const pdfScheduleKey = `schedule-${currentYear}-${currentMonth}-${planToUse}`;
     const schedule = schedules[pdfScheduleKey] || {};
+    const classicNotes = dayNotes[pdfScheduleKey] || {};
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const filteredStaff = staff.filter(s => visibleStaff.has(s.id));
     const staffCount = filteredStaff.length;
@@ -1777,6 +1901,7 @@ For questions (not changes), just respond normally without action blocks. Be con
     html += '.empty{background:#f9f9f9}';
     html += '.foot{margin-top:3px;padding:3px 6px;background:#f8f8f8;border:1px solid #ddd;border-radius:3px;font-size:8px;display:flex;flex-wrap:wrap;gap:4px 12px}';
     html += '.foot b{font-weight:700;margin-right:2px}';
+    html += '.note{margin-top:3px;padding:2px 4px;background:#fffbeb;border-left:2px solid #f59e0b;border-radius:2px;font-size:7px;color:#78350f;font-style:italic;word-wrap:break-word}';
     html += '</style></head><body>';
 
     html += '<div class="hdr"><h1>' + MONTHS[currentMonth].toUpperCase() + ' ' + currentYear + '</h1>';
@@ -1822,6 +1947,7 @@ For questions (not changes), just respond normally without action blocks. Be con
           else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
         });
         html += '</div>';
+        if (classicNotes[dk]) html += '<div class="note">📝 ' + classicNotes[dk].replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
         html += '</td>';
       });
       html += '</tr>';
@@ -1861,36 +1987,96 @@ For questions (not changes), just respond normally without action blocks. Be con
     </div>
   );
 
-  // Login
-  if (!user) return (
-    <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
-      <div style={{width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'}}>
-        <div style={{textAlign:'center',marginBottom:36}}>
-          <div style={{fontSize:40,marginBottom:8}}>📅</div>
-          <h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1>
-          <p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p>
-        </div>
-        <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
-        <Input label="Password" value={loginForm.password} onChange={v=>setLoginForm(p=>({...p,password:v}))} placeholder="Enter password" type="password" />
-        <Btn onClick={handleAuth} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>
-          {loginForm.isRegister ? 'Create Account' : 'Sign In'}
-        </Btn>
-        <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
-          {loginForm.isRegister?'Already have an account?':"Don't have an account?"}{' '}
-          <span onClick={()=>setLoginForm(p=>({...p,isRegister:!p.isRegister}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>
-            {loginForm.isRegister?'Sign In':'Register'}
-          </span>
-        </p>
-        <div style={{marginTop:28,paddingTop:24,borderTop:'1px solid #2a2a4a',textAlign:'center'}}>
-          <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-            🔧 Developer Sign In
-          </Btn>
-          <p style={{fontSize:11,color:'#4b5563',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
+  // Login / Forgot Password / Reset Password screens
+  if (!user) {
+    const cardStyle = {width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'};
+    const wrap = <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" /></div>;
+    const logo = (<div style={{textAlign:'center',marginBottom:36}}><div style={{fontSize:40,marginBottom:8}}>📅</div><h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
+
+    // ── Reset password step (from URL token) ──
+    if (loginForm.resetStep) return (
+      <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+        <div style={cardStyle}>
+          {logo}
+          <p style={{color:'#9ca3af',fontSize:13,marginBottom:20,textAlign:'center'}}>Enter your new password below.</p>
+          <Input label="New Password" value={loginForm.newPassword} onChange={v=>setLoginForm(p=>({...p,newPassword:v}))} placeholder="Min 6 characters" type="password" />
+          <Btn onClick={handleResetPassword} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>Set New Password</Btn>
+          <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
+            <span onClick={()=>{setLoginForm(p=>({...p,resetStep:false,resetToken:''}));window.history.replaceState({},'',' ');}} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>← Back to Sign In</span>
+          </p>
         </div>
       </div>
-    </div>
-  );
+    );
+
+    // ── Forgot password mode ──
+    if (loginForm.forgotMode) return (
+      <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+        <div style={cardStyle}>
+          {logo}
+          {loginForm.forgotSent ? (
+            <div>
+              <div style={{background:'#052e16',border:'1px solid #166534',borderRadius:10,padding:16,marginBottom:20,textAlign:'center'}}>
+                <div style={{fontSize:24,marginBottom:6}}>✅</div>
+                <p style={{color:'#86efac',fontSize:13,fontWeight:600,marginBottom:8}}>Reset link generated!</p>
+                <p style={{color:'#6b7280',fontSize:12,marginBottom:12}}>Copy and open this link to reset your password:</p>
+                <div style={{background:'#0a0a1a',border:'1px solid #2a2a4a',borderRadius:8,padding:'10px 12px',wordBreak:'break-all',fontSize:11,color:'#818cf8',fontFamily:'monospace',marginBottom:8,textAlign:'left'}}>
+                  {loginForm.resetUrl}
+                </div>
+                <Btn onClick={()=>{navigator.clipboard.writeText(loginForm.resetUrl||'');}} style={{fontSize:12,padding:'6px 16px'}}>📋 Copy Link</Btn>
+              </div>
+              <p style={{textAlign:'center',fontSize:12,color:'#4b5563'}}>Link expires in 1 hour.</p>
+            </div>
+          ) : (
+            <div>
+              <p style={{color:'#9ca3af',fontSize:13,marginBottom:20,textAlign:'center'}}>Enter the email address on your account and we'll generate a reset link.</p>
+              <Input label="Email Address" value={loginForm.forgotEmail} onChange={v=>setLoginForm(p=>({...p,forgotEmail:v}))} placeholder="your@email.com" type="email" />
+              <Btn onClick={handleForgotPassword} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>Generate Reset Link</Btn>
+            </div>
+          )}
+          <p style={{textAlign:'center',marginTop:20,fontSize:13,color:'#6b7280'}}>
+            <span onClick={()=>setLoginForm(p=>({...p,forgotMode:false,forgotSent:false,forgotEmail:'',resetUrl:''}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>← Back to Sign In</span>
+          </p>
+        </div>
+      </div>
+    );
+
+    // ── Normal sign in / register ──
+    return (
+      <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+        <div style={cardStyle}>
+          {logo}
+          <Input label="Username" value={loginForm.username} onChange={v=>setLoginForm(p=>({...p,username:v}))} placeholder="Enter username" />
+          {loginForm.isRegister && (
+            <Input label="Email Address" value={loginForm.email} onChange={v=>setLoginForm(p=>({...p,email:v}))} placeholder="your@email.com (for password recovery)" type="email" />
+          )}
+          <Input label="Password" value={loginForm.password} onChange={v=>setLoginForm(p=>({...p,password:v}))} placeholder="Enter password" type="password" />
+          {!loginForm.isRegister && (
+            <div style={{textAlign:'right',marginTop:-4,marginBottom:8}}>
+              <span onClick={()=>setLoginForm(p=>({...p,forgotMode:true}))} style={{fontSize:12,color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>Forgot password?</span>
+            </div>
+          )}
+          <Btn onClick={handleAuth} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>
+            {loginForm.isRegister ? 'Create Account' : 'Sign In'}
+          </Btn>
+          <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
+            {loginForm.isRegister?'Already have an account?':"Don't have an account?"}{' '}
+            <span onClick={()=>setLoginForm(p=>({...p,isRegister:!p.isRegister,email:''}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>
+              {loginForm.isRegister?'Sign In':'Register'}
+            </span>
+          </p>
+          <div style={{marginTop:28,paddingTop:24,borderTop:'1px solid #2a2a4a',textAlign:'center'}}>
+            <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              🔧 Developer Sign In
+            </Btn>
+            <p style={{fontSize:11,color:'#4b5563',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Main App
   return (
@@ -1901,13 +2087,58 @@ For questions (not changes), just respond normally without action blocks. Be con
       <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <span style={{fontSize:24}}>📅</span>
-          <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em'}}>Schedule Helper</span>
+          <div style={{display:'flex',flexDirection:'column',gap:1}}>
+            <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
+            <span style={{fontSize:10,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>
+          </div>
           {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           {isDev && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
-          <span style={{fontSize:13,color:'#6b7280'}}>👤 {user.username}</span>
-          <Btn variant="ghost" onClick={logout} style={{fontSize:12,padding:'6px 14px'}}>Logout</Btn>
+          <div data-profile-menu style={{position:'relative'}}>
+            <div onClick={()=>setShowProfileMenu(p=>!p)}
+              style={{display:'flex',alignItems:'center',gap:8,padding:'7px 14px',background:showProfileMenu?'#1e1e35':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
+              <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'#fff',flexShrink:0}}>
+                {user.username[0].toUpperCase()}
+              </div>
+              <span style={{fontSize:13,fontWeight:600,color:'#e8e8f0'}}>{user.username}</span>
+              <span style={{fontSize:10,color:'#6b7280',transition:'transform 0.2s',display:'inline-block',transform:showProfileMenu?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+            </div>
+            {showProfileMenu && (
+              <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'calc(100% + 6px)',right:0,width:240,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,boxShadow:'0 12px 40px rgba(0,0,0,0.6)',zIndex:200,overflow:'hidden'}}>
+                {/* User info header */}
+                <div style={{padding:'14px 16px',borderBottom:'1px solid #2a2a4a',background:'#12121f'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'#fff',flexShrink:0}}>
+                      {user.username[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:'#e8e8f0'}}>{user.username}</div>
+                      <div style={{fontSize:11,color:'#6b7280'}}>{user.email || <span style={{fontStyle:'italic',color:'#4b5563'}}>No email set</span>}</div>
+                    </div>
+                  </div>
+                </div>
+                {/* Menu items */}
+                {[
+                  {icon:'✉️', label:'Edit Email', action:()=>{setProfileForm(p=>({...p,email:user.email||''}));setProfileMsg('');setProfileModal('editEmail');setShowProfileMenu(false);}},
+                  {icon:'🔑', label:'Change Password', action:()=>{setProfileForm(p=>({...p,currentPassword:'',newPassword:'',confirmPassword:''}));setProfileMsg('');setProfileModal('changePassword');setShowProfileMenu(false);}},
+                ].map(item=>(
+                  <div key={item.label} onClick={item.action}
+                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:13,color:'#d1d5db',transition:'background 0.1s'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#1e1e35'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    <span style={{fontSize:16}}>{item.icon}</span>{item.label}
+                  </div>
+                ))}
+                <div style={{borderTop:'1px solid #2a2a4a'}}>
+                  <div onClick={()=>{setShowProfileMenu(false);logout();}}
+                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:13,color:'#ef4444',transition:'background 0.1s'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#1e1e35'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    <span style={{fontSize:16}}>🚪</span>Sign Out
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2325,10 +2556,23 @@ For questions (not changes), just respond normally without action blocks. Be con
                             onClick={function(){if(!wkend)setEditCell({day:day,dk:dk})}}
                             onMouseEnter={function(e){if(!wkend)e.currentTarget.style.background='#1a1a30'}}
                             onMouseLeave={function(e){if(!wkend)e.currentTarget.style.background=wkend?'#0d0d18':'#12121f'}}>
-                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
-                              <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
-                              {!wkend&&<span style={{fontSize:fs.wk,color:'#4b5563',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
-                            </div>
+                            {(()=>{
+                              const hasNote = !wkend && !!getNotes()[dk];
+                              return (
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
+                                  <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'#374151':'#e8e8f0'}}>{day}</span>
+                                  <div style={{display:'flex',alignItems:'center',gap:4}}>
+                                    {hasNote && (
+                                      <span
+                                        title="View/edit note"
+                                        onClick={e=>{e.stopPropagation();const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
+                                        style={{fontSize:isWk?13:11,cursor:'pointer',lineHeight:1,opacity:0.9,filter:'drop-shadow(0 0 3px #f59e0b88)'}}>📝</span>
+                                    )}
+                                    {!wkend&&<span style={{fontSize:fs.wk,color:'#4b5563',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             {(function(){
                               var holiday = getHolidayForDate(cellYear, cellMonth, day);
                               if (holiday && holiday.halfDay === 'am') return (
@@ -2425,6 +2669,53 @@ For questions (not changes), just respond normally without action blocks. Be con
                   )}
                 </div>
               )}
+            {/* Activity Log — all users, bottom of schedule tab */}
+            {!isDev && (
+              <div style={{marginTop:32,borderTop:'1px solid #1a1a2e',paddingTop:16}}>
+                <div
+                  onClick={()=>setShowUserLogs(p=>!p)}
+                  style={{display:'inline-flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:7,background:'transparent',border:'1px solid #1e1e35',cursor:'pointer',opacity:0.5,transition:'opacity 0.15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.opacity='1'}
+                  onMouseLeave={e=>e.currentTarget.style.opacity='0.5'}>
+                  <span style={{fontSize:11,color:'#6b7280',fontFamily:'"Space Mono",monospace',letterSpacing:'0.03em'}}>activity log</span>
+                  {devLogs.length > 0 && <span style={{fontSize:10,background:'#1e1e35',color:'#6b7280',borderRadius:8,padding:'1px 6px'}}>{devLogs.length}</span>}
+                  <span style={{fontSize:10,color:'#4b5563'}}>{showUserLogs ? '▼' : '▶'}</span>
+                </div>
+                {showUserLogs && (
+                  <div style={{marginTop:8,border:'1px solid #1e1e35',borderRadius:12,overflow:'hidden'}}>
+                    <div style={{padding:'10px 16px',background:'#1a1a2e',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid #1e1e35'}}>
+                      <span style={{fontSize:12,fontWeight:700,color:'#6b7280',fontFamily:'"Space Mono",monospace'}}>Activity Logs ({devLogs.length})</span>
+                      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                        {devLogs.length > 0 && (
+                          <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:11,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f',border:'1px solid #1e1e35'}}>Clear</span>
+                        )}
+                        <span style={{color:'#6b7280',fontSize:12}}>{showUserLogs ? '▼' : '▶'}</span>
+                      </div>
+                    </div>
+                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:11}}>
+                      {devLogs.length === 0 ? (
+                        <div style={{color:'#4b5563',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
+                      ) : devLogs.map((log, i) => {
+                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24' };
+                        return (
+                          <div key={i} style={{marginBottom:6,lineHeight:1.4}}>
+                            <span style={{color:'#4b5563'}}>[{log.time}]</span>{' '}
+                            <span style={{color:colors[log.type]||'#9ca3af',fontWeight:700}}>{log.type.toUpperCase()}</span>{' '}
+                            <span style={{color:'#d1d5db'}}>{log.message}</span>
+                            {log.data && (
+                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:10}}>
+                                {log.data}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div ref={logsEndRef} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             </div>
           )}
 
@@ -3030,10 +3321,85 @@ For questions (not changes), just respond normally without action blocks. Be con
                 );
               })}
             </div>
+            <div style={{marginTop:16,borderTop:'1px solid #2a2a4a',paddingTop:14}}>
+              <label style={{display:'block',fontSize:11,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>📝 Day Notes</label>
+              <textarea
+                value={getNotes()[editCell.dk]||''}
+                onChange={e=>setNote(editCell.dk,e.target.value)}
+                placeholder="Add notes for this day (e.g. coverage changes, reminders)…"
+                rows={3}
+                style={{width:'100%',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',padding:'10px 12px',resize:'vertical',lineHeight:1.5}}
+              />
+            </div>
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}><Btn onClick={()=>setEditCell(null)}>Done</Btn></div>
           </div>
         )}
       </Modal>
+
+      {/* Profile Modals */}
+      <Modal open={profileModal==='changePassword'} onClose={()=>{setProfileModal(null);setProfileMsg('');}} title="🔑 Change Password">
+        <div style={{marginBottom:4}}>
+          <Input label="Current Password" value={profileForm.currentPassword} onChange={v=>setProfileForm(p=>({...p,currentPassword:v}))} placeholder="Enter current password" type="password" />
+          <Input label="New Password" value={profileForm.newPassword} onChange={v=>setProfileForm(p=>({...p,newPassword:v}))} placeholder="Min 6 characters" type="password" />
+          <Input label="Confirm New Password" value={profileForm.confirmPassword} onChange={v=>setProfileForm(p=>({...p,confirmPassword:v}))} placeholder="Repeat new password" type="password" />
+        </div>
+        {profileMsg && <div style={{fontSize:13,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
+          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
+          <Btn onClick={handleChangePassword}>Update Password</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={profileModal==='editEmail'} onClose={()=>{setProfileModal(null);setProfileMsg('');}} title="✉️ Email Address">
+        <p style={{fontSize:13,color:'#9ca3af',marginBottom:16}}>Your email is used for password recovery.</p>
+        <Input label="Email Address" value={profileForm.email} onChange={v=>setProfileForm(p=>({...p,email:v}))} placeholder="your@email.com" type="email" />
+        {profileMsg && <div style={{fontSize:13,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
+          <Btn onClick={handleUpdateEmail}>Save Email</Btn>
+        </div>
+      </Modal>
+
+      {/* Floating Note Box */}
+      {floatingNote && (()=>{
+        const noteText = getNotes()[floatingNote.dk] || '';
+        // Clamp position to viewport
+        const boxW = 300;
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const left = Math.min(floatingNote.x, vw - boxW - 16);
+        return (
+          <div>
+            {/* Click-away overlay */}
+            <div onClick={()=>setFloatingNote(null)} style={{position:'fixed',inset:0,zIndex:999}} />
+            <div onClick={e=>e.stopPropagation()} style={{
+              position:'fixed',left:left,top:floatingNote.y,width:boxW,zIndex:1000,
+              background:'#1a1a2e',border:'1px solid #4b5563',borderRadius:12,
+              boxShadow:'0 8px 32px #0008',padding:'14px 16px'
+            }}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  {noteText && <span onClick={()=>{setNote(floatingNote.dk,'');setFloatingNote(null);}}
+                    style={{fontSize:11,color:'#ef4444',cursor:'pointer',fontWeight:600}}>Clear</span>}
+                  <span onClick={()=>setFloatingNote(null)}
+                    style={{fontSize:16,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:700}}>×</span>
+                </div>
+              </div>
+              <textarea
+                autoFocus
+                value={noteText}
+                onChange={e=>setNote(floatingNote.dk,e.target.value)}
+                placeholder="Add a note for this day…"
+                rows={4}
+                style={{width:'100%',background:'#12121f',border:'1px solid #374151',borderRadius:8,
+                  color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',
+                  padding:'8px 10px',resize:'vertical',lineHeight:1.5,outline:'none'}}
+              />
+              <div style={{fontSize:11,color:'#4b5563',marginTop:6,textAlign:'right'}}>Changes save automatically</div>
+            </div>
+          </div>
+        );
+      })()}
 
       <style>{`
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
