@@ -418,6 +418,39 @@ window.ScheduleHelper = function StaffScheduler() {
   const [vacations, setVacations] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [schedules, setSchedules] = useState({});
+  const scheduleHistoryRef = useRef([]);
+  const scheduleHistoryIndexRef = useRef(-1);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  function pushScheduleHistory(prevSchedules) {
+    // Trim any redo history beyond current index
+    scheduleHistoryRef.current = scheduleHistoryRef.current.slice(0, scheduleHistoryIndexRef.current + 1);
+    scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(prevSchedules)));
+    // Cap at 50 entries
+    if (scheduleHistoryRef.current.length > 50) scheduleHistoryRef.current.shift();
+    scheduleHistoryIndexRef.current = scheduleHistoryRef.current.length - 1;
+    setCanUndo(scheduleHistoryIndexRef.current > 0);
+    setCanRedo(false);
+  }
+
+  function undoSchedule() {
+    if (scheduleHistoryIndexRef.current <= 0) return;
+    scheduleHistoryIndexRef.current -= 1;
+    const prev = JSON.parse(JSON.stringify(scheduleHistoryRef.current[scheduleHistoryIndexRef.current]));
+    setSchedules(prev);
+    setCanUndo(scheduleHistoryIndexRef.current > 0);
+    setCanRedo(true);
+  }
+
+  function redoSchedule() {
+    if (scheduleHistoryIndexRef.current >= scheduleHistoryRef.current.length - 1) return;
+    scheduleHistoryIndexRef.current += 1;
+    const next = JSON.parse(JSON.stringify(scheduleHistoryRef.current[scheduleHistoryIndexRef.current]));
+    setSchedules(next);
+    setCanUndo(true);
+    setCanRedo(scheduleHistoryIndexRef.current < scheduleHistoryRef.current.length - 1);
+  }
 
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -847,6 +880,7 @@ window.ScheduleHelper = function StaffScheduler() {
   function setDayAssignment(day, staffId, period, locationId) {
     const dk = dateKey(currentYear, currentMonth, day);
     setSchedules(prev => {
+      pushScheduleHistory(prev);
       const sched = { ...prev };
       if (!sched[scheduleKey]) sched[scheduleKey] = {};
       if (!sched[scheduleKey][dk]) sched[scheduleKey][dk] = {};
@@ -1107,7 +1141,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
 
       try {
         const response = await callClaudeAPI({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-6",
           max_tokens: 4096,
           messages: [{ role: "user", content: batchPrompt }]
         });
@@ -1182,7 +1216,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
     }
     if (holidayEdits > 0) addLog('info', `Holiday enforcement: ${holidayEdits} corrections`);
 
-    setSchedules(prev => ({ ...prev, [scheduleKey]: allAssignments }));
+    setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [scheduleKey]: allAssignments }; });
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
 
     // Check for critical ambiguities that need user input
@@ -1273,6 +1307,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
 
   function applyConflictFix(fix) {
     setSchedules(prev => {
+      pushScheduleHistory(prev);
       const sched = { ...(prev[scheduleKey] || {}) };
       if (!sched[fix.date]) sched[fix.date] = {};
       if (!sched[fix.date][fix.staffId]) sched[fix.date][fix.staffId] = { am: 'OFF', pm: 'OFF' };
@@ -1375,6 +1410,7 @@ For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling pr
           if (!locId) return `❌ Location "${action.location}" not found.`;
           const period = action.period || 'both';
           setSchedules(prev => {
+            pushScheduleHistory(prev);
             const sched = { ...prev[scheduleKey] || {} };
             if (!sched[action.date]) sched[action.date] = {};
             if (!sched[action.date][s.id]) sched[action.date][s.id] = { am: 'OFF', pm: 'OFF' };
@@ -1460,7 +1496,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       apiMessages.push({ role: 'user', content: userMsg });
 
       const response = await callClaudeAPI({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1500,
         system: systemPrompt,
         messages: apiMessages
@@ -2109,6 +2145,12 @@ For questions (not changes), just respond normally without action blocks. Be con
                   const mon = new Date(today); mon.setDate(today.getDate() + diff);
                   setCurrentWeekStart(mon);
                 }} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
+                <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
+                  style={{padding:'8px 12px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
+                  title="Undo last schedule change">↩</Btn>
+                <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
+                  style={{padding:'8px 12px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
+                  title="Redo last undone change">↪</Btn>
                 <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
                   {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
                     <div key={v} onClick={()=>{
