@@ -1,7 +1,7 @@
 [build]
   publish = "."
-  functions = "netlify/functions"
-  command = "npm install"
 
 [functions]
-  node_bundler = "esbuild"
+  # Raise serverless function timeout to the Netlify maximum (26s)
+  # Default is 10s — Claude API calls for complex schedules need more time
+  timeout = 26

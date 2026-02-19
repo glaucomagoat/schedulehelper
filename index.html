@@ -496,11 +496,25 @@ window.ScheduleHelper = function StaffScheduler() {
 
   // Call Claude API via Netlify function (API key stays server-side)
   async function callClaudeAPI(body) {
-    return fetch('/.netlify/functions/claude-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 24000); // 24s client timeout
+    try {
+      // body may include a top-level `system` string alongside `messages`
+      const res = await fetch('/.netlify/functions/claude-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return res;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out (>24s). The server is taking too long — please try again.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
+      }
+      throw err;
+    }
   }
 
   const logsEndRef = useRef(null);
@@ -1169,38 +1183,44 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
-    addLog('info', 'Starting AI schedule generation (biweekly batches)...');
+    addLog('info', 'Starting AI schedule generation (weekly batches, system/user prompt split)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
 
-    // Group weekdays into biweekly batches (W1+W2, W3+W4, overflow)
+    // Collect all weekdays, then split into weekly batches (W1=days 1-7, W2=8-14, W3=15-21, W4=22+)
     const allWeekdays = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-
-    // Split into weekly batches (W1=days 1-7, W2=8-14, W3=15-21, W4=22+)
     const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
     const batches = weekBounds.map((wb, wi) => ({
       days: allWeekdays.filter(d => d >= wb[0] && d <= wb[1]),
       label: `W${wi+1}`
     })).filter(b => b.days.length > 0);
 
-    const decisionsBlock = userDecisions ? `\nUSER DECISIONS (from critical ambiguity prompts):\n${Object.entries(userDecisions).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nFollow these decisions exactly.\n` : '';
+    const decisionsBlock = userDecisions ? `
+USER DECISIONS (from critical ambiguity prompts):
+${Object.entries(userDecisions).map(([k,v]) => `- ${k}: ${v}`).join('
+')}
+Follow these decisions exactly.
+` : '';
 
-    const contextBlock = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
+    // ── SYSTEM PROMPT: stable context sent once, cached by Anthropic across all batches ──
+    const systemPrompt = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
 
 MONTH: ${MONTHS[currentMonth]} ${currentYear} (${daysInMonth} days)
 The 1st falls on ${DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()]}.
 
 STAFF MEMBERS:
-${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('\n')}
+${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('
+')}
 
 LOCATIONS:
-${locations.map(l => `- ${l.name} (ID: ${l.id})`).join('\n')}
+${locations.map(l => `- ${l.name} (ID: ${l.id})`).join('
+')}
 
 ${prevMonthContext}
 
@@ -1211,7 +1231,8 @@ VACATION / OUT OF OFFICE:
 ${vacations.length > 0 ? vacations.map(v => {
   const s = staff.find(x => x.id === v.staffId);
   return `- ${s?.name || '?'}: ${v.startDate} to ${v.endDate}`;
-}).join('\n') : 'None.'}
+}).join('
+') : 'None.'}
 
 COMPANY HOLIDAYS:
 ${(()=>{
@@ -1222,10 +1243,11 @@ ${(()=>{
     const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
     hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
   });
-  return hols.length > 0 ? hols.join('\n') : 'None this month.';
+  return hols.length > 0 ? hols.join('
+') : 'None this month.';
 })()}
 ${decisionsBlock}
-RULES:
+SCHEDULING INSTRUCTIONS:
 - "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.
 - Follow REQUIRED rules strictly. PREFERRED when possible.
 - Cross-provider dependencies: pay attention to rotations and conditional rules.
@@ -1235,9 +1257,10 @@ RULES:
 - For NEGATIVE CONSTRAINT rules: ensure the constraint is satisfied (e.g., "no more than 2 Stockton Thursdays").
 - No rule or "OFF" → mark OFF. Vacation → OFF both AM/PM.
 - Holidays CLOSED → OFF both. Half-day → schedule AM, OFF PM.
-- 5th occurrence of a weekday → use W4 rules.`;
+- 5th occurrence of a weekday → use W4 rules.
+- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.`;
 
-    addLog('info', `Context: ${contextBlock.length} chars, ${allWeekdays.length} weekdays, ${batches.length} batches`);
+    addLog('info', `System prompt: ${systemPrompt.length} chars | ${allWeekdays.length} weekdays | ${batches.length} weekly batches`);
 
     const allAssignments = {};
     const allAmbiguities = [];
@@ -1255,34 +1278,36 @@ RULES:
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
-      // Carry forward prior-week results for cross-week dependency accuracy
+      // Carry forward the last 5 assigned days for cross-week dependency accuracy
       let priorWeeksBlock = '';
       if (bi > 0 && Object.keys(allAssignments).length > 0) {
-        priorWeeksBlock = '\nPRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):\n';
-        const priorDays = Object.keys(allAssignments).sort().slice(-5); // last 5 days max
+        priorWeeksBlock = 'PRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):
+';
+        const priorDays = Object.keys(allAssignments).sort().slice(-5);
         priorDays.forEach(dk => {
           const dayData = allAssignments[dk];
           const d = parseInt(dk.split('-')[2]);
           const dow = new Date(currentYear, currentMonth, d).getDay();
-          priorWeeksBlock += `  ${dk} (${DAYS_OF_WEEK[dow]}):\n`;
+          priorWeeksBlock += `  ${dk} (${DAYS_OF_WEEK[dow]}):
+`;
           Object.entries(dayData).forEach(([sid, periods]) => {
             const s = staff.find(x => x.id === sid);
             if (!s) return;
             const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
             const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
-            priorWeeksBlock += `    ${s.name}: ${amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc}\n`;
+            priorWeeksBlock += `    ${s.name}: ${amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc}
+`;
           });
         });
-        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.\n';
+        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.
+
+';
       }
 
-      const batchPrompt = `${contextBlock}
-${priorWeeksBlock}
-
-TASK: Generate schedule for ONLY these days: ${daysList}
+      // ── USER MESSAGE: only batch-specific content (prior context + task) ──
+      const batchPrompt = `${priorWeeksBlock}TASK: Generate schedule for ONLY these days: ${daysList}
 
 For each day, assign EVERY staff member an AM and PM location (or "OFF").
-Respond ONLY with valid JSON, no markdown, no backticks:
 {
   "assignments": {
     "YYYY-MM-DD": {
@@ -1297,15 +1322,16 @@ Respond ONLY with valid JSON, no markdown, no backticks:
   ]
 }
 Use exact IDs. Include every listed day and every staff member.
-For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules, unclear conditional): list them so the user can decide.
-For MINOR ambiguities (e.g., preferred rule couldn't be met, small scheduling preference): auto-resolve with your best judgment and list in auto_resolved.`;
+For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules): list them.
+For MINOR ambiguities: auto-resolve and list in auto_resolved.`;
 
-      addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days, prompt ${batchPrompt.length} chars`);
+      addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
 
       try {
         const response = await callClaudeAPI({
           model: "claude-sonnet-4-6",
           max_tokens: 4096,
+          system: systemPrompt,
           messages: [{ role: "user", content: batchPrompt }]
         });
 
@@ -2633,8 +2659,8 @@ For questions (not changes), just respond normally without action blocks. Be con
                                     {!wkend && (
                                       <span
                                         title={hasNote ? 'View/edit note' : 'Add note'}
-                                        onClick={e=>{e.stopPropagation();if(!isAdmin)return;const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
-                                        style={{fontSize:isWk?13:11,cursor:isAdmin?'pointer':'default',lineHeight:1,
+                                        onClick={e=>{e.stopPropagation();const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
+                                        style={{fontSize:isWk?13:11,cursor:'pointer',lineHeight:1,
                                           opacity:hasNote?0.9:0.2,
                                           filter:hasNote?'drop-shadow(0 0 3px #f59e0b88)':'none',
                                           transition:'opacity 0.15s'}}
@@ -3474,6 +3500,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       {/* Floating Note Box */}
       {floatingNote && (()=>{
         const noteText = getNotes()[floatingNote.dk] || '';
+        const noteReadOnly = !isAdmin;
         const boxW = 300;
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
         const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
@@ -3487,7 +3514,6 @@ For questions (not changes), just respond normally without action blocks. Be con
           const dragStart = React.useRef({ mx: 0, my: 0, px: 0, py: 0 });
 
           function onMouseDown(e) {
-            // Only drag from the header bar, not textarea
             if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SPAN') return;
             isDragging.current = true;
             dragStart.current = { mx: e.clientX, my: e.clientY, px: pos.x, py: pos.y };
@@ -3520,25 +3546,34 @@ For questions (not changes), just respond normally without action blocks. Be con
                 padding:'10px 14px 8px', cursor:'grab', borderBottom:'1px solid #2a2a4a',
                 borderRadius:'12px 12px 0 0', background:'#1e1e35', userSelect:'none'
               }}>
-                <span style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <span style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
+                  {noteReadOnly && <span style={{fontSize:9,fontWeight:700,color:'#6b7280',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:4,padding:'1px 5px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Read Only</span>}
+                </div>
                 <span onClick={()=>setFloatingNote(null)}
                   style={{fontSize:18,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:400,padding:'0 2px'}}>×</span>
               </div>
               {/* Body */}
               <div style={{padding:'12px 14px 10px'}}>
                 <textarea
-                  autoFocus
+                  autoFocus={!noteReadOnly}
                   value={noteText}
-                  onChange={e=>setNote(floatingNote.dk,e.target.value)}
-                  placeholder="Add a note for this day…"
+                  readOnly={noteReadOnly}
+                  onChange={noteReadOnly ? undefined : e=>setNote(floatingNote.dk,e.target.value)}
+                  placeholder={noteReadOnly ? 'No note for this day.' : 'Add a note for this day…'}
                   rows={4}
-                  style={{width:'100%',background:'#12121f',border:'1px solid #374151',borderRadius:8,
-                    color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',
-                    padding:'8px 10px',resize:'vertical',lineHeight:1.5,outline:'none',display:'block'}}
+                  style={{width:'100%',background: noteReadOnly ? '#0f0f1a' : '#12121f',
+                    border:'1px solid #374151',borderRadius:8,
+                    color: noteReadOnly ? '#9ca3af' : '#e8e8f0',
+                    fontSize:13,fontFamily:'"DM Sans",sans-serif',
+                    padding:'8px 10px',
+                    resize: noteReadOnly ? 'none' : 'vertical',
+                    lineHeight:1.5,outline:'none',display:'block',
+                    cursor: noteReadOnly ? 'default' : 'text'}}
                 />
                 {/* Footer */}
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
-                  {noteText ? (
+                  {!noteReadOnly && noteText ? (
                     <span
                       onClick={()=>{if(window.confirm('Clear this note? This cannot be undone.')){setNote(floatingNote.dk,'');}}}
                       style={{fontSize:11,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
@@ -3547,7 +3582,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                       Clear
                     </span>
                   ) : <span />}
-                  <span style={{fontSize:10,color:'#4b5563'}}>Saves automatically</span>
+                  {!noteReadOnly && <span style={{fontSize:10,color:'#4b5563'}}>Saves automatically</span>}
                 </div>
               </div>
             </div>
