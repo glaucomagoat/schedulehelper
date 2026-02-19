@@ -497,7 +497,7 @@ window.ScheduleHelper = function StaffScheduler() {
   // Call Claude API via Netlify function (API key stays server-side)
   async function callClaudeAPI(body) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 24000); // 24s client timeout
+    const timeoutId = setTimeout(() => controller.abort(), 25500); // 25.5s — just under Netlify's 26s ceiling
     try {
       // body may include a top-level `system` string alongside `messages`
       const res = await fetch('/.netlify/functions/claude-proxy', {
@@ -511,7 +511,7 @@ window.ScheduleHelper = function StaffScheduler() {
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out (>24s). The server is taking too long — please try again.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
+        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out (>25s). The server is taking too long — please try again.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
       }
       throw err;
     }
@@ -1183,7 +1183,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
-    addLog('info', 'Starting AI schedule generation (weekly batches, system/user prompt split)...');
+    addLog('info', 'Starting AI schedule generation (4-day batches, system/user prompt split)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
@@ -1195,11 +1195,12 @@ window.ScheduleHelper = function StaffScheduler() {
       const dow = new Date(currentYear, currentMonth, d).getDay();
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-    const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
-    const batches = weekBounds.map((wb, wi) => ({
-      days: allWeekdays.filter(d => d >= wb[0] && d <= wb[1]),
-      label: `W${wi+1}`
-    })).filter(b => b.days.length > 0);
+    // 4-day batches — small enough to reliably finish within the 26s Netlify timeout
+    const batches = [];
+    for (let i = 0; i < allWeekdays.length; i += 4) {
+      const chunk = allWeekdays.slice(i, i + 4);
+      batches.push({ days: chunk, label: 'Days ' + chunk[0] + '-' + chunk[chunk.length - 1] });
+    }
 
     const decisionsBlock = userDecisions ? (
       '\nUSER DECISIONS (from critical ambiguity prompts):\n' +
