@@ -1201,64 +1201,53 @@ window.ScheduleHelper = function StaffScheduler() {
       label: `W${wi+1}`
     })).filter(b => b.days.length > 0);
 
-    const decisionsBlock = userDecisions ? `
-USER DECISIONS (from critical ambiguity prompts):
-${Object.entries(userDecisions).map(([k,v]) => `- ${k}: ${v}`).join('
-')}
-Follow these decisions exactly.
-` : '';
+    const decisionsBlock = userDecisions ? (
+      '\nUSER DECISIONS (from critical ambiguity prompts):\n' +
+      Object.entries(userDecisions).map(([k,v]) => '- ' + k + ': ' + v).join('\n') +
+      '\nFollow these decisions exactly.\n'
+    ) : '';
 
     // ── SYSTEM PROMPT: stable context sent once, cached by Anthropic across all batches ──
-    const systemPrompt = `You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.
+    // Pre-compute all sub-sections to avoid nested backticks (Babel in-browser parser limitation)
+    const staffLines = staff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
+    const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
+    const vacationLines = vacations.length > 0
+      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
+      : 'None.';
+    const holidayLines = (()=>{
+      const hols = [];
+      holidays.forEach(h => {
+        const dt = getHolidayDate(h, currentYear);
+        if (!dt || dt.getMonth() !== currentMonth) return;
+        const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
+      });
+      return hols.length > 0 ? hols.join('\n') : 'None this month.';
+    })();
+    const firstDayName = DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()];
 
-MONTH: ${MONTHS[currentMonth]} ${currentYear} (${daysInMonth} days)
-The 1st falls on ${DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()]}.
-
-STAFF MEMBERS:
-${staff.map(s => `- ${s.name} (ID: ${s.id}, Role: ${s.role})`).join('
-')}
-
-LOCATIONS:
-${locations.map(l => `- ${l.name} (ID: ${l.id})`).join('
-')}
-
-${prevMonthContext}
-
-SCHEDULING RULES (by provider):
-${rulesSummary}
-
-VACATION / OUT OF OFFICE:
-${vacations.length > 0 ? vacations.map(v => {
-  const s = staff.find(x => x.id === v.staffId);
-  return `- ${s?.name || '?'}: ${v.startDate} to ${v.endDate}`;
-}).join('
-') : 'None.'}
-
-COMPANY HOLIDAYS:
-${(()=>{
-  const hols = [];
-  holidays.forEach(h => {
-    const dt = getHolidayDate(h, currentYear);
-    if (!dt || dt.getMonth() !== currentMonth) return;
-    const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
-    hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
-  });
-  return hols.length > 0 ? hols.join('
-') : 'None this month.';
-})()}
-${decisionsBlock}
-SCHEDULING INSTRUCTIONS:
-- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.
-- Follow REQUIRED rules strictly. PREFERRED when possible.
-- Cross-provider dependencies: pay attention to rotations and conditional rules.
-- For ROTATION rules: check the PREVIOUS MONTH CONTEXT to determine whose turn it is.
-- For CONDITIONAL rules: evaluate the condition and apply accordingly.
-- For EXCEPTION rules: apply the base rule UNLESS the exception condition is met.
-- For NEGATIVE CONSTRAINT rules: ensure the constraint is satisfied (e.g., "no more than 2 Stockton Thursdays").
-- No rule or "OFF" → mark OFF. Vacation → OFF both AM/PM.
-- Holidays CLOSED → OFF both. Half-day → schedule AM, OFF PM.
-- 5th occurrence of a weekday → use W4 rules.
-- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.`;
+    const systemPrompt = 'You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.\n\n' +
+      'MONTH: ' + MONTHS[currentMonth] + ' ' + currentYear + ' (' + daysInMonth + ' days)\n' +
+      'The 1st falls on ' + firstDayName + '.\n\n' +
+      'STAFF MEMBERS:\n' + staffLines + '\n\n' +
+      'LOCATIONS:\n' + locationLines + '\n\n' +
+      prevMonthContext + '\n\n' +
+      'SCHEDULING RULES (by provider):\n' + rulesSummary + '\n\n' +
+      'VACATION / OUT OF OFFICE:\n' + vacationLines + '\n\n' +
+      'COMPANY HOLIDAYS:\n' + holidayLines + '\n' +
+      decisionsBlock + '\n' +
+      'SCHEDULING INSTRUCTIONS:\n' +
+      '- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.\n' +
+      '- Follow REQUIRED rules strictly. PREFERRED when possible.\n' +
+      '- Cross-provider dependencies: pay attention to rotations and conditional rules.\n' +
+      '- For ROTATION rules: check the PREVIOUS MONTH CONTEXT to determine whose turn it is.\n' +
+      '- For CONDITIONAL rules: evaluate the condition and apply accordingly.\n' +
+      '- For EXCEPTION rules: apply the base rule UNLESS the exception condition is met.\n' +
+      '- For NEGATIVE CONSTRAINT rules: ensure the constraint is satisfied (e.g., "no more than 2 Stockton Thursdays").\n' +
+      '- No rule or "OFF" \u2192 mark OFF. Vacation \u2192 OFF both AM/PM.\n' +
+      '- Holidays CLOSED \u2192 OFF both. Half-day \u2192 schedule AM, OFF PM.\n' +
+      '- 5th occurrence of a weekday \u2192 use W4 rules.\n' +
+      '- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.';
 
     addLog('info', `System prompt: ${systemPrompt.length} chars | ${allWeekdays.length} weekdays | ${batches.length} weekly batches`);
 
@@ -1281,49 +1270,45 @@ SCHEDULING INSTRUCTIONS:
       // Carry forward the last 5 assigned days for cross-week dependency accuracy
       let priorWeeksBlock = '';
       if (bi > 0 && Object.keys(allAssignments).length > 0) {
-        priorWeeksBlock = 'PRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):
-';
+        priorWeeksBlock = 'PRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):\n';
         const priorDays = Object.keys(allAssignments).sort().slice(-5);
-        priorDays.forEach(dk => {
+        priorDays.forEach(function(dk) {
           const dayData = allAssignments[dk];
           const d = parseInt(dk.split('-')[2]);
           const dow = new Date(currentYear, currentMonth, d).getDay();
-          priorWeeksBlock += `  ${dk} (${DAYS_OF_WEEK[dow]}):
-`;
-          Object.entries(dayData).forEach(([sid, periods]) => {
-            const s = staff.find(x => x.id === sid);
+          priorWeeksBlock += '  ' + dk + ' (' + DAYS_OF_WEEK[dow] + '):\n';
+          Object.entries(dayData).forEach(function(entry) {
+            const sid = entry[0]; const periods = entry[1];
+            const s = staff.find(function(x) { return x.id === sid; });
             if (!s) return;
-            const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
-            const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
-            priorWeeksBlock += `    ${s.name}: ${amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc}
-`;
+            const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.am; })?.name || periods.am);
+            const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.pm; })?.name || periods.pm);
+            priorWeeksBlock += '    ' + s.name + ': ' + (amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc) + '\n';
           });
         });
-        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.
-
-';
+        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.\n\n';
       }
 
       // ── USER MESSAGE: only batch-specific content (prior context + task) ──
-      const batchPrompt = `${priorWeeksBlock}TASK: Generate schedule for ONLY these days: ${daysList}
-
-For each day, assign EVERY staff member an AM and PM location (or "OFF").
-{
-  "assignments": {
-    "YYYY-MM-DD": {
-      "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }
-    }
-  },
-  "ambiguities": [
-    { "id": "unique_id", "severity": "critical|minor", "question": "description of ambiguity", "chose": "what you chose and why", "alternatives": ["option A", "option B"] }
-  ],
-  "auto_resolved": [
-    { "description": "what minor conflict was auto-resolved and how" }
-  ]
-}
-Use exact IDs. Include every listed day and every staff member.
-For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules): list them.
-For MINOR ambiguities: auto-resolve and list in auto_resolved.`;
+      const batchPrompt = priorWeeksBlock +
+        'TASK: Generate schedule for ONLY these days: ' + daysList + '\n\n' +
+        'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
+        '{\n' +
+        '  "assignments": {\n' +
+        '    "YYYY-MM-DD": {\n' +
+        '      "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }\n' +
+        '    }\n' +
+        '  },\n' +
+        '  "ambiguities": [\n' +
+        '    { "id": "unique_id", "severity": "critical|minor", "question": "description of ambiguity", "chose": "what you chose and why", "alternatives": ["option A", "option B"] }\n' +
+        '  ],\n' +
+        '  "auto_resolved": [\n' +
+        '    { "description": "what minor conflict was auto-resolved and how" }\n' +
+        '  ]\n' +
+        '}\n' +
+        'Use exact IDs. Include every listed day and every staff member.\n' +
+        'For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules): list them.\n' +
+        'For MINOR ambiguities: auto-resolve and list in auto_resolved.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
 
