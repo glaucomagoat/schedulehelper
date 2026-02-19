@@ -495,23 +495,34 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showPdfMenu, setShowPdfMenu] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
-  async function callClaudeAPI(body) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25500); // 25.5s — just under Netlify's 26s ceiling
+  async function callClaudeAPI(body, retries) {
+    retries = retries || 0;
+    var maxRetries = 1;
+    var timeoutMs = 55000; // 55s — Netlify Pro allows 26s function timeout; give extra margin for network
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
     try {
-      // body may include a top-level `system` string alongside `messages`
-      const res = await fetch('/.netlify/functions/claude-proxy', {
+      var res = await fetch('/.netlify/functions/claude-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
+      // If Netlify returned 502/504 (gateway timeout), retry once
+      if ((res.status === 502 || res.status === 504) && retries < maxRetries) {
+        addLog('warn', 'Got ' + res.status + ', retrying... (attempt ' + (retries + 2) + ')');
+        return callClaudeAPI(body, retries + 1);
+      }
       return res;
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out (>25s). The server is taking too long — please try again.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
+        if (retries < maxRetries) {
+          addLog('warn', 'Request timed out after ' + (timeoutMs/1000) + 's, retrying... (attempt ' + (retries + 2) + ')');
+          return callClaudeAPI(body, retries + 1);
+        }
+        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out after retry. Try reducing batch complexity.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
       }
       throw err;
     }
@@ -1183,7 +1194,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
-    addLog('info', 'Starting AI schedule generation (4-day batches, system/user prompt split)...');
+    addLog('info', 'Starting AI schedule generation (3-day batches, system/user prompt split)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
@@ -1195,9 +1206,9 @@ window.ScheduleHelper = function StaffScheduler() {
       const dow = new Date(currentYear, currentMonth, d).getDay();
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-    // 4-day batches — small enough to reliably finish within the 26s Netlify timeout
+    // 3-day batches — smaller output keeps each API call well within timeout limits
     const batches = [];
-    for (let i = 0; i < allWeekdays.length; i += 4) {
+    for (let i = 0; i < allWeekdays.length; i += 3) {
       const chunk = allWeekdays.slice(i, i + 4);
       batches.push({ days: chunk, label: 'Days ' + chunk[0] + '-' + chunk[chunk.length - 1] });
     }
@@ -1316,7 +1327,7 @@ window.ScheduleHelper = function StaffScheduler() {
       try {
         const response = await callClaudeAPI({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 3000,
           system: systemPrompt,
           messages: [{ role: "user", content: batchPrompt }]
         });
