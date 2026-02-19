@@ -1,39 +1,37 @@
 // netlify/functions/claude-proxy.mjs
 // Forwards requests to the Anthropic API.
+// Uses the Web API Response format required by .mjs Netlify functions.
 // Supports the top-level `system` field for the system/user prompt split.
 
-export default async function handler(event) {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+export default async function handler(req) {
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: JSON_HEADERS });
   }
 
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }) };
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500, headers: JSON_HEADERS });
   }
 
   let body;
   try {
-    body = JSON.parse(event.body);
+    body = await req.json();
   } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Forward the full body as-is — the Anthropic API accepts:
-  //   { model, max_tokens, system, messages, ... }
-  // The `system` field is a top-level string and is passed straight through.
   const anthropicPayload = {
     model:      body.model      || 'claude-sonnet-4-6',
     max_tokens: body.max_tokens || 4096,
     messages:   body.messages   || [],
   };
 
-  // Only include system if provided (avoids sending empty string)
   if (body.system) {
     anthropicPayload.system = body.system;
   }
 
-  // Pass through any other optional Anthropic fields (temperature, tools, etc.)
   const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'metadata'];
   for (const field of passthroughFields) {
     if (body[field] !== undefined) {
@@ -53,16 +51,9 @@ export default async function handler(event) {
     });
 
     const responseText = await response.text();
+    return new Response(responseText, { status: response.status, headers: JSON_HEADERS });
 
-    return {
-      statusCode: response.status,
-      headers: { 'Content-Type': 'application/json' },
-      body: responseText,
-    };
   } catch (err) {
-    return {
-      statusCode: 502,
-      body: JSON.stringify({ error: 'Upstream request failed', detail: err.message }),
-    };
+    return new Response(JSON.stringify({ error: 'Upstream request failed', detail: err.message }), { status: 502, headers: JSON_HEADERS });
   }
-};
+}
