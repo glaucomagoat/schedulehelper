@@ -1,7 +1,7 @@
 [build]
   publish = "."
 
-[functions]
-  # Raise serverless function timeout to the Netlify maximum (26s)
+[functions."claude-proxy"]
+  # Raise timeout to the Netlify maximum (26s)
   # Default is 10s — Claude API calls for complex schedules need more time
   timeout = 26
