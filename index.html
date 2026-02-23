@@ -494,38 +494,61 @@ window.ScheduleHelper = function StaffScheduler() {
   const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
   const [showPdfMenu, setShowPdfMenu] = useState(false);
 
-  // Call Claude API via Netlify function (API key stays server-side)
-  async function callClaudeAPI(body, retries) {
-    retries = retries || 0;
-    var maxRetries = 1;
-    var timeoutMs = 55000; // 55s — Netlify Pro allows 26s function timeout; give extra margin for network
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
-    try {
-      var res = await fetch('/.netlify/functions/claude-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      // If Netlify returned 502/504 (gateway timeout), retry once
-      if ((res.status === 502 || res.status === 504) && retries < maxRetries) {
-        addLog('warn', 'Got ' + res.status + ', retrying... (attempt ' + (retries + 2) + ')');
-        return callClaudeAPI(body, retries + 1);
-      }
-      return res;
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
-        if (retries < maxRetries) {
-          addLog('warn', 'Request timed out after ' + (timeoutMs/1000) + 's, retrying... (attempt ' + (retries + 2) + ')');
-          return callClaudeAPI(body, retries + 1);
-        }
-        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out after retry. Try reducing batch complexity.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
-      }
-      throw err;
+  // Call Claude API (non-streaming) — used by the chat agent for short requests
+  async function callClaudeAPI(body) {
+    var res = await fetch('/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return res;
+  }
+
+  // Streaming Claude API — used for schedule generation.
+  // Streams SSE from Anthropic via the proxy, accumulating text deltas.
+  // Because bytes flow immediately, Netlify infrastructure inactivity timeouts never fire.
+  // onProgress(charsReceived) is called after each chunk for UI feedback.
+  async function streamClaudeAPI(body, onProgress) {
+    var payload = Object.assign({}, body, { stream: true });
+    var response = await fetch('/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      var errText = '';
+      try { errText = await response.text(); } catch(e) { errText = '?'; }
+      return { ok: false, status: response.status, errorText: errText };
     }
+
+    var reader = response.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    var fullText = '';
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      var lines = buffer.split('\n');
+      buffer = lines.pop(); // keep potentially incomplete last line
+      for (var li = 0; li < lines.length; li++) {
+        var line = lines[li];
+        if (!line.startsWith('data: ')) continue;
+        var raw = line.slice(6).trim();
+        if (!raw || raw === '[DONE]') continue;
+        try {
+          var evt = JSON.parse(raw);
+          if (evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta') {
+            fullText += evt.delta.text;
+            if (onProgress) onProgress(fullText.length);
+          }
+        } catch(e) { /* ignore malformed SSE lines */ }
+      }
+    }
+
+    return { ok: true, status: 200, text: fullText };
   }
 
   const logsEndRef = useRef(null);
@@ -1194,24 +1217,23 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
-    addLog('info', 'Starting AI schedule generation (3-day batches, system/user prompt split)...');
+    addLog('info', 'Starting AI schedule generation (weekly batches, streaming, full carry-forward)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
 
-    // Collect all weekdays, then split into weekly batches (W1=days 1-7, W2=8-14, W3=15-21, W4=22+)
+    // Weekly batches: W1=days 1-7, W2=8-14, W3=15-21, W4=22+
+    // Streaming eliminates timeout risk, so we use natural weekly boundaries for best accuracy.
     const allWeekdays = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-    // 3-day batches — smaller output keeps each API call well within timeout limits
-    const batches = [];
-    for (let i = 0; i < allWeekdays.length; i += 3) {
-      const chunk = allWeekdays.slice(i, i + 4);
-      batches.push({ days: chunk, label: 'Days ' + chunk[0] + '-' + chunk[chunk.length - 1] });
-    }
+    const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
+    const batches = weekBounds.map(function(wb, wi) {
+      return { days: allWeekdays.filter(function(d) { return d >= wb[0] && d <= wb[1]; }), label: 'W' + (wi+1) };
+    }).filter(function(b) { return b.days.length > 0; });
 
     const decisionsBlock = userDecisions ? (
       '\nUSER DECISIONS (from critical ambiguity prompts):\n' +
@@ -1279,12 +1301,14 @@ window.ScheduleHelper = function StaffScheduler() {
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
-      // Carry forward the last 5 assigned days for cross-week dependency accuracy
+      // Full carry-forward: ALL days scheduled so far this month.
+      // This lets Claude correctly enforce monthly negative constraints
+      // (e.g. "no more than 2 Stockton Thursdays") and cross-week conditional rules.
       let priorWeeksBlock = '';
       if (bi > 0 && Object.keys(allAssignments).length > 0) {
-        priorWeeksBlock = 'PRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):\n';
-        const priorDays = Object.keys(allAssignments).sort().slice(-5);
-        priorDays.forEach(function(dk) {
+        priorWeeksBlock = 'ALL DAYS SCHEDULED SO FAR THIS MONTH (use for constraint tracking and cross-week rules):\n';
+        const allPriorDays = Object.keys(allAssignments).sort();
+        allPriorDays.forEach(function(dk) {
           const dayData = allAssignments[dk];
           const d = parseInt(dk.split('-')[2]);
           const dow = new Date(currentYear, currentMonth, d).getDay();
@@ -1298,7 +1322,8 @@ window.ScheduleHelper = function StaffScheduler() {
             priorWeeksBlock += '    ' + s.name + ': ' + (amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc) + '\n';
           });
         });
-        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.\n\n';
+        priorWeeksBlock += '\nUse this complete history to: (1) enforce monthly negative constraints by counting occurrences, ' +
+          '(2) resolve conditional rules that depend on prior assignments, (3) track rotation state within the month.\n\n';
       }
 
       // ── USER MESSAGE: only batch-specific content (prior context + task) ──
@@ -1325,35 +1350,27 @@ window.ScheduleHelper = function StaffScheduler() {
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
 
       try {
-        const response = await callClaudeAPI({
+        // Stream this batch — bytes flow from the first token, so Netlify infrastructure
+        // inactivity timeouts cannot fire regardless of how long generation takes.
+        const result = await streamClaudeAPI({
           model: "claude-sonnet-4-6",
-          max_tokens: 3000,
+          max_tokens: 4096,
           system: systemPrompt,
           messages: [{ role: "user", content: batchPrompt }]
+        }, function(charsReceived) {
+          setAiLog('⏳ Generating ' + batchLabel + '... (' + charsReceived + ' chars received)');
         });
 
-        addLog('response', `Batch ${bi+1}: HTTP ${response.status}`, { ok: response.ok });
+        addLog('response', `Batch ${bi+1}: HTTP ${result.status}`, { ok: result.ok });
 
-        if (!response.ok) {
-          let errorText = '';
-          try { errorText = await response.text(); } catch(e) { errorText = '?'; }
-          addLog('error', `Batch ${bi+1} error ${response.status}`, { errorText: errorText.substring(0, 500) });
-          setAiLog(`⚠️ API error on ${batchLabel} (${response.status}). Check developer logs.`);
+        if (!result.ok) {
+          addLog('error', `Batch ${bi+1} error ${result.status}`, { errorText: (result.errorText||'').substring(0, 500) });
+          setAiLog(`⚠️ API error on ${batchLabel} (${result.status}). Check developer logs.`);
           setGenerating(false);
           return;
         }
 
-        const rawText = await response.text();
-        const data = JSON.parse(rawText);
-
-        if (data.error) {
-          addLog('error', `Batch ${bi+1} API error`, { error: data.error });
-          setAiLog(`⚠️ Error on ${batchLabel}: ${data.error?.message || 'Unknown'}`);
-          setGenerating(false);
-          return;
-        }
-
-        const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+        const text = result.text;
         const clean = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
         let parsed;

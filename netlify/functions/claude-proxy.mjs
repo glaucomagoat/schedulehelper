@@ -1,7 +1,8 @@
 // netlify/functions/claude-proxy.mjs
 // Forwards requests to the Anthropic API.
-// Uses the Web API Response format required by .mjs Netlify functions.
-// Supports the top-level `system` field for the system/user prompt split.
+// Supports streaming (stream: true) — pipes SSE response body directly back to the browser,
+// which eliminates Netlify infrastructure inactivity timeouts entirely.
+// Also supports non-streaming for the chat agent.
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -28,19 +29,16 @@ export default async function handler(req) {
     messages:   body.messages   || [],
   };
 
-  if (body.system) {
-    anthropicPayload.system = body.system;
-  }
+  if (body.system)  anthropicPayload.system = body.system;
+  if (body.stream)  anthropicPayload.stream = true;
 
-  const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'metadata'];
+  const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences', 'tools', 'tool_choice', 'metadata'];
   for (const field of passthroughFields) {
-    if (body[field] !== undefined) {
-      anthropicPayload[field] = body[field];
-    }
+    if (body[field] !== undefined) anthropicPayload[field] = body[field];
   }
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type':      'application/json',
@@ -50,8 +48,22 @@ export default async function handler(req) {
       body: JSON.stringify(anthropicPayload),
     });
 
-    const responseText = await response.text();
-    return new Response(responseText, { status: response.status, headers: JSON_HEADERS });
+    if (body.stream) {
+      // Pipe the SSE stream directly — bytes flow immediately, keeping the
+      // Netlify infrastructure connection alive for the full duration.
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          'Content-Type':    'text/event-stream',
+          'Cache-Control':   'no-cache',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    // Non-streaming (chat agent): return JSON response as before
+    const responseText = await upstream.text();
+    return new Response(responseText, { status: upstream.status, headers: JSON_HEADERS });
 
   } catch (err) {
     return new Response(JSON.stringify({ error: 'Upstream request failed', detail: err.message }), { status: 502, headers: JSON_HEADERS });
