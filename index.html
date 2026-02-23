@@ -1287,7 +1287,6 @@ window.ScheduleHelper = function StaffScheduler() {
 
     const allAssignments = {};
     const allAmbiguities = [];
-    const allAutoResolved = [];
     let totalDays = 0;
 
     for (let bi = 0; bi < batches.length; bi++) {
@@ -1301,35 +1300,35 @@ window.ScheduleHelper = function StaffScheduler() {
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
-      // Full carry-forward: ALL days scheduled so far this month.
-      // This lets Claude correctly enforce monthly negative constraints
-      // (e.g. "no more than 2 Stockton Thursdays") and cross-week conditional rules.
+      // Full carry-forward: ALL days scheduled so far this month, in compact ID format.
+      // IDs map to names/locations defined in the system prompt — no need to resolve them here.
+      // Format per line: "YYYY-MM-DD (Dow): sid=amId/pmId sid=amId/pmId ..."
+      // ~60% smaller than verbose format, preserving full history for constraint tracking.
       let priorWeeksBlock = '';
       if (bi > 0 && Object.keys(allAssignments).length > 0) {
-        priorWeeksBlock = 'ALL DAYS SCHEDULED SO FAR THIS MONTH (use for constraint tracking and cross-week rules):\n';
+        priorWeeksBlock = 'ALL DAYS SCHEDULED SO FAR THIS MONTH (IDs match system prompt — use for constraint tracking):\n';
         const allPriorDays = Object.keys(allAssignments).sort();
         allPriorDays.forEach(function(dk) {
           const dayData = allAssignments[dk];
           const d = parseInt(dk.split('-')[2]);
           const dow = new Date(currentYear, currentMonth, d).getDay();
-          priorWeeksBlock += '  ' + dk + ' (' + DAYS_OF_WEEK[dow] + '):\n';
-          Object.entries(dayData).forEach(function(entry) {
+          const staffEntries = Object.entries(dayData).map(function(entry) {
             const sid = entry[0]; const periods = entry[1];
-            const s = staff.find(function(x) { return x.id === sid; });
-            if (!s) return;
-            const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.am; })?.name || periods.am);
-            const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.pm; })?.name || periods.pm);
-            priorWeeksBlock += '    ' + s.name + ': ' + (amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc) + '\n';
-          });
+            const am = periods.am || 'OFF';
+            const pm = periods.pm || 'OFF';
+            return sid + '=' + am + '/' + pm;
+          }).join(' ');
+          priorWeeksBlock += '  ' + dk + ' (' + DAYS_OF_WEEK[dow] + '): ' + staffEntries + '\n';
         });
-        priorWeeksBlock += '\nUse this complete history to: (1) enforce monthly negative constraints by counting occurrences, ' +
-          '(2) resolve conditional rules that depend on prior assignments, (3) track rotation state within the month.\n\n';
+        priorWeeksBlock += '\nUse this complete history to: (1) enforce monthly negative constraints by counting locationId occurrences, ' +
+          '(2) resolve conditional rules that depend on prior assignments, (3) track within-month rotation state.\n\n';
       }
 
       // ── USER MESSAGE: only batch-specific content (prior context + task) ──
       const batchPrompt = priorWeeksBlock +
         'TASK: Generate schedule for ONLY these days: ' + daysList + '\n\n' +
         'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
+        'Respond ONLY with this JSON structure:\n' +
         '{\n' +
         '  "assignments": {\n' +
         '    "YYYY-MM-DD": {\n' +
@@ -1337,15 +1336,15 @@ window.ScheduleHelper = function StaffScheduler() {
         '    }\n' +
         '  },\n' +
         '  "ambiguities": [\n' +
-        '    { "id": "unique_id", "severity": "critical|minor", "question": "description of ambiguity", "chose": "what you chose and why", "alternatives": ["option A", "option B"] }\n' +
-        '  ],\n' +
-        '  "auto_resolved": [\n' +
-        '    { "description": "what minor conflict was auto-resolved and how" }\n' +
+        '    { "id": "uid", "severity": "critical", "question": "≤12 words", "chose": "≤12 words", "alternatives": ["A", "B"] }\n' +
         '  ]\n' +
         '}\n' +
-        'Use exact IDs. Include every listed day and every staff member.\n' +
-        'For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules): list them.\n' +
-        'For MINOR ambiguities: auto-resolve and list in auto_resolved.';
+        'Rules:\n' +
+        '- Use exact IDs. Include every listed day and every staff member.\n' +
+        '- CRITICAL ambiguities only: contradictory required rules, rotation with no prior data, truly unresolvable conflicts.\n' +
+        '- Minor conflicts: resolve silently using best judgment — do NOT list them.\n' +
+        '- Keep ambiguity fields brief: question ≤12 words, chose ≤12 words, max 2 alternatives.\n' +
+        '- Empty ambiguities array [] if none.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
 
@@ -1386,9 +1385,8 @@ window.ScheduleHelper = function StaffScheduler() {
         Object.assign(allAssignments, dayData);
         totalDays += Object.keys(dayData).length;
 
-        // Collect ambiguities and auto-resolved
+        // Collect critical ambiguities
         if (parsed.ambiguities) allAmbiguities.push(...parsed.ambiguities);
-        if (parsed.auto_resolved) allAutoResolved.push(...parsed.auto_resolved);
 
         addLog('success', `Batch ${bi+1} (${batchLabel}): ${Object.keys(dayData).length} days${parsed.ambiguities?.length ? ', ' + parsed.ambiguities.length + ' ambiguities' : ''}`);
 
@@ -1426,7 +1424,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const criticals = allAmbiguities.filter(a => a.severity === 'critical');
     if (criticals.length > 0 && !userDecisions) {
       setGenAmbiguities(criticals);
-      setGenPendingContext({ allAssignments, allAmbiguities, allAutoResolved, totalDays, holidayEdits });
+      setGenPendingContext({ allAssignments, allAmbiguities, totalDays, holidayEdits });
       setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
       setGenerating(false);
       return;
@@ -1437,13 +1435,10 @@ window.ScheduleHelper = function StaffScheduler() {
     if (conflicts.length > 0) {
       setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
       addLog('info', `Found ${conflicts.length} potential rule conflicts`);
-      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
     } else {
       setConflictsReport(null);
-      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
-    }
-    if (allAutoResolved.length > 0) {
-      allAutoResolved.forEach(ar => addLog('info', `Auto-resolved: ${ar.description}`));
+      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
     }
     setGenerating(false);
   }
