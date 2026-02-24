@@ -338,9 +338,9 @@ function Modal({ open, onClose, title, children, wide }) {
 function Input({ label, value, onChange, placeholder, type = "text", style: sx }) {
   return (
     <div style={{marginBottom:16,...sx}}>
-      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      {label && <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}} />
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}} />
     </div>
   );
 }
@@ -348,9 +348,9 @@ function Input({ label, value, onChange, placeholder, type = "text", style: sx }
 function Textarea({ label, value, onChange, placeholder, rows=3 }) {
   return (
     <div style={{marginBottom:16}}>
-      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      {label && <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
       <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
-        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box',resize:'vertical'}} />
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box',resize:'vertical'}} />
     </div>
   );
 }
@@ -358,9 +358,9 @@ function Textarea({ label, value, onChange, placeholder, rows=3 }) {
 function Select({ label, value, onChange, options }) {
   return (
     <div style={{marginBottom:16}}>
-      {label && <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      {label && <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
       <select value={value} onChange={e => onChange(e.target.value)}
-        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}}>
+        style={{width:'100%',padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}}>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
@@ -368,7 +368,7 @@ function Select({ label, value, onChange, options }) {
 }
 
 function Btn({ children, onClick, variant = "primary", style: sx, disabled }) {
-  const base = {padding:'10px 20px',borderRadius:8,border:'none',fontSize:13,fontWeight:600,cursor:disabled?'not-allowed':'pointer',fontFamily:'"DM Sans",sans-serif',transition:'all 0.2s',opacity:disabled?0.5:1,...sx};
+  const base = {padding:'10px 20px',borderRadius:8,border:'none',fontSize:14,fontWeight:600,cursor:disabled?'not-allowed':'pointer',fontFamily:'"DM Sans",sans-serif',transition:'all 0.2s',opacity:disabled?0.5:1,...sx};
   const variants = {
     primary:{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'#fff'},
     secondary:{background:'#2a2a4a',color:'#e8e8f0'},
@@ -382,7 +382,7 @@ function Btn({ children, onClick, variant = "primary", style: sx, disabled }) {
 
 function Chip({ children, color }) {
   return (
-    <span style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 12px',borderRadius:20,background:color+'22',color:color,fontSize:12,fontWeight:600,fontFamily:'"DM Sans",sans-serif'}}>
+    <span style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 12px',borderRadius:20,background:color+'22',color:color,fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif'}}>
       {children}
     </span>
   );
@@ -413,10 +413,10 @@ function WeekOfMonthPicker({ value, onChange }) {
 
   return (
     <div style={{marginBottom:16}}>
-      <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
+      <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
       <div style={{display:'flex',gap:isMobile?6:8,flexWrap:'wrap'}}>
         <div onClick={toggleAll}
-          style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
+          style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
             background:isAll?'#6366f122':'#12121f',color:isAll?'#818cf8':'#6b7280',border:`1px solid ${isAll?'#6366f1':'#2a2a4a'}`,transition:'all 0.15s'}}>
           All Weeks
         </div>
@@ -424,7 +424,7 @@ function WeekOfMonthPicker({ value, onChange }) {
           const active = selected.includes(w);
           return (
             <div key={w} onClick={() => toggle(w)}
-              style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
+              style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
                 background:active?'#6366f122':'#12121f',color:active?'#818cf8':'#6b7280',border:`1px solid ${active?'#6366f1':'#2a2a4a'}`,transition:'all 0.15s'}}>
               {labels[w]}
             </div>
@@ -456,7 +456,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
-  const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:''} }
+  const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:'',newPassword:'',changingPw:false,pwMsg:''} }
+  const [portalAccounts, setPortalAccounts] = useState({}); // { [staffId]: { username } | null }
 
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -513,6 +514,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showUserLogs, setShowUserLogs] = useState(false);
   const [visibleStaff, setVisibleStaff] = useState(new Set());
   const [visibleLocations, setVisibleLocations] = useState(new Set());
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [confirmClearPlan, setConfirmClearPlan] = useState(false);
   const [expandedLocation, setExpandedLocation] = useState(null);
   const [expandedStaffMember, setExpandedStaffMember] = useState(null);
   const [calendarView, setCalendarView] = useState('month'); // 'month' | 'week'
@@ -521,6 +524,8 @@ window.ScheduleHelper = function StaffScheduler() {
   // Plan system: A, B, C per month
   const [activePlan, setActivePlan] = useState('A');
   const [finalPlans, setFinalPlans] = useState({}); // { "2026-1": "A", ... }
+  const [planHistory, setPlanHistory] = useState({}); // { [scheduleKey]: [{ts, desc}] }
+  const [showHistory, setShowHistory] = useState(true);
 
   // AI Agent chat
   const [chatMessages, setChatMessages] = useState([]);
@@ -583,6 +588,11 @@ window.ScheduleHelper = function StaffScheduler() {
     }
   }, [isMobile, currentWeekStart]);
 
+  // Load portal accounts whenever staff list changes
+  useEffect(() => {
+    if (staff.length > 0) loadPortalAccounts();
+  }, [staff.length]);
+
   // Initialize visibleStaff and visibleLocations to show all when data loads
   useEffect(() => {
     if (staff.length > 0 && visibleStaff.size === 0) {
@@ -602,7 +612,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const rt = r.ruleType || 'standard';
     if (rt === 'standard') return null;
     const colors = {conditional:'#f59e0b',exception:'#ef4444',negative:'#ec4899',rotation:'#10b981',complex:'#8b5cf6'};
-    return React.createElement('span',{style:{fontSize:10,fontWeight:700,color:colors[rt]||'#6b7280',background:(colors[rt]||'#6b7280')+'22',padding:'1px 6px',borderRadius:4,marginLeft:6}}, (RULE_TYPE_BADGES[rt]||'') + ' ' + rt);
+    return React.createElement('span',{style:{fontSize:11,fontWeight:700,color:colors[rt]||'#6b7280',background:(colors[rt]||'#6b7280')+'22',padding:'1px 6px',borderRadius:4,marginLeft:6}}, (RULE_TYPE_BADGES[rt]||'') + ' ' + rt);
   }
 
   function getLastName(fullName) {
@@ -678,11 +688,21 @@ window.ScheduleHelper = function StaffScheduler() {
     return schedules[key] && Object.keys(schedules[key]).length > 0;
   }
 
+  function addHistoryEntry(desc, targetKey) {
+    const key = targetKey || scheduleKey;
+    const ts = new Date().toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+    setPlanHistory(prev => {
+      const existing = prev[key] || [];
+      return { ...prev, [key]: [{ ts, desc }, ...existing].slice(0, 100) };
+    });
+  }
+
   function copyPlanTo(fromPlan, toPlan) {
     const fromKey = `schedule-${currentYear}-${currentMonth}-${fromPlan}`;
     const toKey = `schedule-${currentYear}-${currentMonth}-${toPlan}`;
     const data = schedules[fromKey];
     if (!data) return;
+    addHistoryEntry('Copied from Plan ' + fromPlan + ' → Plan ' + toPlan, toKey);
     setSchedules(prev => ({ ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }));
   }
 
@@ -967,8 +987,46 @@ window.ScheduleHelper = function StaffScheduler() {
       for (const key of keys) {
         try { const data = await window.storage.get(`${adminUsername}:${key}`); if (data) await window.storage.set(`${username}:${key}`, data.value); } catch(e) {}
       }
-      setStaffAccountForm(p=>({...p,[staffMember.id]:{username:'',password:'',saving:false,msg:`✅ Account created! Login: ${username}`}}));
+      // Store reverse lookup so we can find this account by staffId
+      await window.storage.set('staffPortal:' + staffMember.id, JSON.stringify({ username }));
+      setPortalAccounts(p=>({...p,[staffMember.id]:{ username }}));
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{username:'',password:'',saving:false,msg:'✅ Account created! Login: ' + username}}));
     } catch(e) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...(staffAccountForm[staffMember.id]||{}),saving:false,msg:'❌ Failed to create account.'}})); }
+  }
+
+  // Load portal account info for all staff (reverse lookup via staffPortal:{staffId})
+  async function loadPortalAccounts() {
+    const result = {};
+    for (const s of staff) {
+      try {
+        const r = await window.storage.get('staffPortal:' + s.id);
+        result[s.id] = r ? JSON.parse(r.value) : null;
+      } catch(e) { result[s.id] = null; }
+    }
+    setPortalAccounts(result);
+  }
+
+  // Change password for an existing staff portal account
+  async function changeStaffPassword(staffMember) {
+    const form = staffAccountForm[staffMember.id] || {};
+    const { newPassword } = form;
+    if (!newPassword || newPassword.length < 4) {
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,pwMsg:'❌ Password must be at least 4 characters.'}}));
+      return;
+    }
+    setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:true,pwMsg:''}}));
+    try {
+      const acct = portalAccounts[staffMember.id];
+      if (!acct) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:false,pwMsg:'❌ No portal account found.'}})); return; }
+      const userData = await window.storage.get('user:' + acct.username);
+      if (!userData) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:false,pwMsg:'❌ Account not found in storage.'}})); return; }
+      const parsed = JSON.parse(userData.value);
+      parsed.password = newPassword;
+      await window.storage.set('user:' + acct.username, JSON.stringify(parsed));
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,newPassword:'',changingPw:false,pwMsg:'✅ Password updated.'}}));
+    } catch(e) {
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:false,pwMsg:'❌ Failed to update password.'}}));
+    }
   }
 
   async function handleDevLogin() {
@@ -1119,6 +1177,13 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function setDayAssignment(day, staffId, period, locationId) {
     const dk = dateKey(currentYear, currentMonth, day);
+    const s = staff.find(x => x.id === staffId);
+    const l = locationId === 'OFF' ? 'OFF' : (locations.find(x => x.id === locationId)?.name || locationId);
+    const dow = new Date(currentYear, currentMonth, day).getDay();
+    addHistoryEntry(
+      'Manual edit: ' + (s ? getLastName(s.name) : staffId) + ' · ' + DAYS_OF_WEEK[dow] + ' ' + dk +
+      ' · ' + (period === 'both' ? 'AM+PM' : period.toUpperCase()) + ' → ' + l
+    );
     setSchedules(prev => {
       pushScheduleHistory(prev);
       const sched = { ...prev };
@@ -1131,8 +1196,9 @@ window.ScheduleHelper = function StaffScheduler() {
   }
 
   function clearSchedule() {
-    if (!confirm('Clear entire schedule for this month?')) return;
+    addHistoryEntry('Schedule cleared for ' + MONTHS[currentMonth] + ' ' + currentYear + ' Plan ' + activePlan);
     setSchedules(prev => { const s = { ...prev }; delete s[scheduleKey]; return s; });
+    setConfirmClearPlan(false);
   }
 
   // Build a human-readable rules summary for the AI prompt
@@ -1456,6 +1522,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
     setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [scheduleKey]: allAssignments }; });
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
+    addHistoryEntry('AI generated schedule · ' + totalDays + ' days · ' + batches.length + ' batches');
 
     // Check for critical ambiguities that need user input
     const criticals = allAmbiguities.filter(a => a.severity === 'critical');
@@ -1656,6 +1723,8 @@ window.ScheduleHelper = function StaffScheduler() {
             if (period === 'pm' || period === 'both') sched[action.date][s.id].pm = locId;
             return { ...prev, [scheduleKey]: sched };
           });
+          const agentDesc = 'AI agent: ' + getLastName(s.name) + ' · ' + action.date + ' · ' + (period === 'both' ? 'AM+PM' : period.toUpperCase()) + ' → ' + action.location;
+          addHistoryEntry(agentDesc);
           return `✅ Updated ${s.name} on ${action.date}: ${period === 'both' ? 'AM+PM' : period.toUpperCase()} → ${action.location}`;
         }
         default:
@@ -2116,7 +2185,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       boxShadow:'0 32px 80px rgba(0,0,0,0.6)',
     };
     const wrap = <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" /></div>;
-    const logo = (<div style={{textAlign:'center',marginBottom:36}}><div style={{fontSize:40,marginBottom:8}}>📅</div><h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
+    const logo = (<div style={{textAlign:'center',marginBottom:36}}><div style={{fontSize:40,marginBottom:8}}>📅</div><h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'#6b7280',fontSize:15,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
 
     // ── Reset password step (from URL token) ──
     if (loginForm.resetStep) return (
@@ -2124,10 +2193,10 @@ For questions (not changes), just respond normally without action blocks. Be con
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
         <div style={cardStyle}>
           {logo}
-          <p style={{color:'#9ca3af',fontSize:13,marginBottom:20,textAlign:'center'}}>Enter your new password below.</p>
+          <p style={{color:'#9ca3af',fontSize:14,marginBottom:20,textAlign:'center'}}>Enter your new password below.</p>
           <Input label="New Password" value={loginForm.newPassword} onChange={v=>setLoginForm(p=>({...p,newPassword:v}))} placeholder="Min 6 characters" type="password" />
-          <Btn onClick={handleResetPassword} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>Set New Password</Btn>
-          <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
+          <Btn onClick={handleResetPassword} style={{width:'100%',padding:'14px',fontSize:16,marginTop:8}}>Set New Password</Btn>
+          <p style={{textAlign:'center',marginTop:16,fontSize:14,color:'#6b7280'}}>
             <span onClick={()=>{setLoginForm(p=>({...p,resetStep:false,resetToken:''}));window.history.replaceState({},'',' ');}} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>← Back to Sign In</span>
           </p>
         </div>
@@ -2144,23 +2213,23 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{background:'#052e16',border:'1px solid #166534',borderRadius:10,padding:16,marginBottom:20,textAlign:'center'}}>
                 <div style={{fontSize:24,marginBottom:6}}>✅</div>
-                <p style={{color:'#86efac',fontSize:13,fontWeight:600,marginBottom:8}}>Reset link generated!</p>
-                <p style={{color:'#6b7280',fontSize:12,marginBottom:12}}>Copy and open this link to reset your password:</p>
-                <div style={{background:'#0a0a1a',border:'1px solid #2a2a4a',borderRadius:8,padding:'10px 12px',wordBreak:'break-all',fontSize:11,color:'#818cf8',fontFamily:'monospace',marginBottom:8,textAlign:'left'}}>
+                <p style={{color:'#86efac',fontSize:14,fontWeight:600,marginBottom:8}}>Reset link generated!</p>
+                <p style={{color:'#6b7280',fontSize:13,marginBottom:12}}>Copy and open this link to reset your password:</p>
+                <div style={{background:'#0a0a1a',border:'1px solid #2a2a4a',borderRadius:8,padding:'10px 12px',wordBreak:'break-all',fontSize:12,color:'#818cf8',fontFamily:'monospace',marginBottom:8,textAlign:'left'}}>
                   {loginForm.resetUrl}
                 </div>
-                <Btn onClick={()=>{navigator.clipboard.writeText(loginForm.resetUrl||'');}} style={{fontSize:12,padding:'6px 16px'}}>📋 Copy Link</Btn>
+                <Btn onClick={()=>{navigator.clipboard.writeText(loginForm.resetUrl||'');}} style={{fontSize:13,padding:'6px 16px'}}>📋 Copy Link</Btn>
               </div>
-              <p style={{textAlign:'center',fontSize:12,color:'#4b5563'}}>Link expires in 1 hour.</p>
+              <p style={{textAlign:'center',fontSize:13,color:'#4b5563'}}>Link expires in 1 hour.</p>
             </div>
           ) : (
             <div>
-              <p style={{color:'#9ca3af',fontSize:13,marginBottom:20,textAlign:'center'}}>Enter the email address on your account and we'll generate a reset link.</p>
+              <p style={{color:'#9ca3af',fontSize:14,marginBottom:20,textAlign:'center'}}>Enter the email address on your account and we'll generate a reset link.</p>
               <Input label="Email Address" value={loginForm.forgotEmail} onChange={v=>setLoginForm(p=>({...p,forgotEmail:v}))} placeholder="your@email.com" type="email" />
-              <Btn onClick={handleForgotPassword} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>Generate Reset Link</Btn>
+              <Btn onClick={handleForgotPassword} style={{width:'100%',padding:'14px',fontSize:16,marginTop:8}}>Generate Reset Link</Btn>
             </div>
           )}
-          <p style={{textAlign:'center',marginTop:20,fontSize:13,color:'#6b7280'}}>
+          <p style={{textAlign:'center',marginTop:20,fontSize:14,color:'#6b7280'}}>
             <span onClick={()=>setLoginForm(p=>({...p,forgotMode:false,forgotSent:false,forgotEmail:'',resetUrl:''}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>← Back to Sign In</span>
           </p>
         </div>
@@ -2178,14 +2247,14 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <Input label="Email Address" value={loginForm.email} onChange={v=>setLoginForm(p=>({...p,email:v}))} placeholder="your@email.com (for password recovery)" type="email" />
               <div style={{marginBottom:16}}>
-                <label style={{display:'block',fontSize:12,color:'#9ca3af',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Account Type</label>
+                <label style={{display:'block',fontSize:13,color:'#9ca3af',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Account Type</label>
                 <div style={{display:'flex',gap:10}}>
                   {[{v:'admin',icon:'🔑',label:'Admin',desc:'Full access — edit schedules, staff & rules'},{v:'staff',icon:'👤',label:'Staff',desc:'View-only — read final schedules'}].map(opt=>(
                     <div key={opt.v} onClick={()=>setLoginForm(p=>({...p,userType:opt.v}))}
                       style={{flex:1,padding:'10px 12px',borderRadius:10,cursor:'pointer',border:`2px solid ${loginForm.userType===opt.v?'#6366f1':'#2a2a4a'}`,background:loginForm.userType===opt.v?'#6366f115':'#12121f',transition:'all 0.15s'}}>
                       <div style={{fontSize:16,marginBottom:4}}>{opt.icon}</div>
-                      <div style={{fontSize:13,fontWeight:700,color:loginForm.userType===opt.v?'#818cf8':'#e8e8f0'}}>{opt.label}</div>
-                      <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{opt.desc}</div>
+                      <div style={{fontSize:14,fontWeight:700,color:loginForm.userType===opt.v?'#818cf8':'#e8e8f0'}}>{opt.label}</div>
+                      <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{opt.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -2195,23 +2264,23 @@ For questions (not changes), just respond normally without action blocks. Be con
           <Input label="Password" value={loginForm.password} onChange={v=>setLoginForm(p=>({...p,password:v}))} placeholder="Enter password" type="password" />
           {!loginForm.isRegister && (
             <div style={{textAlign:'right',marginTop:-4,marginBottom:8}}>
-              <span onClick={()=>setLoginForm(p=>({...p,forgotMode:true}))} style={{fontSize:12,color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>Forgot password?</span>
+              <span onClick={()=>setLoginForm(p=>({...p,forgotMode:true}))} style={{fontSize:13,color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>Forgot password?</span>
             </div>
           )}
-          <Btn onClick={handleAuth} style={{width:'100%',padding:'14px',fontSize:15,marginTop:8}}>
+          <Btn onClick={handleAuth} style={{width:'100%',padding:'14px',fontSize:16,marginTop:8}}>
             {loginForm.isRegister ? 'Create Account' : 'Sign In'}
           </Btn>
-          <p style={{textAlign:'center',marginTop:16,fontSize:13,color:'#6b7280'}}>
+          <p style={{textAlign:'center',marginTop:16,fontSize:14,color:'#6b7280'}}>
             {loginForm.isRegister?'Already have an account?':"Don't have an account?"}{' '}
             <span onClick={()=>setLoginForm(p=>({...p,isRegister:!p.isRegister,email:''}))} style={{color:'#8b5cf6',cursor:'pointer',fontWeight:600}}>
               {loginForm.isRegister?'Sign In':'Register'}
             </span>
           </p>
           <div style={{marginTop:28,paddingTop:24,borderTop:'1px solid #2a2a4a',textAlign:'center'}}>
-            <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
               🔧 Developer Sign In
             </Btn>
-            <p style={{fontSize:11,color:'#4b5563',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
+            <p style={{fontSize:12,color:'#4b5563',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
           </div>
         </div>
       </div>
@@ -2229,10 +2298,10 @@ For questions (not changes), just respond normally without action blocks. Be con
           <span style={{fontSize:isMobile?20:24}}>📅</span>
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
             <span style={{fontSize:isMobile?16:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
-            {!isMobile && <span style={{fontSize:10,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>}
+            {!isMobile && <span style={{fontSize:11,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>}
           </div>
-          {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.05em'}}>{isMobile?'DEV':'Developer'}</span>}
-          {!isDev && user && !isMobile && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,
+          {isDev && <span style={{fontSize:11,fontWeight:700,padding:'3px 8px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.05em'}}>{isMobile?'DEV':'Developer'}</span>}
+          {!isDev && user && !isMobile && <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,
             background:isAdmin?'#1e1e3555':'#1e2a1e55',
             color:isAdmin?'#818cf8':'#6ee7b7',
             border:`1px solid ${isAdmin?'#6366f155':'#065f4655'}`,
@@ -2241,15 +2310,15 @@ For questions (not changes), just respond normally without action blocks. Be con
           </span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
-          {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
+          {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
           <div data-profile-menu style={{position:'relative'}}>
             <div onClick={()=>setShowProfileMenu(p=>!p)}
               style={{display:'flex',alignItems:'center',gap:6,padding:isMobile?'6px 10px':'7px 14px',background:showProfileMenu?'#1e1e35':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
               <div style={{width:isMobile?32:28,height:isMobile?32:28,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:isMobile?15:13,fontWeight:700,color:'#fff',flexShrink:0}}>
                 {user.username[0].toUpperCase()}
               </div>
-              {!isMobile && <span style={{fontSize:13,fontWeight:600,color:'#e8e8f0'}}>{user.username}</span>}
-              <span style={{fontSize:10,color:'#6b7280',transition:'transform 0.2s',display:'inline-block',transform:showProfileMenu?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+              {!isMobile && <span style={{fontSize:14,fontWeight:600,color:'#e8e8f0'}}>{user.username}</span>}
+              <span style={{fontSize:11,color:'#6b7280',transition:'transform 0.2s',display:'inline-block',transform:showProfileMenu?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
             </div>
             {showProfileMenu && (
               <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'calc(100% + 6px)',right:0,width:isMobile?'92vw':240,maxWidth:'92vw',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,boxShadow:'0 12px 40px rgba(0,0,0,0.6)',zIndex:200,overflow:'hidden'}}>
@@ -2260,8 +2329,8 @@ For questions (not changes), just respond normally without action blocks. Be con
                       {user.username[0].toUpperCase()}
                     </div>
                     <div>
-                      <div style={{fontSize:14,fontWeight:700,color:'#e8e8f0'}}>{user.username}</div>
-                      <div style={{fontSize:11,color:'#6b7280'}}>{user.email || <span style={{fontStyle:'italic',color:'#4b5563'}}>No email set</span>}</div>
+                      <div style={{fontSize:15,fontWeight:700,color:'#e8e8f0'}}>{user.username}</div>
+                      <div style={{fontSize:12,color:'#6b7280'}}>{user.email || <span style={{fontStyle:'italic',color:'#4b5563'}}>No email set</span>}</div>
                     </div>
                   </div>
                 </div>
@@ -2271,14 +2340,14 @@ For questions (not changes), just respond normally without action blocks. Be con
                   {icon:'🔑', label:'Change Password', action:()=>{setProfileForm(p=>({...p,currentPassword:'',newPassword:'',confirmPassword:''}));setProfileMsg('');setProfileModal('changePassword');setShowProfileMenu(false);}},
                 ].map(item=>(
                   <div key={item.label} onClick={item.action}
-                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:13,color:'#d1d5db',transition:'background 0.1s'}}
+                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:14,color:'#d1d5db',transition:'background 0.1s'}}
                     onMouseEnter={e=>e.currentTarget.style.background='#1e1e35'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                     <span style={{fontSize:16}}>{item.icon}</span>{item.label}
                   </div>
                 ))}
                 <div style={{borderTop:'1px solid #2a2a4a'}}>
                   <div onClick={()=>{setShowProfileMenu(false);logout();}}
-                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:13,color:'#ef4444',transition:'background 0.1s'}}
+                    style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:14,color:'#ef4444',transition:'background 0.1s'}}
                     onMouseEnter={e=>e.currentTarget.style.background='#1e1e35'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                     <span style={{fontSize:16}}>🚪</span>Sign Out
                   </div>
@@ -2332,7 +2401,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               ] : []),
             ].map(tab => (
               <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
-                style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:14,fontWeight:activeTab===tab.id?600:400,
+                style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
                   color:activeTab===tab.id?'#e8e8f0':'#6b7280',background:activeTab===tab.id?'#1e1e35':'transparent',
                   borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',transition:'all 0.15s'}}>
                 <span>{tab.icon}</span>{tab.label}
@@ -2350,10 +2419,10 @@ For questions (not changes), just respond normally without action blocks. Be con
               <div style={{display:'flex',justifyContent:'space-between',alignItems:isMobile?'flex-start':'center',marginBottom:16,flexWrap:'wrap',gap:isMobile?8:12,flexDirection:isMobile?'column':'row'}}>
                 <div>
                   <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Monthly Schedule</h2>
-                  {!isMobile && <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>}
+                  {!isMobile && <p style={{color:'#6b7280',fontSize:14,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>}
                 </div>
                 <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',width:isMobile?'100%':'auto'}}>
-                  {!isAdmin && <span style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>}
+                  {!isAdmin && <span style={{fontSize:12,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>}
                   {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
                   </Btn>}
@@ -2362,93 +2431,114 @@ For questions (not changes), just respond normally without action blocks. Be con
                     {showPdfMenu && (
                       <div style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'#1e1e35',border:'1px solid #2a2a4a',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,0.5)',zIndex:100,overflow:'hidden',minWidth:200}}>
                         <div onClick={()=>{generateClassicPDF();setShowPdfMenu(false)}}
-                          style={{padding:'10px 16px',cursor:'pointer',fontSize:13,fontWeight:600,color:'#e8e8f0',borderBottom:'1px solid #2a2a4a',display:'flex',alignItems:'center',gap:8}}
+                          style={{padding:'10px 16px',cursor:'pointer',fontSize:14,fontWeight:600,color:'#e8e8f0',borderBottom:'1px solid #2a2a4a',display:'flex',alignItems:'center',gap:8}}
                           onMouseEnter={e=>e.target.style.background='#2a2a4a'} onMouseLeave={e=>e.target.style.background='transparent'}>
-                          <span>📊</span><div><div>Classic Style</div><div style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Initials grid — matches original PDF</div></div>
+                          <span>📊</span><div><div>Classic Style</div><div style={{fontSize:11,color:'#6b7280',fontWeight:400}}>Initials grid — matches original PDF</div></div>
                         </div>
                         <div onClick={()=>{generatePDF();setShowPdfMenu(false)}}
-                          style={{padding:'10px 16px',cursor:'pointer',fontSize:13,fontWeight:600,color:'#e8e8f0',display:'flex',alignItems:'center',gap:8}}
+                          style={{padding:'10px 16px',cursor:'pointer',fontSize:14,fontWeight:600,color:'#e8e8f0',display:'flex',alignItems:'center',gap:8}}
                           onMouseEnter={e=>e.target.style.background='#2a2a4a'} onMouseLeave={e=>e.target.style.background='transparent'}>
-                          <span>📋</span><div><div>New Style</div><div style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Location-grouped blocks — full names</div></div>
+                          <span>📋</span><div><div>New Style</div><div style={{fontSize:11,color:'#6b7280',fontWeight:400}}>Location-grouped blocks — full names</div></div>
                         </div>
                       </div>
                     )}
                   </div>
-                  {isAdmin && <Btn variant="danger" onClick={clearSchedule} style={{fontSize:12}}>Clear</Btn>}
+                  {/* Clear plan moved to Plan Selector section */}
                 </div>
               </div>
 
-              {/* Staff Filter */}
-              <div style={{padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-                  <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filter Providers:</span>
-                  <span onClick={showAllStaff}
-                    style={{fontSize:11,color:visibleStaff.size===staff.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===staff.length?'#6366f122':'transparent',border:`1px solid ${visibleStaff.size===staff.length?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
-                    Show All
-                  </span>
-                  <span onClick={showNoneStaff}
-                    style={{fontSize:11,color:visibleStaff.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===0?'#6366f122':'transparent',border:`1px solid ${visibleStaff.size===0?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
-                    Clear All
-                  </span>
+              {/* Staff + Location Filters — collapsible */}
+              <div style={{background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16,overflow:'hidden'}}>
+                {/* Filter header row with collapse toggle */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:filtersCollapsed?'none':'1px solid #1e1e35'}}
+                  onClick={()=>setFiltersCollapsed(p=>!p)}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filters</span>
+                    {filtersCollapsed && (
+                      <span style={{fontSize:12,color:'#6b7280'}}>
+                        {visibleStaff.size}/{staff.length} providers · {visibleLocations.size}/{locations.length} locations
+                      </span>
+                    )}
+                  </div>
+                  <span style={{fontSize:13,color:'#4b5563',userSelect:'none',transition:'transform 0.2s',display:'inline-block',transform:filtersCollapsed?'rotate(-90deg)':'rotate(0deg)'}}>&#9660;</span>
                 </div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                  {staff.map(s => {
-                    const active = visibleStaff.has(s.id);
-                    return (
-                      <div key={s.id} onClick={() => toggleStaffVisibility(s.id)}
-                        style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,userSelect:'none',
-                          background:active?s.color+'20':'#12121f',color:active?s.color:'#4b5563',border:`1px solid ${active?s.color+'55':'#2a2a4a'}`,transition:'all 0.15s'}}>
-                        <div style={{width:14,height:14,borderRadius:4,border:`2px solid ${active?s.color:'#4b5563'}`,background:active?s.color:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
-                          {active && '✓'}
-                        </div>
-                        {getLastName(s.name)}
-                        <span style={{fontSize:10,opacity:0.6}}>{s.role === 'Ophthalmologist' ? 'MD' : 'OD'}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
 
-              {/* Location Filter */}
-              <div style={{padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-                  <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filter Locations:</span>
-                  <span onClick={showAllLocations}
-                    style={{fontSize:11,color:visibleLocations.size===locations.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===locations.length?'#6366f122':'transparent',border:`1px solid ${visibleLocations.size===locations.length?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
-                    Show All
-                  </span>
-                  <span onClick={showNoneLocations}
-                    style={{fontSize:11,color:visibleLocations.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===0?'#6366f122':'transparent',border:`1px solid ${visibleLocations.size===0?'#6366f144':'#2a2a4a'}`,transition:'all 0.15s'}}>
-                    Clear All
-                  </span>
-                </div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                  {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l => {
-                    const active = visibleLocations.has(l.id);
-                    const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
-                    return (
-                      <div key={l.id} onClick={() => toggleLocationVisibility(l.id)}
-                        style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,userSelect:'none',
-                          background:active?lc.bg:'#12121f',color:active?lc.text:'#4b5563',border:`1px solid ${active?lc.border:'#2a2a4a'}`,transition:'all 0.15s'}}>
-                        <div style={{width:14,height:14,borderRadius:4,border:`2px solid ${active?lc.border:'#4b5563'}`,background:active?lc.border:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
-                          {active && '✓'}
-                        </div>
-                        {l.name}
+                {!filtersCollapsed && (
+                  <div style={{padding:'12px 16px'}}>
+                    {/* Provider filter */}
+                    <div style={{marginBottom:14}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                        <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Providers:</span>
+                        <span onClick={e=>{e.stopPropagation();showAllStaff();}}
+                          style={{fontSize:12,color:visibleStaff.size===staff.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===staff.length?'#6366f122':'transparent',border:'1px solid ' + (visibleStaff.size===staff.length?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
+                          Show All
+                        </span>
+                        <span onClick={e=>{e.stopPropagation();showNoneStaff();}}
+                          style={{fontSize:12,color:visibleStaff.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===0?'#6366f122':'transparent',border:'1px solid ' + (visibleStaff.size===0?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
+                          Clear All
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        {staff.map(s => {
+                          const active = visibleStaff.has(s.id);
+                          return (
+                            <div key={s.id} onClick={e=>{e.stopPropagation();toggleStaffVisibility(s.id);}}
+                              style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,userSelect:'none',
+                                background:active?s.color+'20':'#12121f',color:active?s.color:'#4b5563',border:'1px solid ' + (active?s.color+'55':'#2a2a4a'),transition:'all 0.15s'}}>
+                              <div style={{width:14,height:14,borderRadius:4,border:'2px solid ' + (active?s.color:'#4b5563'),background:active?s.color:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
+                                {active && '✓'}
+                              </div>
+                              {getLastName(s.name)}
+                              <span style={{fontSize:11,opacity:0.6}}>{s.role === 'Ophthalmologist' ? 'MD' : 'OD'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Location filter */}
+                    <div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                        <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Locations:</span>
+                        <span onClick={e=>{e.stopPropagation();showAllLocations();}}
+                          style={{fontSize:12,color:visibleLocations.size===locations.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===locations.length?'#6366f122':'transparent',border:'1px solid ' + (visibleLocations.size===locations.length?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
+                          Show All
+                        </span>
+                        <span onClick={e=>{e.stopPropagation();showNoneLocations();}}
+                          style={{fontSize:12,color:visibleLocations.size===0?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===0?'#6366f122':'transparent',border:'1px solid ' + (visibleLocations.size===0?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
+                          Clear All
+                        </span>
+                      </div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l => {
+                          const active = visibleLocations.has(l.id);
+                          const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
+                          return (
+                            <div key={l.id} onClick={e=>{e.stopPropagation();toggleLocationVisibility(l.id);}}
+                              style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,userSelect:'none',
+                                background:active?lc.bg:'#12121f',color:active?lc.text:'#4b5563',border:'1px solid ' + (active?lc.border:'#2a2a4a'),transition:'all 0.15s'}}>
+                              <div style={{width:14,height:14,borderRadius:4,border:'2px solid ' + (active?lc.border:'#4b5563'),background:active?lc.border:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',lineHeight:1,transition:'all 0.15s'}}>
+                                {active && '✓'}
+                              </div>
+                              {l.name}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* AI Agent Chat */}
               <div style={{marginBottom:16,border:'1px solid #2a2a4a',borderRadius:12,overflow:'hidden',background:'#1a1a2e'}}>
                 <div onClick={()=>setShowChat(p=>!p)}
                   style={{padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',background:'linear-gradient(135deg,#1a1035,#1a1a2e)'}}>
-                  <span style={{fontSize:13,fontWeight:700,color:'#a78bfa',display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:14,fontWeight:700,color:'#a78bfa',display:'flex',alignItems:'center',gap:8}}>
                     🤖 AI Scheduling Agent
-                    <span style={{fontSize:10,color:'#6b7280',fontWeight:400}}>Ask questions, request changes, get analysis</span>
+                    <span style={{fontSize:11,color:'#6b7280',fontWeight:400}}>Ask questions, request changes, get analysis</span>
                   </span>
-                  <span style={{color:'#6b7280',fontSize:12}}>{showChat ? '▼' : '▶'}</span>
+                  <span style={{color:'#6b7280',fontSize:13}}>{showChat ? '▼' : '▶'}</span>
                 </div>
                 {showChat && (
                   <div>
@@ -2456,13 +2546,13 @@ For questions (not changes), just respond normally without action blocks. Be con
                       {chatMessages.length === 0 && (
                         <div style={{textAlign:'center',padding:20,color:'#4b5563'}}>
                           <div style={{fontSize:28,marginBottom:8}}>🤖</div>
-                          <p style={{fontSize:12,marginBottom:4}}>Ask me anything about the schedule.</p>
-                          <p style={{fontSize:11,color:'#374151'}}>Examples: "Who covers Manteca on Mondays?" • "Add a vacation for Dr. Kim next week" • "Are there any coverage gaps?"</p>
+                          <p style={{fontSize:13,marginBottom:4}}>Ask me anything about the schedule.</p>
+                          <p style={{fontSize:12,color:'#374151'}}>Examples: "Who covers Manteca on Mondays?" • "Add a vacation for Dr. Kim next week" • "Are there any coverage gaps?"</p>
                         </div>
                       )}
                       {chatMessages.map((msg, i) => (
                         <div key={i} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',marginBottom:8}}>
-                          <div style={{maxWidth:'80%',padding:'8px 14px',borderRadius:12,fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap',
+                          <div style={{maxWidth:'80%',padding:'8px 14px',borderRadius:12,fontSize:14,lineHeight:1.5,whiteSpace:'pre-wrap',
                             background:msg.role==='user'?'#6366f133':'#1a1a2e',
                             color:msg.role==='user'?'#c7d2fe':'#d1d5db',
                             border:`1px solid ${msg.role==='user'?'#6366f144':'#2a2a4a'}`,
@@ -2474,7 +2564,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                       ))}
                       {chatLoading && (
                         <div style={{display:'flex',justifyContent:'flex-start',marginBottom:8}}>
-                          <div style={{padding:'8px 14px',borderRadius:12,background:'#1a1a2e',border:'1px solid #2a2a4a',color:'#6b7280',fontSize:13}}>
+                          <div style={{padding:'8px 14px',borderRadius:12,background:'#1a1a2e',border:'1px solid #2a2a4a',color:'#6b7280',fontSize:14}}>
                             <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span> Thinking...
                           </div>
                         </div>
@@ -2485,7 +2575,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                       <input value={chatInput} onChange={e=>setChatInput(e.target.value)}
                         onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage()}}}
                         placeholder="Ask about the schedule, request changes..."
-                        style={{flex:1,padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',outline:'none'}} />
+                        style={{flex:1,padding:'10px 14px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none'}} />
                       <Btn onClick={sendChatMessage} disabled={chatLoading||!chatInput.trim()} style={{padding:'10px 18px'}}>
                         {chatLoading ? '...' : 'Send'}
                       </Btn>
@@ -2495,7 +2585,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               </div>
 
               {aiLog && (
-                <div style={{padding:'12px 18px',background:generating?'#1e1b4b':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#78350f':'#064e3b'),border:`1px solid ${generating?'#3730a3':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#92400e':'#065f46')}`,borderRadius:10,marginBottom:conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?8:16,fontSize:13,color:generating?'#a5b4fc':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#fbbf24':'#6ee7b7'),display:'flex',alignItems:'center',gap:10}}>
+                <div style={{padding:'12px 18px',background:generating?'#1e1b4b':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#78350f':'#064e3b'),border:`1px solid ${generating?'#3730a3':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#92400e':'#065f46')}`,borderRadius:10,marginBottom:conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?8:16,fontSize:14,color:generating?'#a5b4fc':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#fbbf24':'#6ee7b7'),display:'flex',alignItems:'center',gap:10}}>
                   {generating && <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>}
                   <span style={{flex:1}}>{aiLog}</span>
                   {!generating && <span onClick={()=>{setAiLog('');setConflictsReport(null)}} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
@@ -2506,21 +2596,21 @@ For questions (not changes), just respond normally without action blocks. Be con
               {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (
                 <div style={{background:'#1a1520',border:'1px solid #92400e',borderRadius:10,marginBottom:16,overflow:'hidden'}}>
                   <div style={{padding:'10px 16px',background:'#78350f33',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                    <span style={{fontSize:13,fontWeight:700,color:'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
+                    <span style={{fontSize:14,fontWeight:700,color:'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
                     <div style={{display:'flex',gap:8}}>
                       <Btn variant="success" onClick={()=>{
                         conflictsReport.conflicts.forEach(c => { if (c.fix) applyConflictFix(c.fix); });
                         setConflictsReport(null); setAiLog('✅ All conflicts resolved — rules applied.');
-                      }} style={{fontSize:11,padding:'4px 12px'}}>Fix All</Btn>
-                      <Btn variant="ghost" onClick={()=>setConflictsReport(null)} style={{fontSize:11,padding:'4px 10px'}}>Dismiss</Btn>
+                      }} style={{fontSize:12,padding:'4px 12px'}}>Fix All</Btn>
+                      <Btn variant="ghost" onClick={()=>setConflictsReport(null)} style={{fontSize:12,padding:'4px 10px'}}>Dismiss</Btn>
                     </div>
                   </div>
                   <div style={{maxHeight:250,overflowY:'auto',padding:'8px 12px'}}>
                     {conflictsReport.conflicts.map((c, ci) => (
                       <div key={ci} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:ci%2===0?'#1e1530':'transparent',borderRadius:6,marginBottom:2}}>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:12,fontWeight:600,color:'#fbbf24'}}>{c.message}</div>
-                          <div style={{fontSize:11,color:'#9ca3af',marginTop:2}}>
+                          <div style={{fontSize:13,fontWeight:600,color:'#fbbf24'}}>{c.message}</div>
+                          <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>
                             {c.date} ({c.day}) — Current: {c.current} → Suggested: {c.suggested}
                           </div>
                         </div>
@@ -2533,7 +2623,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                               if (remaining.length === 0) { setAiLog('✅ All conflicts resolved!'); return null; }
                               return { ...prev, conflicts: remaining };
                             });
-                          }} style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}}>Fix</Btn>
+                          }} style={{fontSize:11,padding:'3px 10px',whiteSpace:'nowrap'}}>Fix</Btn>
                         )}
                         <Btn variant="ghost" onClick={()=>{
                           setConflictsReport(prev => {
@@ -2542,7 +2632,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                             if (remaining.length === 0) return null;
                             return { ...prev, conflicts: remaining };
                           });
-                        }} style={{fontSize:10,padding:'3px 8px',color:'#6b7280'}}>Skip</Btn>
+                        }} style={{fontSize:11,padding:'3px 8px',color:'#6b7280'}}>Skip</Btn>
                       </div>
                     ))}
                   </div>
@@ -2575,12 +2665,12 @@ For questions (not changes), just respond normally without action blocks. Be con
                   const d = today.getDay(); const diff = d === 0 ? -6 : 1 - d;
                   const mon = new Date(today); mon.setDate(today.getDate() + diff);
                   setCurrentWeekStart(mon);
-                }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:11}}>Today</Btn>
+                }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:12}}>Today</Btn>
                 {isAdmin && <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
-                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
+                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:14,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
                   title="Undo">↩</Btn>}
                 {isAdmin && <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
-                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
+                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:14,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
                   title="Redo">↪</Btn>}
                 {!isMobile && <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
                   {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
@@ -2593,7 +2683,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         setCurrentWeekStart(mon);
                       }
                     }}
-                      style={{padding:'6px 16px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                      style={{padding:'6px 16px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                         background:calendarView===v?'#6366f1':'transparent',color:calendarView===v?'#fff':'#6b7280',
                         transition:'all 0.15s'}}>{label}</div>
                   ))}
@@ -2602,14 +2692,14 @@ For questions (not changes), just respond normally without action blocks. Be con
 
               {/* Plan Selector */}
               {isAdmin && <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12,marginBottom:16,padding:isMobile?'10px 12px':'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',flexWrap:'wrap'}}>
-                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Plans:</span>
+                <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Plans:</span>
                 {['A','B','C'].map(plan => {
                   const hasData = planHasData(plan);
                   const isFinal = finalPlanForMonth === plan;
                   const isActive = activePlan === plan;
                   return (
                     <div key={plan} onClick={()=>setActivePlan(plan)}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:700,userSelect:'none',transition:'all 0.15s',
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700,userSelect:'none',transition:'all 0.15s',
                         background:isActive?(isFinal?'#065f4622':'#6366f122'):'#12121f',
                         color:isActive?(isFinal?'#34d399':'#818cf8'):(hasData?'#9ca3af':'#4b5563'),
                         border:`1px solid ${isActive?(isFinal?'#065f46':'#6366f1'):(hasData?'#2a2a4a':'#1e1e35')}`}}>
@@ -2619,25 +2709,46 @@ For questions (not changes), just respond normally without action blocks. Be con
                     </div>
                   );
                 })}
-                <div style={{marginLeft:8,display:'flex',gap:6}}>
+                <div style={{marginLeft:8,display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
                   {finalPlanForMonth !== activePlan ? (
-                    <Btn variant="success" onClick={()=>setFinalPlan(activePlan)} style={{fontSize:11,padding:'5px 12px'}} disabled={!planHasData(activePlan)}>
+                    <Btn variant="success" onClick={()=>setFinalPlan(activePlan)} style={{fontSize:12,padding:'5px 12px'}} disabled={!planHasData(activePlan)}>
                       ✓ Set as Final
                     </Btn>
                   ) : (
-                    <Btn variant="ghost" onClick={clearFinalPlan} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>
+                    <Btn variant="ghost" onClick={clearFinalPlan} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>
                       Unset Final
                     </Btn>
                   )}
                   {planHasData(activePlan) && (
                     <div style={{position:'relative'}}>
                       <select onChange={e=>{if(e.target.value)copyPlanTo(activePlan,e.target.value);e.target.value=''}}
-                        style={{padding:'5px 10px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:6,color:'#9ca3af',fontSize:11,fontFamily:'"DM Sans",sans-serif',cursor:'pointer'}}>
+                        style={{padding:'5px 10px',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:6,color:'#9ca3af',fontSize:12,fontFamily:'"DM Sans",sans-serif',cursor:'pointer'}}>
                         <option value="">Copy to...</option>
                         {['A','B','C'].filter(p=>p!==activePlan).map(p=>(
                           <option key={p} value={p}>Plan {p}{planHasData(p)?' (overwrite)':''}</option>
                         ))}
                       </select>
+                    </div>
+                  )}
+                  {/* Clear Plan — with inline confirmation */}
+                  {planHasData(activePlan) && !confirmClearPlan && (
+                    <Btn variant="danger" onClick={()=>setConfirmClearPlan(true)} style={{fontSize:12,padding:'5px 12px'}}>
+                      🗑 Clear Plan
+                    </Btn>
+                  )}
+                  {confirmClearPlan && (
+                    <div style={{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:8,background:'#2a1010',border:'1px solid #7f1d1d'}}>
+                      <span style={{fontSize:12,color:'#fca5a5',fontWeight:600}}>
+                        Clear all data from Plan {activePlan} for {MONTHS[currentMonth]} {currentYear}?
+                      </span>
+                      <span onClick={clearSchedule}
+                        style={{fontSize:12,fontWeight:700,color:'#ef4444',cursor:'pointer',padding:'2px 10px',borderRadius:6,border:'1px solid #7f1d1d',background:'#3a1010',userSelect:'none'}}>
+                        Yes, Clear
+                      </span>
+                      <span onClick={()=>setConfirmClearPlan(false)}
+                        style={{fontSize:12,fontWeight:600,color:'#6b7280',cursor:'pointer',padding:'2px 10px',borderRadius:6,border:'1px solid #2a2a4a',background:'#12121f',userSelect:'none'}}>
+                        Cancel
+                      </span>
                     </div>
                   )}
                 </div>
@@ -2797,42 +2908,59 @@ For questions (not changes), just respond normally without action blocks. Be con
                 })()}
               </div>
 
-              <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
-                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',alignSelf:'center'}}>Providers:</span>
-                {staff.map(s=>(
-                  <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11}}>
-                    <div style={{width:9,height:9,borderRadius:'50%',background:s.color,flexShrink:0}} />
-                    <span style={{color:'#9ca3af'}}>{s.name}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8,padding:'10px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
-                <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',alignSelf:'center'}}>Locations:</span>
-                {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l=>{
-                  const lc = LOCATION_COLORS[l.id] || LOCATION_COLORS.OFF;
-                  return (
-                    <div key={l.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,padding:'3px 10px',borderRadius:6,background:lc.bg,borderLeft:`3px solid ${lc.border}`}}>
-                      <span style={{color:lc.text,fontWeight:600}}>{l.name}</span>
+
+
+              {/* Plan History */}
+              {(()=>{
+                const historyEntries = planHistory[scheduleKey] || [];
+                return (
+                  <div style={{marginBottom:16,border:'1px solid #1e1e35',borderRadius:12,overflow:'hidden',background:'#1a1a2e'}}>
+                    <div onClick={()=>setShowHistory(p=>!p)}
+                      style={{padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',background:'linear-gradient(135deg,#1a1a2e,#12121f)',borderBottom:showHistory&&historyEntries.length>0?'1px solid #1e1e35':'none'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <span style={{fontSize:15,fontWeight:700,color:'#a78bfa'}}>📋 Plan History</span>
+                        {historyEntries.length > 0 && <span style={{fontSize:13,background:'#6366f122',color:'#818cf8',borderRadius:8,padding:'1px 8px',fontWeight:600}}>{historyEntries.length}</span>}
+                        <span style={{fontSize:13,color:'#4b5563'}}>Plan {activePlan} · {MONTHS[currentMonth]} {currentYear}</span>
+                      </div>
+                      <span style={{fontSize:13,color:'#4b5563'}}>{showHistory ? '▼' : '▶'}</span>
                     </div>
-                  );
-                })}
-              </div>
+                    {showHistory && (
+                      <div>
+                        {historyEntries.length === 0 ? (
+                          <div style={{padding:'14px 16px',fontSize:14,color:'#4b5563',fontStyle:'italic'}}>
+                            No changes recorded yet for this plan. Edits, AI generation, and agent changes will appear here.
+                          </div>
+                        ) : (
+                          <div style={{maxHeight:220,overflowY:'auto'}}>
+                            {historyEntries.map((entry, i) => (
+                              <div key={i} style={{padding:'9px 16px',borderBottom:i<historyEntries.length-1?'1px solid #12121f':'none',display:'flex',gap:14,alignItems:'baseline'}}>
+                                <span style={{fontSize:12,color:'#4b5563',fontFamily:'"Space Mono",monospace',flexShrink:0,minWidth:160}}>{entry.ts}</span>
+                                <span style={{fontSize:14,color:'#d1d5db'}}>{entry.desc}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Developer Log Panel */}
               {isDev && (
                 <div style={{marginTop:20,border:'1px solid #92400e44',borderRadius:12,overflow:'hidden'}}>
                   <div onClick={()=>setShowLogs(p=>!p)}
                     style={{padding:'10px 16px',background:'#1a1a2e',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',borderBottom:showLogs?'1px solid #92400e44':'none'}}>
-                    <span style={{fontSize:13,fontWeight:700,color:'#fbbf24',fontFamily:'"Space Mono",monospace'}}>🔧 Developer Logs ({devLogs.length})</span>
+                    <span style={{fontSize:14,fontWeight:700,color:'#fbbf24',fontFamily:'"Space Mono",monospace'}}>🔧 Developer Logs ({devLogs.length})</span>
                     <div style={{display:'flex',gap:10,alignItems:'center'}}>
                       {devLogs.length > 0 && (
-                        <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:11,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f'}}>Clear</span>
+                        <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:12,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f'}}>Clear</span>
                       )}
-                      <span style={{color:'#6b7280',fontSize:12}}>{showLogs ? '▼' : '▶'}</span>
+                      <span style={{color:'#6b7280',fontSize:13}}>{showLogs ? '▼' : '▶'}</span>
                     </div>
                   </div>
                   {showLogs && (
-                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:11}}>
+                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:12}}>
                       {devLogs.length === 0 ? (
                         <div style={{color:'#4b5563',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
                       ) : devLogs.map((log, i) => {
@@ -2843,7 +2971,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                             <span style={{color:colors[log.type]||'#9ca3af',fontWeight:700}}>{log.type.toUpperCase()}</span>{' '}
                             <span style={{color:'#d1d5db'}}>{log.message}</span>
                             {log.data && (
-                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:10}}>
+                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:11}}>
                                 {log.data}
                               </div>
                             )}
@@ -2863,22 +2991,22 @@ For questions (not changes), just respond normally without action blocks. Be con
                   style={{display:'inline-flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:7,background:'transparent',border:'1px solid #1e1e35',cursor:'pointer',opacity:0.5,transition:'opacity 0.15s'}}
                   onMouseEnter={e=>e.currentTarget.style.opacity='1'}
                   onMouseLeave={e=>e.currentTarget.style.opacity='0.5'}>
-                  <span style={{fontSize:11,color:'#6b7280',fontFamily:'"Space Mono",monospace',letterSpacing:'0.03em'}}>activity log</span>
-                  {devLogs.length > 0 && <span style={{fontSize:10,background:'#1e1e35',color:'#6b7280',borderRadius:8,padding:'1px 6px'}}>{devLogs.length}</span>}
-                  <span style={{fontSize:10,color:'#4b5563'}}>{showUserLogs ? '▼' : '▶'}</span>
+                  <span style={{fontSize:12,color:'#6b7280',fontFamily:'"Space Mono",monospace',letterSpacing:'0.03em'}}>activity log</span>
+                  {devLogs.length > 0 && <span style={{fontSize:11,background:'#1e1e35',color:'#6b7280',borderRadius:8,padding:'1px 6px'}}>{devLogs.length}</span>}
+                  <span style={{fontSize:11,color:'#4b5563'}}>{showUserLogs ? '▼' : '▶'}</span>
                 </div>
                 {showUserLogs && (
                   <div style={{marginTop:8,border:'1px solid #1e1e35',borderRadius:12,overflow:'hidden'}}>
                     <div style={{padding:'10px 16px',background:'#1a1a2e',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid #1e1e35'}}>
-                      <span style={{fontSize:12,fontWeight:700,color:'#6b7280',fontFamily:'"Space Mono",monospace'}}>Activity Logs ({devLogs.length})</span>
+                      <span style={{fontSize:13,fontWeight:700,color:'#6b7280',fontFamily:'"Space Mono",monospace'}}>Activity Logs ({devLogs.length})</span>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
                         {devLogs.length > 0 && (
-                          <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:11,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f',border:'1px solid #1e1e35'}}>Clear</span>
+                          <span onClick={e=>{e.stopPropagation();setDevLogs([])}} style={{fontSize:12,color:'#6b7280',cursor:'pointer',padding:'2px 8px',borderRadius:4,background:'#12121f',border:'1px solid #1e1e35'}}>Clear</span>
                         )}
-                        <span style={{color:'#6b7280',fontSize:12}}>{showUserLogs ? '▼' : '▶'}</span>
+                        <span style={{color:'#6b7280',fontSize:13}}>{showUserLogs ? '▼' : '▶'}</span>
                       </div>
                     </div>
-                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:11}}>
+                    <div style={{maxHeight:300,overflow:'auto',padding:12,background:'#0d0d18',fontFamily:'"Space Mono",monospace',fontSize:12}}>
                       {devLogs.length === 0 ? (
                         <div style={{color:'#4b5563',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
                       ) : devLogs.map((log, i) => {
@@ -2889,7 +3017,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                             <span style={{color:colors[log.type]||'#9ca3af',fontWeight:700}}>{log.type.toUpperCase()}</span>{' '}
                             <span style={{color:'#d1d5db'}}>{log.message}</span>
                             {log.data && (
-                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:10}}>
+                              <div style={{color:'#6b7280',marginLeft:16,marginTop:2,wordBreak:'break-all',whiteSpace:'pre-wrap',maxHeight:80,overflow:'auto',background:'#12121f',padding:4,borderRadius:4,border:'1px solid #1e1e35',fontSize:11}}>
                                 {log.data}
                               </div>
                             )}
@@ -2924,7 +3052,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         <div style={{display:'flex',alignItems:'center',gap:16}}>
                           <div>
                             <div style={{fontSize:17,fontWeight:700}}>{s.name}</div>
-                            <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{s.role||'—'}</div>
+                            <div style={{fontSize:13,color:'#6b7280',marginTop:2}}>{s.role||'—'}</div>
                           </div>
                           <div style={{display:'flex',gap:8}}>
                             <Chip color={s.color}>{sr.length} rule{sr.length!==1?'s':''}</Chip>
@@ -2932,9 +3060,9 @@ For questions (not changes), just respond normally without action blocks. Be con
                           </div>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>}
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
-                          <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:15}}>✏️</span>}
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
+                          <span style={{color:'#6b7280',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
 
@@ -2942,19 +3070,19 @@ For questions (not changes), just respond normally without action blocks. Be con
                         <div style={{borderTop:'1px solid #2a2a4a'}}>
                           {/* Generic month rules calendar */}
                           <div style={{padding:'16px 24px'}}>
-                            <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:10}}>Weekly Pattern Overview</span>
+                            <span style={{fontSize:14,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:10}}>Weekly Pattern Overview</span>
                             <div style={{borderRadius:10,overflow:'hidden',border:'1px solid #2a2a4a',background:'#12121f'}}>
                               {/* Header row */}
                               <div style={{display:'grid',gridTemplateColumns:'60px repeat(5,1fr)'}}>
-                                <div style={{padding:'8px 6px',fontSize:10,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #2a2a4a'}} />
+                                <div style={{padding:'8px 6px',fontSize:11,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #2a2a4a'}} />
                                 {WEEKDAYS_ONLY.map(d=>(
-                                  <div key={d} style={{padding:'8px 4px',textAlign:'center',fontSize:11,fontWeight:700,color:'#9ca3af',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #1e1e35',letterSpacing:'0.05em'}}>{d}</div>
+                                  <div key={d} style={{padding:'8px 4px',textAlign:'center',fontSize:12,fontWeight:700,color:'#9ca3af',background:'#0d0d18',borderBottom:'1px solid #2a2a4a',borderRight:'1px solid #1e1e35',letterSpacing:'0.05em'}}>{d}</div>
                                 ))}
                               </div>
                               {/* Week rows */}
                               {[1,2,3,4].map(week => (
                                 <div key={week} style={{display:'grid',gridTemplateColumns:'60px repeat(5,1fr)'}}>
-                                  <div style={{padding:'6px 8px',fontSize:10,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderRight:'1px solid #2a2a4a',borderBottom:week<4?'1px solid #1e1e35':'none',display:'flex',alignItems:'center'}}>
+                                  <div style={{padding:'6px 8px',fontSize:11,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderRight:'1px solid #2a2a4a',borderBottom:week<4?'1px solid #1e1e35':'none',display:'flex',alignItems:'center'}}>
                                     Wk {week}
                                   </div>
                                   {WEEKDAYS_ONLY.map(day => {
@@ -2968,7 +3096,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                                     if (dayRules.length === 0) {
                                       return (
                                         <div key={day} style={{padding:4,borderRight:'1px solid #1e1e35',borderBottom:week<4?'1px solid #1e1e35':'none',minHeight:40,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                                          <span style={{fontSize:10,color:'#2a2a3a',fontStyle:'italic'}}>—</span>
+                                          <span style={{fontSize:11,color:'#2a2a3a',fontStyle:'italic'}}>—</span>
                                         </div>
                                       );
                                     }
@@ -2982,7 +3110,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                                           const periodLabel = r.period === 'am' ? 'AM' : r.period === 'pm' ? 'PM' : '';
                                           return (
                                             <div key={ri} style={{background:isOff?'#15151f':lc.bg,borderLeft:`2px solid ${isOff?'#333':lc.border}`,borderRadius:3,padding:'3px 5px',marginBottom:ri<dayRules.length-1?2:0}}>
-                                              <div style={{fontSize:10,fontWeight:700,color:isOff?'#555':lc.text,lineHeight:1.3,display:'flex',alignItems:'center',gap:3}}>
+                                              <div style={{fontSize:11,fontWeight:700,color:isOff?'#555':lc.text,lineHeight:1.3,display:'flex',alignItems:'center',gap:3}}>
                                                 {periodLabel && <span style={{fontSize:8,color:'#6b7280',fontWeight:800}}>{periodLabel}</span>}
                                                 {isOff ? 'OFF' : (loc?.name || '?')}
                                               </div>
@@ -2996,7 +3124,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                                 </div>
                               ))}
                             </div>
-                            <div style={{display:'flex',gap:12,marginTop:8,fontSize:10,color:'#4b5563'}}>
+                            <div style={{display:'flex',gap:12,marginTop:8,fontSize:11,color:'#4b5563'}}>
                               <span style={{display:'flex',alignItems:'center',gap:4}}><div style={{width:6,height:6,borderRadius:'50%',background:'#ef4444'}} /> Required</span>
                               <span>Color = Location</span>
                               <span>AM/PM shown when split-day</span>
@@ -3006,28 +3134,28 @@ For questions (not changes), just respond normally without action blocks. Be con
                           {/* Rules section */}
                           <div style={{padding:'16px 24px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Scheduling Rules ({sr.length})</span>
-                              {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({staffId:s.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule</Btn>}
+                              <span style={{fontSize:14,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Scheduling Rules ({sr.length})</span>
+                              {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({staffId:s.id});setShowRuleModal(true)}} style={{fontSize:12,padding:'4px 12px'}}>+ Add Rule</Btn>}
                             </div>
                             {sr.length===0 ? (
-                              <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules defined.</div>
+                              <div style={{fontSize:13,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules defined.</div>
                             ) : (
                               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                                 {sr.map(r => {
                                   const l = r.locationId==='OFF'?{name:'OFF'}:locations.find(x=>x.id===r.locationId);
                                   return (
                                     <div key={r.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${s.color}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
-                                      <div style={{flex:1,fontSize:13}}>
+                                      <div style={{flex:1,fontSize:14}}>
                                         <span style={{color:'#9ca3af',fontWeight:600}}>{r.dayOfWeek}</span>
                                         <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
                                         {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
                                         <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
                                         <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
-                                        {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
+                                        {r.description&&<div style={{fontSize:12,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                       </div>
                                       {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
-                                        {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
+                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                                        {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                                       </div>}
                                     </div>
                                   );
@@ -3039,33 +3167,72 @@ For questions (not changes), just respond normally without action blocks. Be con
                           {/* Portal Account section — admin only */}
                           {isAdmin && (
                             <div style={{padding:'16px 24px',borderTop:'1px solid #2a2a4a'}}>
-                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:12}}>🔐 Portal Account</span>
+                              <span style={{fontSize:14,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:12}}>🔐 Portal Account</span>
                               {(()=>{
                                 const sf = staffAccountForm[s.id] || {};
+                                const acct = portalAccounts[s.id];
+                                if (acct) {
+                                  // Account exists — show credentials + password change
+                                  return (
+                                    <div>
+                                      <div style={{background:'#0d1f12',border:'1px solid #166534',borderRadius:10,padding:'12px 16px',marginBottom:14}}>
+                                        <div style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:8}}>Current Credentials</div>
+                                        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10}}>
+                                          <div>
+                                            <div style={{fontSize:11,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Username</div>
+                                            <div style={{fontFamily:'"Space Mono",monospace',fontSize:13,color:'#86efac',background:'#052e16',padding:'7px 10px',borderRadius:8,border:'1px solid #166534',userSelect:'all'}}>{acct.username}</div>
+                                          </div>
+                                          <div>
+                                            <div style={{fontSize:11,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Access Level</div>
+                                            <div style={{fontSize:13,color:'#9ca3af',background:'#12121f',padding:'7px 10px',borderRadius:8,border:'1px solid #2a2a4a'}}>Read-only (Staff Portal)</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:8}}>Change Password</div>
+                                      <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr auto',gap:8,alignItems:'flex-end'}}>
+                                        <div>
+                                          <input value={sf.newPassword||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,newPassword:e.target.value,pwMsg:''}}))}
+                                            type="password" placeholder="New password (min 4 chars)"
+                                            style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif'}} />
+                                        </div>
+                                        <Btn onClick={()=>changeStaffPassword(s)} disabled={sf.changingPw} style={{fontSize:13,padding:'7px 16px',whiteSpace:'nowrap'}}>
+                                          {sf.changingPw ? 'Saving...' : 'Update Password'}
+                                        </Btn>
+                                      </div>
+                                      {sf.pwMsg && (
+                                        <div style={{fontSize:13,padding:'7px 10px',borderRadius:8,marginTop:10,
+                                          background:sf.pwMsg.startsWith('✅')?'#052e16':'#2a1010',
+                                          color:sf.pwMsg.startsWith('✅')?'#86efac':'#fca5a5',
+                                          border:'1px solid ' + (sf.pwMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{sf.pwMsg}</div>
+                                      )}
+                                    </div>
+                                  );
+                                }
+                                // No account yet — show create form
                                 return (
                                   <div>
-                                    <p style={{fontSize:12,color:'#6b7280',marginBottom:12}}>Create a login for this staff member. They'll have read-only access to final schedules.</p>
+                                    <p style={{fontSize:13,color:'#6b7280',marginBottom:12}}>Create a login for this staff member. They'll have read-only access to final schedules.</p>
                                     <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10,marginBottom:10}}>
                                       <div>
-                                        <label style={{display:'block',fontSize:10,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Username</label>
+                                        <label style={{display:'block',fontSize:11,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Username</label>
                                         <input value={sf.username||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,username:e.target.value,msg:''}}))}
                                           placeholder="e.g. jsmith"
-                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}} />
+                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif'}} />
                                       </div>
                                       <div>
-                                        <label style={{display:'block',fontSize:10,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Password</label>
+                                        <label style={{display:'block',fontSize:11,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Password</label>
                                         <input value={sf.password||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,password:e.target.value,msg:''}}))} type="password"
                                           placeholder="Min 4 characters"
-                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}} />
+                                          style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif'}} />
                                       </div>
                                     </div>
                                     {sf.msg && (
-                                      <div style={{fontSize:12,padding:'7px 10px',borderRadius:8,marginBottom:10,
+                                      <div style={{fontSize:13,padding:'7px 10px',borderRadius:8,marginBottom:10,
                                         background:sf.msg.startsWith('✅')?'#052e16':'#2a1010',
                                         color:sf.msg.startsWith('✅')?'#86efac':'#fca5a5',
-                                        border:`1px solid ${sf.msg.startsWith('✅')?'#166534':'#7f1d1d'}`}}>{sf.msg}</div>
+                                        border:'1px solid ' + (sf.msg.startsWith('✅')?'#166534':'#7f1d1d')}}>{sf.msg}</div>
                                     )}
-                                    <Btn onClick={()=>createStaffAccount(s)} disabled={sf.saving} style={{fontSize:12,padding:'6px 16px'}}>
+                                    <Btn onClick={()=>createStaffAccount(s)} disabled={sf.saving} style={{fontSize:13,padding:'6px 16px'}}>
                                       {sf.saving ? 'Creating...' : '+ Create Account'}
                                     </Btn>
                                   </div>
@@ -3077,20 +3244,20 @@ For questions (not changes), just respond normally without action blocks. Be con
                           {/* Vacations section */}
                           <div style={{padding:'16px 24px',borderTop:'1px solid #2a2a4a'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                              <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Vacation ({sv.length})</span>
-                              {isAdmin && <Btn variant="ghost" onClick={()=>{setVacationForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Vacation</Btn>}
+                              <span style={{fontSize:14,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Vacation ({sv.length})</span>
+                              {isAdmin && <Btn variant="ghost" onClick={()=>{setVacationForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} style={{fontSize:12,padding:'4px 12px'}}>+ Add Vacation</Btn>}
                             </div>
                             {sv.length===0 ? (
-                              <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No vacations scheduled.</div>
+                              <div style={{fontSize:13,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No vacations scheduled.</div>
                             ) : (
                               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                                 {sv.map(v => (
                                   <div key={v.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #f59e0b',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                                     <div>
-                                      <div style={{fontSize:13,color:'#9ca3af',fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
-                                      {v.reason&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{v.reason}</div>}
+                                      <div style={{fontSize:14,color:'#9ca3af',fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
+                                      {v.reason&&<div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{v.reason}</div>}
                                     </div>
-                                    {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
+                                    {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                                   </div>
                                 ))}
                               </div>
@@ -3124,42 +3291,42 @@ For questions (not changes), just respond normally without action blocks. Be con
                         <div style={{display:'flex',alignItems:'center',gap:14}}>
                           <div>
                             <div style={{fontSize:16,fontWeight:700,color:lc.text}}>🏢 {l.name}</div>
-                            {l.address&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{l.address}</div>}
+                            {l.address&&<div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{l.address}</div>}
                           </div>
                           <Chip color={lc.text}>{lr.length} rule{lr.length!==1?'s':''}</Chip>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
-                          <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:13}}>🗑️</span>}
-                          <span style={{color:'#6b7280',fontSize:14,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
+                          <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                          <span style={{color:'#6b7280',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
 
                       {isExpanded && (
                         <div style={{borderTop:'1px solid #2a2a4a',padding:'16px 20px'}}>
                           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                            <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Rules at {l.name}</span>
-                            {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({locationId:l.id});setShowRuleModal(true)}} style={{fontSize:11,padding:'4px 12px'}}>+ Add Rule Here</Btn>}
+                            <span style={{fontSize:14,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em'}}>Rules at {l.name}</span>
+                            {isAdmin && <Btn variant="ghost" onClick={()=>{setEditingRule(null);resetRuleForm({locationId:l.id});setShowRuleModal(true)}} style={{fontSize:12,padding:'4px 12px'}}>+ Add Rule Here</Btn>}
                           </div>
                           {lr.length===0 ? (
-                            <div style={{fontSize:12,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules assigned to this location.</div>
+                            <div style={{fontSize:13,color:'#4b5563',fontStyle:'italic',padding:'8px 0'}}>No rules assigned to this location.</div>
                           ) : (
                             <div style={{display:'flex',flexDirection:'column',gap:8}}>
                               {lr.map(r => {
                                 const s = staff.find(x=>x.id===r.staffId);
                                 return (
                                   <div key={r.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${s?.color||'#666'}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
-                                    <div style={{flex:1,fontSize:13}}>
+                                    <div style={{flex:1,fontSize:14}}>
                                       <span style={{color:s?.color||'#fff',fontWeight:700}}>{s?.name||'?'}</span>
                                       <span style={{color:'#9ca3af',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
                                       <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
                                       {r.period!=='both'&&<span style={{color:'#6b7280'}}> ({r.period.toUpperCase()})</span>}
                                       <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
-                                      {r.description&&<div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{r.description}</div>}
+                                      {r.description&&<div style={{fontSize:12,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                     </div>
                                     <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:13}}>✏️</span>
-                                      <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:13}}>🗑️</span>
+                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                                      <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
                                     </div>
                                   </div>
                                 );
@@ -3187,7 +3354,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               {/* Filter by provider */}
               <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
                 <div onClick={()=>setRulesFilter('all')}
-                  style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,
+                  style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:rulesFilter==='all'?'#6366f122':'#12121f',color:rulesFilter==='all'?'#818cf8':'#6b7280',border:`1px solid ${rulesFilter==='all'?'#6366f1':'#2a2a4a'}`}}>
                   All ({rules.length})
                 </div>
@@ -3196,7 +3363,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                   if(count===0) return null;
                   return(
                     <div key={s.id} onClick={()=>setRulesFilter(s.id)}
-                      style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,
+                      style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
                         background:rulesFilter===s.id?s.color+'22':'#12121f',color:rulesFilter===s.id?s.color:'#6b7280',border:`1px solid ${rulesFilter===s.id?s.color:'#2a2a4a'}`}}>
                       {getLastName(s.name)} ({count})
                     </div>
@@ -3212,7 +3379,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                     <div key={r.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:16,borderLeft:`3px solid ${s?.color||'#666'}`}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
                         <div style={{flex:1}}>
-                          <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>
+                          <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>
                             <span style={{color:s?.color||'#fff'}}>{s?.name||'?'}</span>
                             <span style={{color:'#6b7280'}}> — {r.dayOfWeek}</span>
                             <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
@@ -3221,7 +3388,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                           </div>
                           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                             <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
-                            {r.description && <span style={{fontSize:12,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
+                            {r.description && <span style={{fontSize:13,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
                           </div>
                         </div>
                         <div style={{display:'flex',gap:6,flexShrink:0}}>
@@ -3252,9 +3419,9 @@ For questions (not changes), just respond normally without action blocks. Be con
                     return(
                       <div key={v.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${s?.color||'#666'}`}}>
                         <div>
-                          <div style={{fontSize:14,fontWeight:600,color:s?.color||'#fff'}}>{s?.name||'?'}</div>
-                          <div style={{fontSize:13,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
-                          {v.reason&&<div style={{fontSize:12,color:'#6b7280',marginTop:4}}>{v.reason}</div>}
+                          <div style={{fontSize:15,fontWeight:600,color:s?.color||'#fff'}}>{s?.name||'?'}</div>
+                          <div style={{fontSize:14,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
+                          {v.reason&&<div style={{fontSize:13,color:'#6b7280',marginTop:4}}>{v.reason}</div>}
                         </div>
                         {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>}
                       </div>
@@ -3271,7 +3438,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <div>
                   <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Company Holidays</h2>
-                  <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
+                  <p style={{color:'#6b7280',fontSize:14,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
                 </div>
                 {isAdmin && <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>}
               </div>
@@ -3293,18 +3460,18 @@ For questions (not changes), just respond normally without action blocks. Be con
                             {!isHalfDay && <span style={{fontSize:9,padding:'2px 8px',borderRadius:10,background:'#7f1d1d33',color:'#ef4444',border:'1px solid #ef444444',fontWeight:700}}>Closed</span>}
                             {isFloating && <span style={{fontSize:9,padding:'2px 8px',borderRadius:10,background:'#6366f122',color:'#818cf8',border:'1px solid #6366f144',fontWeight:600}}>Floating</span>}
                           </div>
-                          <div style={{fontSize:13,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>
+                          <div style={{fontSize:14,color:'#9ca3af',marginTop:4,fontFamily:'"Space Mono",monospace'}}>
                             {currentYear}: {dateStr}
                           </div>
-                          {h.note&&<div style={{fontSize:12,color:'#6b7280',marginTop:4}}>{h.note}</div>}
+                          {h.note&&<div style={{fontSize:13,color:'#6b7280',marginTop:4}}>{h.note}</div>}
                         </div>
                         <div style={{display:'flex',gap:8,flexShrink:0}}>
                           <span onClick={()=>{
                             setEditingHoliday(h);
                             setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||''});
                             setShowHolidayModal(true);
-                          }} style={{cursor:'pointer',fontSize:14}}>✏️</span>
-                          {isAdmin && <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                          }} style={{cursor:'pointer',fontSize:15}}>✏️</span>
+                          {isAdmin && <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
                         </div>
                       </div>
                     );
@@ -3323,8 +3490,8 @@ For questions (not changes), just respond normally without action blocks. Be con
                       <div key={h.id} style={{background:'#12121f',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #ef4444',display:'flex',alignItems:'center',gap:10}}>
                         <div style={{fontSize:24,fontWeight:800,color:'#ef4444',fontFamily:'"Space Mono",monospace',width:32,textAlign:'center'}}>{dt.getDate()}</div>
                         <div>
-                          <div style={{fontSize:12,fontWeight:600,color:'#e8e8f0'}}>{h.name}</div>
-                          <div style={{fontSize:10,color:'#6b7280'}}>{MONTHS[dt.getMonth()]} {dt.getDate()}, {currentYear}</div>
+                          <div style={{fontSize:13,fontWeight:600,color:'#e8e8f0'}}>{h.name}</div>
+                          <div style={{fontSize:11,color:'#6b7280'}}>{MONTHS[dt.getMonth()]} {dt.getDate()}, {currentYear}</div>
                         </div>
                       </div>
                     );
@@ -3342,7 +3509,7 @@ For questions (not changes), just respond normally without action blocks. Be con
         <Input label="Full Name" value={staffForm.name} onChange={v=>setStaffForm(p=>({...p,name:v}))} placeholder="e.g., Jane Smith MD" />
         <Input label="Role / Title" value={staffForm.role} onChange={v=>setStaffForm(p=>({...p,role:v}))} placeholder="e.g., Ophthalmologist" />
         <div style={{marginBottom:16}}>
-          <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Color</label>
+          <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Color</label>
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             {defaultColors.map(c=>(<div key={c} onClick={()=>setStaffForm(p=>({...p,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:staffForm.color===c?'3px solid #fff':'3px solid transparent',transition:'all 0.15s'}} />))}
           </div>
@@ -3365,11 +3532,11 @@ For questions (not changes), just respond normally without action blocks. Be con
       <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null)}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
         {/* Rule Type Selector */}
         <div style={{marginBottom:16}}>
-          <div style={{fontSize:11,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',marginBottom:6}}>Rule Type</div>
+          <div style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',marginBottom:6}}>Rule Type</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
             {[{v:'standard',l:'📋 Standard',c:'#6366f1'},{v:'conditional',l:'🔀 Conditional (IF/THEN)',c:'#f59e0b'},{v:'exception',l:'⚠️ Exception',c:'#ef4444'},{v:'negative',l:'🚫 Negative Constraint',c:'#ec4899'},{v:'rotation',l:'🔄 Rotation/Shared',c:'#10b981'},{v:'complex',l:'📝 Complex (Free Text)',c:'#8b5cf6'}].map(t=>(
               <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))}
-                style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,
+                style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
                   background:ruleForm.ruleType===t.v?t.c+'22':'#12121f',color:ruleForm.ruleType===t.v?t.c:'#6b7280',
                   border:'1px solid '+(ruleForm.ruleType===t.v?t.c:'#2a2a4a'),transition:'all 0.15s'}}>{t.l}</div>
             ))}
@@ -3446,21 +3613,21 @@ For questions (not changes), just respond normally without action blocks. Be con
 
       {/* Ambiguity Resolution Modal */}
       <Modal open={!!genAmbiguities && genAmbiguities.length > 0} onClose={()=>{setGenAmbiguities(null);setGenPendingContext(null)}} title="⚠️ Critical Scheduling Decisions Needed" wide>
-        <div style={{fontSize:13,color:'#9ca3af',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
+        <div style={{fontSize:14,color:'#9ca3af',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'#1a1520',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600,color:'#fbbf24',marginBottom:6}}>{amb.question}</div>
-            <div style={{fontSize:12,color:'#9ca3af',marginBottom:8}}>AI chose: {amb.chose}</div>
+            <div style={{fontSize:14,fontWeight:600,color:'#fbbf24',marginBottom:6}}>{amb.question}</div>
+            <div style={{fontSize:13,color:'#9ca3af',marginBottom:8}}>AI chose: {amb.chose}</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
               {(amb.alternatives || []).map((alt, oi) => (
                 <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))}
-                  style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                  style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:genAmbiguityAnswers[amb.id||ai]===alt?'#6366f133':'#12121f',
                     color:genAmbiguityAnswers[amb.id||ai]===alt?'#818cf8':'#6b7280',
                     border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===alt?'#6366f1':'#2a2a4a')}}>{alt}</div>
               ))}
               <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
-                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                   background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'#12121f',
                   color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'#6b7280',
                   border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'#2a2a4a')}}>Keep AI's choice</div>
@@ -3508,7 +3675,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             options={[{value:'closed',label:'Full Day Closed'},{value:'am',label:'AM Only (close at noon)'}]} />
         </div>
         <Input label="Note (optional)" value={holidayForm.note} onChange={v=>setHolidayForm(p=>({...p,note:v}))} placeholder="e.g., Office open AM only" />
-        <p style={{fontSize:11,color:'#4b5563',marginTop:4}}>Note: For floating holidays (e.g., 3rd Monday), edit the saved holiday definition directly.</p>
+        <p style={{fontSize:12,color:'#4b5563',marginTop:4}}>Note: For floating holidays (e.g., 3rd Monday), edit the saved holiday definition directly.</p>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
           <Btn variant="ghost" onClick={()=>{setShowHolidayModal(false);setEditingHoliday(null)}}>Cancel</Btn>
           <Btn onClick={addHoliday}>{editingHoliday?'Save':'Add Holiday'}</Btn>
@@ -3518,22 +3685,22 @@ For questions (not changes), just respond normally without action blocks. Be con
       <Modal open={!!editCell} onClose={()=>setEditCell(null)} title={editCell?`${MONTHS[currentMonth]} ${editCell.day}, ${currentYear} — Week ${getWeekOfMonth(editCell.day)}`:''} wide>
         {editCell&&(
           <div>
-            <p style={{fontSize:13,color:'#6b7280',marginBottom:16}}>Assign each provider to a location for AM and PM.</p>
+            <p style={{fontSize:14,color:'#6b7280',marginBottom:16}}>Assign each provider to a location for AM and PM.</p>
             <div style={{maxHeight:'60vh',overflow:'auto'}}>
               {staff.map(s=>{
                 const onVac=isOnVacation(s.id,editCell.dk);
                 return(
                   <div key={s.id} style={{padding:12,background:'#12121f',borderRadius:10,marginBottom:8,borderLeft:`3px solid ${s.color}`}}>
-                    <div style={{fontSize:14,fontWeight:600,color:s.color,marginBottom:8}}>
-                      {s.name}<span style={{fontSize:11,color:'#6b7280',fontWeight:400,marginLeft:8}}>{s.role}</span>
-                      {onVac&&<span style={{fontSize:11,color:'#f59e0b',marginLeft:8}}>⚠️ Vacation</span>}
+                    <div style={{fontSize:15,fontWeight:600,color:s.color,marginBottom:8}}>
+                      {s.name}<span style={{fontSize:12,color:'#6b7280',fontWeight:400,marginLeft:8}}>{s.role}</span>
+                      {onVac&&<span style={{fontSize:12,color:'#f59e0b',marginLeft:8}}>⚠️ Vacation</span>}
                     </div>
                     <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10}}>
                       {['am','pm'].map(period=>(
                         <div key={period}>
-                          <label style={{display:'block',fontSize:10,color:'#6b7280',marginBottom:3,textTransform:'uppercase',fontWeight:700}}>{period}</label>
+                          <label style={{display:'block',fontSize:11,color:'#6b7280',marginBottom:3,textTransform:'uppercase',fontWeight:700}}>{period}</label>
                           <select value={schedule[editCell.dk]?.[s.id]?.[period]||''} onChange={e=>setDayAssignment(editCell.day,s.id,period,e.target.value)}
-                            style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif'}}>
+                            style={{width:'100%',padding:'7px 10px',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif'}}>
                             <option value="">— Unassigned —</option>
                             {locations.map(l=><option key={l.id} value={l.id}>{l.name}{l.address?` (${l.address})`:''}</option>)}
                             <option value="OFF">OFF</option>
@@ -3546,13 +3713,13 @@ For questions (not changes), just respond normally without action blocks. Be con
               })}
             </div>
             <div style={{marginTop:16,borderTop:'1px solid #2a2a4a',paddingTop:14}}>
-              <label style={{display:'block',fontSize:11,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>📝 Day Notes</label>
+              <label style={{display:'block',fontSize:12,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>📝 Day Notes</label>
               <textarea
                 value={getNotes()[editCell.dk]||''}
                 onChange={e=>setNote(editCell.dk,e.target.value)}
                 placeholder="Add notes for this day (e.g. coverage changes, reminders)…"
                 rows={3}
-                style={{width:'100%',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:13,fontFamily:'"DM Sans",sans-serif',padding:'10px 12px',resize:'vertical',lineHeight:1.5}}
+                style={{width:'100%',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:8,color:'#e8e8f0',fontSize:14,fontFamily:'"DM Sans",sans-serif',padding:'10px 12px',resize:'vertical',lineHeight:1.5}}
               />
             </div>
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}><Btn onClick={()=>setEditCell(null)}>Done</Btn></div>
@@ -3567,7 +3734,7 @@ For questions (not changes), just respond normally without action blocks. Be con
           <Input label="New Password" value={profileForm.newPassword} onChange={v=>setProfileForm(p=>({...p,newPassword:v}))} placeholder="Min 6 characters" type="password" />
           <Input label="Confirm New Password" value={profileForm.confirmPassword} onChange={v=>setProfileForm(p=>({...p,confirmPassword:v}))} placeholder="Repeat new password" type="password" />
         </div>
-        {profileMsg && <div style={{fontSize:13,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
+        {profileMsg && <div style={{fontSize:14,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
           <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
           <Btn onClick={handleChangePassword}>Update Password</Btn>
@@ -3575,9 +3742,9 @@ For questions (not changes), just respond normally without action blocks. Be con
       </Modal>
 
       <Modal open={profileModal==='editEmail'} onClose={()=>{setProfileModal(null);setProfileMsg('');}} title="✉️ Email Address">
-        <p style={{fontSize:13,color:'#9ca3af',marginBottom:16}}>Your email is used for password recovery.</p>
+        <p style={{fontSize:14,color:'#9ca3af',marginBottom:16}}>Your email is used for password recovery.</p>
         <Input label="Email Address" value={profileForm.email} onChange={v=>setProfileForm(p=>({...p,email:v}))} placeholder="your@email.com" type="email" />
-        {profileMsg && <div style={{fontSize:13,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
+        {profileMsg && <div style={{fontSize:14,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
           <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
           <Btn onClick={handleUpdateEmail}>Save Email</Btn>
@@ -3641,7 +3808,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                 borderRadius:'12px 12px 0 0', background:'#1e1e35', userSelect:'none'
               }}>
                 <div style={{display:'flex',alignItems:'center',gap:6}}>
-                  <span style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
                   {noteReadOnly && <span style={{fontSize:9,fontWeight:700,color:'#6b7280',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:4,padding:'1px 5px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Read Only</span>}
                 </div>
                 <span onClick={()=>setFloatingNote(null)}
@@ -3659,7 +3826,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                   style={{width:'100%',background: noteReadOnly ? '#0f0f1a' : '#12121f',
                     border:'1px solid #374151',borderRadius:8,
                     color: noteReadOnly ? '#9ca3af' : '#e8e8f0',
-                    fontSize:13,fontFamily:'"DM Sans",sans-serif',
+                    fontSize:14,fontFamily:'"DM Sans",sans-serif',
                     padding:'8px 10px',
                     resize: noteReadOnly ? 'none' : 'vertical',
                     lineHeight:1.5,outline:'none',display:'block',
@@ -3670,13 +3837,13 @@ For questions (not changes), just respond normally without action blocks. Be con
                   {!noteReadOnly && noteText ? (
                     <span
                       onClick={()=>{if(window.confirm('Clear this note? This cannot be undone.')){setNote(floatingNote.dk,'');}}}
-                      style={{fontSize:11,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
+                      style={{fontSize:12,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
                       onMouseEnter={e=>{e.currentTarget.style.color='#ef4444';e.currentTarget.style.borderColor='#ef4444';}}
                       onMouseLeave={e=>{e.currentTarget.style.color='#6b7280';e.currentTarget.style.borderColor='#374151';}}>
                       Clear
                     </span>
                   ) : <span />}
-                  {!noteReadOnly && <span style={{fontSize:10,color:'#4b5563'}}>Saves automatically</span>}
+                  {!noteReadOnly && <span style={{fontSize:11,color:'#4b5563'}}>Saves automatically</span>}
                 </div>
               </div>
             </div>
