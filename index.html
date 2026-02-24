@@ -1,6 +1,21 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Schedule Helper</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a1a;color:#e8e8f0;font-family:'DM Sans',sans-serif}#root{min-height:100vh}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:#0a0a1a;color:#e8e8f0;font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-text-size-adjust:100%}
+#root{min-height:100vh}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
+@media(max-width:768px){
+  .mob-hide{display:none!important}
+  .mob-full{width:100%!important;min-width:0!important}
+  .mob-stack{flex-direction:column!important;align-items:stretch!important}
+  .mob-wrap{flex-wrap:wrap!important}
+  .mob-pad{padding:16px!important}
+  .mob-grid1{grid-template-columns:1fr!important}
+  .mob-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
+</style>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head><body><div id="root"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -281,8 +296,32 @@ function getWeekOfMonth(day) {
   return Math.ceil(day / 7);
 }
 
+function useIsMobile() {
+  const [m, setM] = React.useState(() => window.innerWidth <= 768);
+  React.useEffect(() => {
+    const fn = () => setM(window.innerWidth <= 768);
+    window.addEventListener('resize', fn);
+    return () => window.removeEventListener('resize', fn);
+  }, []);
+  return m;
+}
+
 function Modal({ open, onClose, title, children, wide }) {
+  const mob = useIsMobile();
   if (!open) return null;
+  if (mob) {
+    return (
+      <div style={{position:'fixed',inset:0,zIndex:1000,background:'#0d0d1a',display:'flex',flexDirection:'column',overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
+        <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0,position:'sticky',top:0,zIndex:10}}>
+          <h3 style={{margin:0,fontSize:17,color:'#e8e8f0',fontFamily:'"DM Sans",sans-serif',fontWeight:700,flex:1,paddingRight:12}}>{title}</h3>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#888',fontSize:26,cursor:'pointer',padding:'4px 8px',lineHeight:1,flexShrink:0}}>✕</button>
+        </div>
+        <div style={{flex:1,padding:16}}>
+          {children}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.5)',backdropFilter:'blur(4px)'}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:16,padding:32,minWidth:wide?700:420,maxWidth:wide?900:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
@@ -375,7 +414,7 @@ function WeekOfMonthPicker({ value, onChange }) {
   return (
     <div style={{marginBottom:16}}>
       <label style={{display:'block',fontSize:12,color:'#9ca3af',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+      <div style={{display:'flex',gap:isMobile?6:8,flexWrap:'wrap'}}>
         <div onClick={toggleAll}
           style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
             background:isAll?'#6366f122':'#12121f',color:isAll?'#818cf8':'#6b7280',border:`1px solid ${isAll?'#6366f1':'#2a2a4a'}`,transition:'all 0.15s'}}>
@@ -410,6 +449,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [isDev, setIsDev] = useState(false);
+  const isMobile = useIsMobile();
   const [loginForm, setLoginForm] = useState({ username: '', password: '', email: '', userType: 'admin', isRegister: false, forgotMode: false, forgotEmail: '', forgotSent: false, resetToken: '', resetStep: false, newPassword: '' });
   const isAdmin = isDev || (user && (user.userType === 'admin'));
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -494,65 +534,54 @@ window.ScheduleHelper = function StaffScheduler() {
   const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
   const [showPdfMenu, setShowPdfMenu] = useState(false);
 
-  // Call Claude API (non-streaming) — used by the chat agent for short requests
-  async function callClaudeAPI(body) {
-    var res = await fetch('/.netlify/functions/claude-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    return res;
-  }
-
-  // Streaming Claude API — used for schedule generation.
-  // Streams SSE from Anthropic via the proxy, accumulating text deltas.
-  // Because bytes flow immediately, Netlify infrastructure inactivity timeouts never fire.
-  // onProgress(charsReceived) is called after each chunk for UI feedback.
-  async function streamClaudeAPI(body, onProgress) {
-    var payload = Object.assign({}, body, { stream: true });
-    var response = await fetch('/.netlify/functions/claude-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      var errText = '';
-      try { errText = await response.text(); } catch(e) { errText = '?'; }
-      return { ok: false, status: response.status, errorText: errText };
-    }
-
-    var reader = response.body.getReader();
-    var decoder = new TextDecoder();
-    var buffer = '';
-    var fullText = '';
-
-    while (true) {
-      var chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
-      var lines = buffer.split('\n');
-      buffer = lines.pop(); // keep potentially incomplete last line
-      for (var li = 0; li < lines.length; li++) {
-        var line = lines[li];
-        if (!line.startsWith('data: ')) continue;
-        var raw = line.slice(6).trim();
-        if (!raw || raw === '[DONE]') continue;
-        try {
-          var evt = JSON.parse(raw);
-          if (evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta') {
-            fullText += evt.delta.text;
-            if (onProgress) onProgress(fullText.length);
-          }
-        } catch(e) { /* ignore malformed SSE lines */ }
+  // Call Claude API via Netlify function (API key stays server-side)
+  async function callClaudeAPI(body, retries) {
+    retries = retries || 0;
+    var maxRetries = 1;
+    var timeoutMs = 55000; // 55s — Netlify Pro allows 26s function timeout; give extra margin for network
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
+    try {
+      var res = await fetch('/.netlify/functions/claude-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      // If Netlify returned 502/504 (gateway timeout), retry once
+      if ((res.status === 502 || res.status === 504) && retries < maxRetries) {
+        addLog('warn', 'Got ' + res.status + ', retrying... (attempt ' + (retries + 2) + ')');
+        return callClaudeAPI(body, retries + 1);
       }
+      return res;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        if (retries < maxRetries) {
+          addLog('warn', 'Request timed out after ' + (timeoutMs/1000) + 's, retrying... (attempt ' + (retries + 2) + ')');
+          return callClaudeAPI(body, retries + 1);
+        }
+        return { ok: false, status: 408, json: async () => ({ error: { message: 'Request timed out after retry. Try reducing batch complexity.' } }), text: async () => JSON.stringify({ error: { message: 'Request timed out' } }) };
+      }
+      throw err;
     }
-
-    return { ok: true, status: 200, text: fullText };
   }
 
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  // On mobile, always initialize currentWeekStart if null
+  useEffect(() => {
+    if (isMobile && !currentWeekStart) {
+      const today = new Date();
+      const d = today.getDay();
+      const diff = d === 0 ? -6 : 1 - d;
+      const mon = new Date(today);
+      mon.setDate(today.getDate() + diff);
+      setCurrentWeekStart(mon);
+    }
+  }, [isMobile, currentWeekStart]);
 
   // Initialize visibleStaff and visibleLocations to show all when data loads
   useEffect(() => {
@@ -1217,23 +1246,24 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
-    addLog('info', 'Starting AI schedule generation (weekly batches, streaming, full carry-forward)...');
+    addLog('info', 'Starting AI schedule generation (3-day batches, system/user prompt split)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
 
-    // Weekly batches: W1=days 1-7, W2=8-14, W3=15-21, W4=22+
-    // Streaming eliminates timeout risk, so we use natural weekly boundaries for best accuracy.
+    // Collect all weekdays, then split into weekly batches (W1=days 1-7, W2=8-14, W3=15-21, W4=22+)
     const allWeekdays = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
       if (dow >= 1 && dow <= 5) allWeekdays.push(d);
     }
-    const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
-    const batches = weekBounds.map(function(wb, wi) {
-      return { days: allWeekdays.filter(function(d) { return d >= wb[0] && d <= wb[1]; }), label: 'W' + (wi+1) };
-    }).filter(function(b) { return b.days.length > 0; });
+    // 3-day batches — smaller output keeps each API call well within timeout limits
+    const batches = [];
+    for (let i = 0; i < allWeekdays.length; i += 3) {
+      const chunk = allWeekdays.slice(i, i + 4);
+      batches.push({ days: chunk, label: 'Days ' + chunk[0] + '-' + chunk[chunk.length - 1] });
+    }
 
     const decisionsBlock = userDecisions ? (
       '\nUSER DECISIONS (from critical ambiguity prompts):\n' +
@@ -1287,6 +1317,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
     const allAssignments = {};
     const allAmbiguities = [];
+    const allAutoResolved = [];
     let totalDays = 0;
 
     for (let bi = 0; bi < batches.length; bi++) {
@@ -1300,35 +1331,32 @@ window.ScheduleHelper = function StaffScheduler() {
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
-      // Full carry-forward: ALL days scheduled so far this month, in compact ID format.
-      // IDs map to names/locations defined in the system prompt — no need to resolve them here.
-      // Format per line: "YYYY-MM-DD (Dow): sid=amId/pmId sid=amId/pmId ..."
-      // ~60% smaller than verbose format, preserving full history for constraint tracking.
+      // Carry forward the last 5 assigned days for cross-week dependency accuracy
       let priorWeeksBlock = '';
       if (bi > 0 && Object.keys(allAssignments).length > 0) {
-        priorWeeksBlock = 'ALL DAYS SCHEDULED SO FAR THIS MONTH (IDs match system prompt — use for constraint tracking):\n';
-        const allPriorDays = Object.keys(allAssignments).sort();
-        allPriorDays.forEach(function(dk) {
+        priorWeeksBlock = 'PRIOR WEEKS ALREADY SCHEDULED (for cross-day dependencies):\n';
+        const priorDays = Object.keys(allAssignments).sort().slice(-5);
+        priorDays.forEach(function(dk) {
           const dayData = allAssignments[dk];
           const d = parseInt(dk.split('-')[2]);
           const dow = new Date(currentYear, currentMonth, d).getDay();
-          const staffEntries = Object.entries(dayData).map(function(entry) {
+          priorWeeksBlock += '  ' + dk + ' (' + DAYS_OF_WEEK[dow] + '):\n';
+          Object.entries(dayData).forEach(function(entry) {
             const sid = entry[0]; const periods = entry[1];
-            const am = periods.am || 'OFF';
-            const pm = periods.pm || 'OFF';
-            return sid + '=' + am + '/' + pm;
-          }).join(' ');
-          priorWeeksBlock += '  ' + dk + ' (' + DAYS_OF_WEEK[dow] + '): ' + staffEntries + '\n';
+            const s = staff.find(function(x) { return x.id === sid; });
+            if (!s) return;
+            const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.am; })?.name || periods.am);
+            const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(function(l) { return l.id === periods.pm; })?.name || periods.pm);
+            priorWeeksBlock += '    ' + s.name + ': ' + (amLoc === pmLoc ? amLoc : 'AM=' + amLoc + ', PM=' + pmLoc) + '\n';
+          });
         });
-        priorWeeksBlock += '\nUse this complete history to: (1) enforce monthly negative constraints by counting locationId occurrences, ' +
-          '(2) resolve conditional rules that depend on prior assignments, (3) track within-month rotation state.\n\n';
+        priorWeeksBlock += 'Use this to inform conditional rules that depend on prior days.\n\n';
       }
 
       // ── USER MESSAGE: only batch-specific content (prior context + task) ──
       const batchPrompt = priorWeeksBlock +
         'TASK: Generate schedule for ONLY these days: ' + daysList + '\n\n' +
         'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
-        'Respond ONLY with this JSON structure:\n' +
         '{\n' +
         '  "assignments": {\n' +
         '    "YYYY-MM-DD": {\n' +
@@ -1336,40 +1364,48 @@ window.ScheduleHelper = function StaffScheduler() {
         '    }\n' +
         '  },\n' +
         '  "ambiguities": [\n' +
-        '    { "id": "uid", "severity": "critical", "question": "≤12 words", "chose": "≤12 words", "alternatives": ["A", "B"] }\n' +
+        '    { "id": "unique_id", "severity": "critical|minor", "question": "description of ambiguity", "chose": "what you chose and why", "alternatives": ["option A", "option B"] }\n' +
+        '  ],\n' +
+        '  "auto_resolved": [\n' +
+        '    { "description": "what minor conflict was auto-resolved and how" }\n' +
         '  ]\n' +
         '}\n' +
-        'Rules:\n' +
-        '- Use exact IDs. Include every listed day and every staff member.\n' +
-        '- CRITICAL ambiguities only: contradictory required rules, rotation with no prior data, truly unresolvable conflicts.\n' +
-        '- Minor conflicts: resolve silently using best judgment — do NOT list them.\n' +
-        '- Keep ambiguity fields brief: question ≤12 words, chose ≤12 words, max 2 alternatives.\n' +
-        '- Empty ambiguities array [] if none.';
+        'Use exact IDs. Include every listed day and every staff member.\n' +
+        'For CRITICAL ambiguities (e.g., rotation with no previous month data, contradictory required rules): list them.\n' +
+        'For MINOR ambiguities: auto-resolve and list in auto_resolved.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
 
       try {
-        // Stream this batch — bytes flow from the first token, so Netlify infrastructure
-        // inactivity timeouts cannot fire regardless of how long generation takes.
-        const result = await streamClaudeAPI({
+        const response = await callClaudeAPI({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 3000,
           system: systemPrompt,
           messages: [{ role: "user", content: batchPrompt }]
-        }, function(charsReceived) {
-          setAiLog('⏳ Generating ' + batchLabel + '... (' + charsReceived + ' chars received)');
         });
 
-        addLog('response', `Batch ${bi+1}: HTTP ${result.status}`, { ok: result.ok });
+        addLog('response', `Batch ${bi+1}: HTTP ${response.status}`, { ok: response.ok });
 
-        if (!result.ok) {
-          addLog('error', `Batch ${bi+1} error ${result.status}`, { errorText: (result.errorText||'').substring(0, 500) });
-          setAiLog(`⚠️ API error on ${batchLabel} (${result.status}). Check developer logs.`);
+        if (!response.ok) {
+          let errorText = '';
+          try { errorText = await response.text(); } catch(e) { errorText = '?'; }
+          addLog('error', `Batch ${bi+1} error ${response.status}`, { errorText: errorText.substring(0, 500) });
+          setAiLog(`⚠️ API error on ${batchLabel} (${response.status}). Check developer logs.`);
           setGenerating(false);
           return;
         }
 
-        const text = result.text;
+        const rawText = await response.text();
+        const data = JSON.parse(rawText);
+
+        if (data.error) {
+          addLog('error', `Batch ${bi+1} API error`, { error: data.error });
+          setAiLog(`⚠️ Error on ${batchLabel}: ${data.error?.message || 'Unknown'}`);
+          setGenerating(false);
+          return;
+        }
+
+        const text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
         const clean = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
         let parsed;
@@ -1385,8 +1421,9 @@ window.ScheduleHelper = function StaffScheduler() {
         Object.assign(allAssignments, dayData);
         totalDays += Object.keys(dayData).length;
 
-        // Collect critical ambiguities
+        // Collect ambiguities and auto-resolved
         if (parsed.ambiguities) allAmbiguities.push(...parsed.ambiguities);
+        if (parsed.auto_resolved) allAutoResolved.push(...parsed.auto_resolved);
 
         addLog('success', `Batch ${bi+1} (${batchLabel}): ${Object.keys(dayData).length} days${parsed.ambiguities?.length ? ', ' + parsed.ambiguities.length + ' ambiguities' : ''}`);
 
@@ -1424,7 +1461,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const criticals = allAmbiguities.filter(a => a.severity === 'critical');
     if (criticals.length > 0 && !userDecisions) {
       setGenAmbiguities(criticals);
-      setGenPendingContext({ allAssignments, allAmbiguities, totalDays, holidayEdits });
+      setGenPendingContext({ allAssignments, allAmbiguities, allAutoResolved, totalDays, holidayEdits });
       setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
       setGenerating(false);
       return;
@@ -1435,10 +1472,13 @@ window.ScheduleHelper = function StaffScheduler() {
     if (conflicts.length > 0) {
       setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
       addLog('info', `Found ${conflicts.length} potential rule conflicts`);
-      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''}. Review below.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
     } else {
       setConflictsReport(null);
-      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+      setAiLog(`✅ Schedule generated for ${MONTHS[currentMonth]} ${currentYear}! ${totalDays} days populated — no rule conflicts detected.${allAutoResolved.length > 0 ? ` ${allAutoResolved.length} minor issue${allAutoResolved.length>1?'s':''} auto-resolved.` : ''}${holidayEdits > 0 ? ` ${holidayEdits} holiday corrections.` : ''}`);
+    }
+    if (allAutoResolved.length > 0) {
+      allAutoResolved.forEach(ar => addLog('info', `Auto-resolved: ${ar.description}`));
     }
     setGenerating(false);
   }
@@ -2067,7 +2107,14 @@ For questions (not changes), just respond normally without action blocks. Be con
 
   // Login / Forgot Password / Reset Password screens
   if (!user) {
-    const cardStyle = {width:440,padding:48,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:20,boxShadow:'0 32px 80px rgba(0,0,0,0.6)'};
+    const cardStyle = {
+      width:'min(440px, 94vw)',
+      padding:'clamp(24px, 6vw, 48px)',
+      background:'#1a1a2e',
+      border:'1px solid #2a2a4a',
+      borderRadius:'clamp(12px,4vw,20px)',
+      boxShadow:'0 32px 80px rgba(0,0,0,0.6)',
+    };
     const wrap = <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#0d0d1a 0%,#1a1035 50%,#0d0d1a 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" /></div>;
     const logo = (<div style={{textAlign:'center',marginBottom:36}}><div style={{fontSize:40,marginBottom:8}}>📅</div><h1 style={{fontSize:28,fontWeight:700,color:'#e8e8f0',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'#6b7280',fontSize:14,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
 
@@ -2177,15 +2224,15 @@ For questions (not changes), just respond normally without action blocks. Be con
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
 
       {/* Top Bar */}
-      <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <span style={{fontSize:24}}>📅</span>
+      <div style={{background:'#12121f',borderBottom:'1px solid #1e1e35',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
+          <span style={{fontSize:isMobile?20:24}}>📅</span>
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
-            <span style={{fontSize:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
-            <span style={{fontSize:10,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>
+            <span style={{fontSize:isMobile?16:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
+            {!isMobile && <span style={{fontSize:10,color:'#4b5563',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>}
           </div>
-          {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.08em'}}>Developer</span>}
-          {!isDev && user && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,
+          {isDev && <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.05em'}}>{isMobile?'DEV':'Developer'}</span>}
+          {!isDev && user && !isMobile && <span style={{fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20,
             background:isAdmin?'#1e1e3555':'#1e2a1e55',
             color:isAdmin?'#818cf8':'#6ee7b7',
             border:`1px solid ${isAdmin?'#6366f155':'#065f4655'}`,
@@ -2193,19 +2240,19 @@ For questions (not changes), just respond normally without action blocks. Be con
             {isAdmin?'Admin':'Staff'}
           </span>}
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          {isDev && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
+          {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:11,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
           <div data-profile-menu style={{position:'relative'}}>
             <div onClick={()=>setShowProfileMenu(p=>!p)}
-              style={{display:'flex',alignItems:'center',gap:8,padding:'7px 14px',background:showProfileMenu?'#1e1e35':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
-              <div style={{width:28,height:28,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'#fff',flexShrink:0}}>
+              style={{display:'flex',alignItems:'center',gap:6,padding:isMobile?'6px 10px':'7px 14px',background:showProfileMenu?'#1e1e35':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
+              <div style={{width:isMobile?32:28,height:isMobile?32:28,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:isMobile?15:13,fontWeight:700,color:'#fff',flexShrink:0}}>
                 {user.username[0].toUpperCase()}
               </div>
-              <span style={{fontSize:13,fontWeight:600,color:'#e8e8f0'}}>{user.username}</span>
+              {!isMobile && <span style={{fontSize:13,fontWeight:600,color:'#e8e8f0'}}>{user.username}</span>}
               <span style={{fontSize:10,color:'#6b7280',transition:'transform 0.2s',display:'inline-block',transform:showProfileMenu?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
             </div>
             {showProfileMenu && (
-              <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'calc(100% + 6px)',right:0,width:240,background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,boxShadow:'0 12px 40px rgba(0,0,0,0.6)',zIndex:200,overflow:'hidden'}}>
+              <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'calc(100% + 6px)',right:0,width:isMobile?'92vw':240,maxWidth:'92vw',background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,boxShadow:'0 12px 40px rgba(0,0,0,0.6)',zIndex:200,overflow:'hidden'}}>
                 {/* User info header */}
                 <div style={{padding:'14px 16px',borderBottom:'1px solid #2a2a4a',background:'#12121f'}}>
                   <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -2242,40 +2289,70 @@ For questions (not changes), just respond normally without action blocks. Be con
         </div>
       </div>
 
-      <div style={{display:'flex',minHeight:'calc(100vh - 53px)'}}>
-        {/* Sidebar */}
-        <div style={{width:220,background:'#12121f',borderRight:'1px solid #1e1e35',padding:'20px 0',flexShrink:0}}>
+      {/* Mobile Bottom Nav */}
+      {isMobile && (
+        <div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:150,background:'#12121f',borderTop:'1px solid #1e1e35',display:'flex',alignItems:'stretch',height:58,WebkitOverflowScrolling:'touch',overflowX:'auto'}}>
           {[
             {id:'schedule',icon:'📅',label:'Schedule'},
             ...(isAdmin ? [
-              {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
-              {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
-              {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
-              {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
-              {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+              {id:'staff',icon:'👥',label:'Staff'},
+              {id:'locations',icon:'🏢',label:'Locations'},
+              {id:'rules',icon:'⚙️',label:'Rules'},
+              {id:'vacations',icon:'🏖️',label:'Vacation'},
+              {id:'holidays',icon:'📆',label:'Holidays'},
             ] : []),
-          ].map(tab => (
-            <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
-              style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:14,fontWeight:activeTab===tab.id?600:400,
-                color:activeTab===tab.id?'#e8e8f0':'#6b7280',background:activeTab===tab.id?'#1e1e35':'transparent',
-                borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',transition:'all 0.15s'}}>
-              <span>{tab.icon}</span>{tab.label}
-            </div>
-          ))}
+          ].map(tab => {
+            const active = activeTab === tab.id;
+            return (
+              <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                style={{flex:'1 0 auto',minWidth:56,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,cursor:'pointer',
+                  borderTop:`2px solid ${active?'#6366f1':'transparent'}`,
+                  background:active?'#1a1a2e':'transparent',
+                  color:active?'#818cf8':'#4b5563',transition:'all 0.15s',padding:'4px 6px'}}>
+                <span style={{fontSize:19,lineHeight:1}}>{tab.icon}</span>
+                <span style={{fontSize:9,fontWeight:active?700:500,letterSpacing:'0.02em',whiteSpace:'nowrap'}}>{tab.label}</span>
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      <div style={{display:'flex',minHeight:'calc(100vh - 53px)'}}>
+        {/* Sidebar — desktop only */}
+        {!isMobile && (
+          <div style={{width:220,background:'#12121f',borderRight:'1px solid #1e1e35',padding:'20px 0',flexShrink:0}}>
+            {[
+              {id:'schedule',icon:'📅',label:'Schedule'},
+              ...(isAdmin ? [
+                {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
+                {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
+                {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
+                {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
+                {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+              ] : []),
+            ].map(tab => (
+              <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:14,fontWeight:activeTab===tab.id?600:400,
+                  color:activeTab===tab.id?'#e8e8f0':'#6b7280',background:activeTab===tab.id?'#1e1e35':'transparent',
+                  borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',transition:'all 0.15s'}}>
+                <span>{tab.icon}</span>{tab.label}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Main Content */}
-        <div style={{flex:1,padding:28,overflow:'auto'}}>
+        <div style={{flex:1,padding:isMobile?14:28,overflow:'auto',paddingBottom:isMobile?72:28}}>
 
           {/* ===== SCHEDULE TAB ===== */}
           {activeTab === 'schedule' && (
             <div>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:isMobile?'flex-start':'center',marginBottom:16,flexWrap:'wrap',gap:isMobile?8:12,flexDirection:isMobile?'column':'row'}}>
                 <div>
-                  <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Monthly Schedule</h2>
-                  <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>
+                  <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Monthly Schedule</h2>
+                  {!isMobile && <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>}
                 </div>
-                <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',width:isMobile?'100%':'auto'}}>
                   {!isAdmin && <span style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>}
                   {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
@@ -2472,40 +2549,40 @@ For questions (not changes), just respond normally without action blocks. Be con
                 </div>
               )}
 
-              <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:isMobile?6:16,marginBottom:12,flexWrap:isMobile?'wrap':'nowrap'}}>
                 <Btn variant="ghost" onClick={()=>{
-                  if (calendarView === 'week' && currentWeekStart) {
+                  if ((isMobile||calendarView === 'week') && currentWeekStart) {
                     const prev = new Date(currentWeekStart); prev.setDate(prev.getDate() - 7);
                     setCurrentWeekStart(prev);
                     if (prev.getMonth() !== currentMonth) { setCurrentMonth(prev.getMonth()); setCurrentYear(prev.getFullYear()); }
                   } else { prevMonth(); }
-                }} style={{padding:'8px 14px'}}>◀</Btn>
-                <h3 style={{fontSize:20,fontWeight:600,minWidth:220,textAlign:'center',fontFamily:'"Space Mono",monospace'}}>
-                  {calendarView === 'week' && currentWeekStart
-                    ? `${MONTHS[currentWeekStart.getMonth()]} ${currentWeekStart.getDate()}–${(()=>{const e=new Date(currentWeekStart);e.setDate(e.getDate()+4);return e.getDate()})()}, ${currentWeekStart.getFullYear()}`
+                }} style={{padding:isMobile?'10px 14px':'8px 14px',fontSize:isMobile?16:14}}>◀</Btn>
+                <h3 style={{fontSize:isMobile?15:20,fontWeight:600,minWidth:isMobile?0:220,flex:isMobile?1:undefined,textAlign:'center',fontFamily:'"Space Mono",monospace'}}>
+                  {(isMobile||calendarView === 'week') && currentWeekStart
+                    ? `${MONTHS[currentWeekStart.getMonth()].slice(0,3)} ${currentWeekStart.getDate()}–${(()=>{const e=new Date(currentWeekStart);e.setDate(e.getDate()+4);return e.getDate()})()}`
                     : `${MONTHS[currentMonth]} ${currentYear}`}
                 </h3>
                 <Btn variant="ghost" onClick={()=>{
-                  if (calendarView === 'week' && currentWeekStart) {
+                  if ((isMobile||calendarView === 'week') && currentWeekStart) {
                     const nxt = new Date(currentWeekStart); nxt.setDate(nxt.getDate() + 7);
                     setCurrentWeekStart(nxt);
                     if (nxt.getMonth() !== currentMonth) { setCurrentMonth(nxt.getMonth()); setCurrentYear(nxt.getFullYear()); }
                   } else { nextMonth(); }
-                }} style={{padding:'8px 14px'}}>▶</Btn>
+                }} style={{padding:isMobile?'10px 14px':'8px 14px',fontSize:isMobile?16:14}}>▶</Btn>
                 <Btn variant="ghost" onClick={()=>{
                   const today = new Date();
                   setCurrentMonth(today.getMonth()); setCurrentYear(today.getFullYear());
                   const d = today.getDay(); const diff = d === 0 ? -6 : 1 - d;
                   const mon = new Date(today); mon.setDate(today.getDate() + diff);
                   setCurrentWeekStart(mon);
-                }} style={{padding:'8px 14px',fontSize:11}}>Today</Btn>
+                }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:11}}>Today</Btn>
                 {isAdmin && <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
-                  style={{padding:'8px 12px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
-                  title="Undo last schedule change">↩</Btn>}
+                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
+                  title="Undo">↩</Btn>}
                 {isAdmin && <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
-                  style={{padding:'8px 12px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
-                  title="Redo last undone change">↪</Btn>}
-                <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
+                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
+                  title="Redo">↪</Btn>}
+                {!isMobile && <div style={{marginLeft:'auto',display:'flex',gap:2,background:'#1a1a2e',borderRadius:8,padding:2,border:'1px solid #1e1e35'}}>
                   {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
                     <div key={v} onClick={()=>{
                       setCalendarView(v);
@@ -2520,11 +2597,11 @@ For questions (not changes), just respond normally without action blocks. Be con
                         background:calendarView===v?'#6366f1':'transparent',color:calendarView===v?'#fff':'#6b7280',
                         transition:'all 0.15s'}}>{label}</div>
                   ))}
-                </div>
+                </div>}
               </div>
 
               {/* Plan Selector */}
-              {isAdmin && <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,padding:'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35'}}>
+              {isAdmin && <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12,marginBottom:16,padding:isMobile?'10px 12px':'12px 16px',background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',flexWrap:'wrap'}}>
                 <span style={{fontSize:11,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Plans:</span>
                 {['A','B','C'].map(plan => {
                   const hasData = planHasData(plan);
@@ -2568,9 +2645,9 @@ For questions (not changes), just respond normally without action blocks. Be con
 
               <div style={{borderRadius:14,overflow:'hidden',border:'1px solid #1e1e35',background:'#12121f'}}>
                 {/* Day headers */}
-                <div style={{display:'grid',gridTemplateColumns:calendarView==='week'?'repeat(5,1fr)':'repeat(7,1fr)'}}>
-                  {(calendarView==='week'?DAYS_OF_WEEK.slice(1,6):DAYS_OF_WEEK).map(d=>(
-                    <div key={d} style={{padding:'10px 8px',textAlign:'center',fontSize:12,fontWeight:700,color:'#9ca3af',background:'#1a1a2e',borderBottom:'1px solid #1e1e35',textTransform:'uppercase',letterSpacing:'0.08em'}}>{d}</div>
+                <div style={{display:'grid',gridTemplateColumns:(isMobile||calendarView==='week')?'repeat(5,1fr)':'repeat(7,1fr)'}}>
+                  {((isMobile||calendarView==='week')?DAYS_OF_WEEK.slice(1,6):DAYS_OF_WEEK).map(d=>(
+                    <div key={d} style={{padding:isMobile?'8px 2px':'10px 8px',textAlign:'center',fontSize:isMobile?11:12,fontWeight:700,color:'#9ca3af',background:'#1a1a2e',borderBottom:'1px solid #1e1e35',textTransform:'uppercase',letterSpacing:'0.06em'}}>{isMobile?d.slice(0,1):d}</div>
                   ))}
                 </div>
 
@@ -2578,7 +2655,8 @@ For questions (not changes), just respond normally without action blocks. Be con
                 {(()=>{
                   // Build array of days to show
                   let daysToRender = [];
-                  if (calendarView === 'week' && currentWeekStart) {
+                  const useWeekView = isMobile || calendarView === 'week';
+                  if (useWeekView && currentWeekStart) {
                     for (let i = 0; i < 5; i++) {
                       const d = new Date(currentWeekStart);
                       d.setDate(d.getDate() + i);
@@ -2588,7 +2666,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                     daysToRender = calDays.map(day => day === null ? null : { day, month: currentMonth, year: currentYear, isCurrentMonth: true });
                   }
 
-                  const isWeekView = calendarView === 'week';
+                  const isWeekView = useWeekView;
                   const cols = isWeekView ? 5 : 7;
 
                   return (
@@ -2602,7 +2680,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                         const schedule = getSchedule();
                         const ds=schedule[dk]||{};
                         const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
-                        const cellMinH = isWeekView ? 200 : 100;
+                        const cellMinH = isMobile ? 130 : (isWeekView ? 200 : 100);
 
                         // Hybrid display logic
                         function getHybridDisplay() {
@@ -2628,7 +2706,7 @@ For questions (not changes), just respond normally without action blocks. Be con
 
                         const hybrid = getHybridDisplay();
                         const isWk = isWeekView;
-                        const fs = isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10} : {loc:10,name:11,dot:6,dayNum:14,wk:9,hol:9,holSub:8,ampm:9};
+                        const fs = isMobile ? {loc:12,name:13,dot:7,dayNum:16,wk:10,hol:11,holSub:10,ampm:10} : (isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10} : {loc:10,name:11,dot:6,dayNum:14,wk:9,hol:9,holSub:8,ampm:9});
 
                         function renderLocBlock(g, gi) {
                           const isOff = g.locId === 'OFF';
@@ -2655,7 +2733,7 @@ For questions (not changes), just respond normally without action blocks. Be con
 
                         return (
                           <div key={cellYear+'-'+cellMonth+'-'+day}
-                            style={{minHeight:cellMinH,padding:isWk?'6px 6px':'4px 4px',borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':(isCurMonth?'#12121f':'#0e0e1a'),cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
+                            style={{minHeight:cellMinH,padding:isMobile?'5px 4px':(isWk?'6px 6px':'4px 4px'),borderRight:'1px solid #1e1e35',borderBottom:'1px solid #1e1e35',background:wkend?'#0d0d18':(isCurMonth?'#12121f':'#0e0e1a'),cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
                             onClick={function(){if(!wkend && isAdmin)setEditCell({day:day,dk:dk})}}
                             onMouseEnter={function(e){if(!wkend && isAdmin)e.currentTarget.style.background='#1a1a30'}}
                             onMouseLeave={function(e){if(!wkend && isAdmin)e.currentTarget.style.background=wkend?'#0d0d18':'#12121f'}}>
@@ -2967,7 +3045,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                                 return (
                                   <div>
                                     <p style={{fontSize:12,color:'#6b7280',marginBottom:12}}>Create a login for this staff member. They'll have read-only access to final schedules.</p>
-                                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                                    <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10,marginBottom:10}}>
                                       <div>
                                         <label style={{display:'block',fontSize:10,color:'#6b7280',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Username</label>
                                         <input value={sf.username||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,username:e.target.value,msg:''}}))}
@@ -3031,7 +3109,7 @@ For questions (not changes), just respond normally without action blocks. Be con
           {activeTab === 'locations' && (
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
-                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Office Locations</h2>
+                <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Office Locations</h2>
                 {isAdmin && <Btn onClick={()=>{setEditingLocation(null);setLocationForm({name:'',address:''});setShowLocationModal(true)}}>+ Add Location</Btn>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -3101,7 +3179,7 @@ For questions (not changes), just respond normally without action blocks. Be con
           {activeTab === 'rules' && (
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
-                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
+                <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
                 <Btn onClick={()=>{setEditingRule(null);resetRuleForm();setShowRuleModal(true)}}
                   disabled={!isAdmin||staff.length===0||locations.length===0}>+ Add Rule</Btn>
               </div>
@@ -3162,7 +3240,7 @@ For questions (not changes), just respond normally without action blocks. Be con
           {activeTab === 'vacations' && (
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
-                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Vacation</h2>
+                <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Vacation</h2>
                 {isAdmin && <Btn onClick={()=>{setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});setShowVacationModal(true)}} disabled={staff.length===0}>+ Add Vacation</Btn>}
               </div>
               {vacations.length===0?(
@@ -3192,7 +3270,7 @@ For questions (not changes), just respond normally without action blocks. Be con
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <div>
-                  <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Company Holidays</h2>
+                  <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Company Holidays</h2>
                   <p style={{color:'#6b7280',fontSize:13,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
                 </div>
                 {isAdmin && <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>}
@@ -3237,7 +3315,7 @@ For questions (not changes), just respond normally without action blocks. Be con
               {/* Year preview */}
               <div style={{marginTop:24,padding:'16px 20px',background:'#1a1a2e',borderRadius:12,border:'1px solid #2a2a4a'}}>
                 <h3 style={{fontSize:16,fontWeight:700,marginBottom:12}}>📅 {currentYear} Holiday Calendar</h3>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220,1fr))',gap:10}}>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(220px,1fr))',gap:10}}>
                   {holidays.map(h => {
                     const dt = getHolidayDate(h, currentYear);
                     if (!dt) return null;
@@ -3305,14 +3383,14 @@ For questions (not changes), just respond normally without action blocks. Be con
         {/* Standard, Conditional, Exception: Day/Week/Period/Location */}
         {(ruleForm.ruleType === 'standard' || ruleForm.ruleType === 'conditional' || ruleForm.ruleType === 'exception' || ruleForm.ruleType === 'rotation') && (
           <div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:12}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginTop:12}}>
               <Select label="Day of Week" value={ruleForm.dayOfWeek} onChange={v=>setRuleForm(p=>({...p,dayOfWeek:v}))}
                 options={WEEKDAYS_ONLY.map(d=>({value:d,label:d}))} />
               <Select label="Time Period" value={ruleForm.period} onChange={v=>setRuleForm(p=>({...p,period:v}))}
                 options={[{value:'both',label:'Full Day'},{value:'am',label:'AM Only'},{value:'pm',label:'PM Only'}]} />
             </div>
             <WeekOfMonthPicker value={ruleForm.weekOfMonth} onChange={v=>setRuleForm(p=>({...p,weekOfMonth:v}))} />
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
               <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
                 options={[...locations.map(l=>({value:l.id,label:l.name})),{value:'OFF',label:'OFF (Day Off)'}]} />
               <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
@@ -3341,7 +3419,7 @@ For questions (not changes), just respond normally without action blocks. Be con
 
         {/* Rotation: who to rotate with and where */}
         {ruleForm.ruleType === 'rotation' && (
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:8}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginTop:8}}>
             <Select label="Rotates With" value={ruleForm.rotateWithStaffId} onChange={v=>setRuleForm(p=>({...p,rotateWithStaffId:v}))}
               options={staff.filter(s=>s.id!==ruleForm.staffId).map(s=>({value:s.id,label:s.name}))} />
             <Select label="Rotation Location" value={ruleForm.rotateAtLocationId} onChange={v=>setRuleForm(p=>({...p,rotateAtLocationId:v}))}
@@ -3408,7 +3486,7 @@ For questions (not changes), just respond normally without action blocks. Be con
       <Modal open={showVacationModal} onClose={()=>setShowVacationModal(false)} title="Add Vacation">
         <Select label="Staff Member" value={vacationForm.staffId} onChange={v=>setVacationForm(p=>({...p,staffId:v}))}
           options={staff.map(s=>({value:s.id,label:s.name}))} />
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
           <Input label="Start Date" value={vacationForm.startDate} onChange={v=>setVacationForm(p=>({...p,startDate:v}))} type="date" />
           <Input label="End Date" value={vacationForm.endDate} onChange={v=>setVacationForm(p=>({...p,endDate:v}))} type="date" />
         </div>
@@ -3421,7 +3499,7 @@ For questions (not changes), just respond normally without action blocks. Be con
 
       <Modal open={showHolidayModal} onClose={()=>{setShowHolidayModal(false);setEditingHoliday(null)}} title={editingHoliday?'Edit Holiday':'Add Holiday'}>
         <Input label="Holiday Name" value={holidayForm.name} onChange={v=>setHolidayForm(p=>({...p,name:v}))} placeholder="e.g., Veterans Day" />
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:16}}>
           <Select label="Month" value={holidayForm.month} onChange={v=>setHolidayForm(p=>({...p,month:parseInt(v)}))}
             options={MONTHS.map((m,i)=>({value:i,label:m}))} />
           <Select label="Day" value={holidayForm.day} onChange={v=>setHolidayForm(p=>({...p,day:parseInt(v)}))}
@@ -3450,7 +3528,7 @@ For questions (not changes), just respond normally without action blocks. Be con
                       {s.name}<span style={{fontSize:11,color:'#6b7280',fontWeight:400,marginLeft:8}}>{s.role}</span>
                       {onVac&&<span style={{fontSize:11,color:'#f59e0b',marginLeft:8}}>⚠️ Vacation</span>}
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                    <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10}}>
                       {['am','pm'].map(period=>(
                         <div key={period}>
                           <label style={{display:'block',fontSize:10,color:'#6b7280',marginBottom:3,textTransform:'uppercase',fontWeight:700}}>{period}</label>
@@ -3543,11 +3621,18 @@ For questions (not changes), just respond normally without action blocks. Be con
             return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
           }, []);
 
+          const mob = useIsMobile();
           return (
             <div ref={dragRef} onClick={e=>e.stopPropagation()} style={{
-              position:'fixed', left:pos.x, top:pos.y, width:boxW, zIndex:1000,
-              background:'#1a1a2e', border:'1px solid #4b5563', borderRadius:12,
-              boxShadow:'0 8px 32px #000a'
+              position:'fixed',
+              left: mob ? 0 : pos.x,
+              bottom: mob ? 0 : undefined,
+              top: mob ? undefined : pos.y,
+              width: mob ? '100vw' : boxW,
+              zIndex:1000,
+              background:'#1a1a2e', border:'1px solid #4b5563',
+              borderRadius: mob ? '16px 16px 0 0' : 12,
+              boxShadow:'0 -4px 32px #000a'
             }}>
               {/* Drag handle header */}
               <div onMouseDown={onMouseDown} style={{
