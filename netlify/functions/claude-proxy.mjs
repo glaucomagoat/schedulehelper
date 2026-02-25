@@ -2,7 +2,8 @@
 // Forwards requests to the Anthropic API.
 // Supports streaming (stream: true) — pipes SSE response body directly back to the browser,
 // which eliminates Netlify infrastructure inactivity timeouts entirely.
-// Also supports non-streaming for the chat agent.
+// Also supports non-streaming for the AI chat agent.
+// !! DO NOT REMOVE STREAMING — it is required to prevent 504 timeouts on schedule generation !!
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -29,8 +30,8 @@ export default async function handler(req) {
     messages:   body.messages   || [],
   };
 
-  if (body.system)  anthropicPayload.system = body.system;
-  if (body.stream)  anthropicPayload.stream = true;
+  if (body.system) anthropicPayload.system = body.system;
+  if (body.stream) anthropicPayload.stream = true;
 
   const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences', 'tools', 'tool_choice', 'metadata'];
   for (const field of passthroughFields) {
@@ -50,18 +51,19 @@ export default async function handler(req) {
 
     if (body.stream) {
       // Pipe the SSE stream directly — bytes flow immediately, keeping the
-      // Netlify infrastructure connection alive for the full duration.
+      // Netlify infrastructure connection alive for the full generation duration.
+      // This is the ONLY reliable fix for 504 timeouts on long schedule generations.
       return new Response(upstream.body, {
         status: upstream.status,
         headers: {
-          'Content-Type':    'text/event-stream',
-          'Cache-Control':   'no-cache',
+          'Content-Type':      'text/event-stream',
+          'Cache-Control':     'no-cache',
           'X-Accel-Buffering': 'no',
         },
       });
     }
 
-    // Non-streaming (chat agent): return JSON response as before
+    // Non-streaming (chat agent): return full JSON response
     const responseText = await upstream.text();
     return new Response(responseText, { status: upstream.status, headers: JSON_HEADERS });
 
