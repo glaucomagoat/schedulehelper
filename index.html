@@ -870,7 +870,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const u = { username, email, userType, created: Date.now() };
       await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
       localStorage.setItem('session', JSON.stringify(u));
-      setUser(u); setIsDev(false);
+      setUser(u); setIsDev(false); setChatMessages([]);
     } else {
       try {
         const userData = await window.storage.get(`user:${username}`);
@@ -879,7 +879,7 @@ window.ScheduleHelper = function StaffScheduler() {
         if (parsed.password !== password) { alert('Incorrect password'); return; }
         const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created };
         localStorage.setItem('session', JSON.stringify(u));
-        setUser(u); setIsDev(false);
+        setUser(u); setIsDev(false); setChatMessages([]);
         await loadUserData(username);
       } catch(e) { alert('Login failed'); }
     }
@@ -1039,7 +1039,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (devPw !== DEV_PASSWORD) { alert('Wrong password'); return; }
     const u = { username: DEV_USERNAME, isDev: true, created: Date.now() };
     localStorage.setItem('session', JSON.stringify(u));
-    setUser(u); setIsDev(true);
+    setUser(u); setIsDev(true); setChatMessages([]);
 
     // Check if ALL essential preset data exists (staff, locations, AND rules)
     let hasCompleteData = false;
@@ -1109,7 +1109,7 @@ window.ScheduleHelper = function StaffScheduler() {
   async function logout() {
     localStorage.removeItem('session');
     try { await window.storage.delete('session'); } catch(e) {} // clean up any old cloud session
-    setUser(null); setIsDev(false);
+    setUser(null); setIsDev(false); setChatMessages([]);
     setStaff([]); setLocations([]); setRules([]); setVacations([]); setHolidays([]); setSchedules({});
   }
 
@@ -1780,9 +1780,7 @@ window.ScheduleHelper = function StaffScheduler() {
       return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
     }).join('\n') : 'None';
 
-    const systemPrompt = `You are an AI scheduling assistant for Schedule Helper. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
-
-Current context:
+    const sharedContext = `Current context:
 - Month: ${MONTHS[currentMonth]} ${currentYear}, Plan ${activePlan}
 - ${scheduleSummary}
 
@@ -1799,7 +1797,12 @@ Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); retur
 
 Active rules: ${rules.length}
 Rules summary:
-${buildRulesSummary()}
+${buildRulesSummary()}`;
+
+    const systemPrompt = isAdmin
+      ? `You are an AI scheduling assistant for Schedule Helper. You can both ANSWER questions AND MAKE CHANGES to the schedule data.
+
+${sharedContext}
 
 ACTIONS: When the user asks you to make a change, include a JSON action block in your response using this exact format:
 
@@ -1822,7 +1825,13 @@ Available actions:
 
 You can include MULTIPLE action blocks in one response. Always confirm what you're doing in natural language AND include the action block. If unsure about details, ask the user first.
 
-For questions (not changes), just respond normally without action blocks. Be concise. Use last names for providers.`;
+For questions (not changes), just respond normally without action blocks. Be concise. Use last names for providers.`
+      : `You are a read-only AI scheduling assistant for Schedule Helper. You can ONLY answer questions about the schedule — you cannot make any changes.
+
+${sharedContext}
+
+IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change rules, or perform any actions. Do NOT output action blocks under any circumstances. If a user asks you to make a change, politely explain that only administrators can make changes. Answer questions clearly and concisely. Use last names for providers.`;
+
 
     try {
       const apiMessages = chatMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
@@ -1844,17 +1853,19 @@ For questions (not changes), just respond normally without action blocks. Be con
       const data = await response.json();
       let text = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
 
-      // Extract and execute action blocks
+      // Extract and execute action blocks (admin only)
       const actionRegex = /```action\s*\n?([\s\S]*?)```/g;
       let match;
       const results = [];
-      while ((match = actionRegex.exec(text)) !== null) {
-        try {
-          const action = JSON.parse(match[1].trim());
-          const result = executeAgentAction(action);
-          results.push(result);
-        } catch (e) {
-          results.push(`❌ Failed to parse action: ${e.message}`);
+      if (isAdmin) {
+        while ((match = actionRegex.exec(text)) !== null) {
+          try {
+            const action = JSON.parse(match[1].trim());
+            const result = executeAgentAction(action);
+            results.push(result);
+          } catch (e) {
+            results.push(`❌ Failed to parse action: ${e.message}`);
+          }
         }
       }
 
@@ -2926,8 +2937,8 @@ For questions (not changes), just respond normally without action blocks. Be con
 
 
 
-              {/* Plan History */}
-              {(()=>{
+              {/* Plan History — admin only */}
+              {isAdmin && (()=>{
                 const historyEntries = planHistory[scheduleKey] || [];
                 return (
                   <div style={{marginBottom:16,border:'1px solid #1e1e35',borderRadius:12,overflow:'hidden',background:'#1a1a2e'}}>
