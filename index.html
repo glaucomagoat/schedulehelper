@@ -514,7 +514,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showUserLogs, setShowUserLogs] = useState(false);
   const [visibleStaff, setVisibleStaff] = useState(new Set());
   const [visibleLocations, setVisibleLocations] = useState(new Set());
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [providersCollapsed, setProvidersCollapsed] = useState(false);
+  const [locationsCollapsed, setLocationsCollapsed] = useState(false);
   const [confirmClearPlan, setConfirmClearPlan] = useState(false);
   const [expandedLocation, setExpandedLocation] = useState(null);
   const [expandedStaffMember, setExpandedStaffMember] = useState(null);
@@ -717,9 +718,11 @@ window.ScheduleHelper = function StaffScheduler() {
         setLoading(false);
         return;
       }
-      const sess = await window.storage.get('session');
-        if (sess) {
-          const u = JSON.parse(sess.value);
+      // Clean up any stale cloud session key from before this fix
+      try { await window.storage.delete('session'); } catch(e) {}
+      const sessRaw = localStorage.getItem('session');
+      if (sessRaw) {
+          const u = JSON.parse(sessRaw);
           // Re-read user record to get latest userType (may have been updated)
           let fullU = { ...u };
           try {
@@ -810,6 +813,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const h = await d('holidays'); if (h) setHolidays(h); else setHolidays(PRESET_HOLIDAYS);
       const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
       const dn = await d('dayNotes'); if (dn) setDayNotes(dn);
+      const ph = await d('planHistory'); if (ph) setPlanHistory(ph);
     } catch(e) {}
   }
 
@@ -825,6 +829,7 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('locations', locations); }, [locations]);
   useEffect(() => { if (user) saveData('rules', rules); }, [rules]);
   useEffect(() => { if (user) saveData('vacations', vacations); }, [vacations]);
+  useEffect(() => { if (user) saveData('planHistory', planHistory); }, [planHistory]);
   useEffect(() => { if (user) saveData('holidays', holidays); }, [holidays]);
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
   useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
@@ -864,7 +869,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const userType = loginForm.userType || 'admin';
       const u = { username, email, userType, created: Date.now() };
       await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
-      await window.storage.set('session', JSON.stringify(u));
+      localStorage.setItem('session', JSON.stringify(u));
       setUser(u); setIsDev(false);
     } else {
       try {
@@ -873,7 +878,7 @@ window.ScheduleHelper = function StaffScheduler() {
         const parsed = JSON.parse(userData.value);
         if (parsed.password !== password) { alert('Incorrect password'); return; }
         const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created };
-        await window.storage.set('session', JSON.stringify(u));
+        localStorage.setItem('session', JSON.stringify(u));
         setUser(u); setIsDev(false);
         await loadUserData(username);
       } catch(e) { alert('Login failed'); }
@@ -961,7 +966,7 @@ window.ScheduleHelper = function StaffScheduler() {
       parsed.email = email;
       await window.storage.set(`user:${user.username}`, JSON.stringify(parsed));
       const updatedUser = { ...user, email };
-      await window.storage.set('session', JSON.stringify(updatedUser));
+      localStorage.setItem('session', JSON.stringify(updatedUser));
       setUser(updatedUser);
       setProfileMsg('✅ Email updated successfully!');
     } catch(e) { setProfileMsg('An error occurred. Please try again.'); }
@@ -1033,7 +1038,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const devPw = prompt('Developer password:');
     if (devPw !== DEV_PASSWORD) { alert('Wrong password'); return; }
     const u = { username: DEV_USERNAME, isDev: true, created: Date.now() };
-    await window.storage.set('session', JSON.stringify(u));
+    localStorage.setItem('session', JSON.stringify(u));
     setUser(u); setIsDev(true);
 
     // Check if ALL essential preset data exists (staff, locations, AND rules)
@@ -1102,7 +1107,8 @@ window.ScheduleHelper = function StaffScheduler() {
   }
 
   async function logout() {
-    try { await window.storage.delete('session'); } catch(e) {}
+    localStorage.removeItem('session');
+    try { await window.storage.delete('session'); } catch(e) {} // clean up any old cloud session
     setUser(null); setIsDev(false);
     setStaff([]); setLocations([]); setRules([]); setVacations([]); setHolidays([]); setSchedules({});
   }
@@ -2447,28 +2453,22 @@ For questions (not changes), just respond normally without action blocks. Be con
                 </div>
               </div>
 
-              {/* Staff + Location Filters — collapsible */}
-              <div style={{background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16,overflow:'hidden'}}>
-                {/* Filter header row with collapse toggle */}
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:filtersCollapsed?'none':'1px solid #1e1e35'}}
-                  onClick={()=>setFiltersCollapsed(p=>!p)}>
+              {/* Provider Filter — collapsible */}
+              <div style={{background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:10,overflow:'hidden'}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:providersCollapsed?'none':'1px solid #1e1e35'}}
+                  onClick={()=>setProvidersCollapsed(p=>!p)}>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Filters</span>
-                    {filtersCollapsed && (
-                      <span style={{fontSize:12,color:'#6b7280'}}>
-                        {visibleStaff.size}/{staff.length} providers · {visibleLocations.size}/{locations.length} locations
-                      </span>
+                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Providers</span>
+                    {providersCollapsed && (
+                      <span style={{fontSize:12,color:'#6b7280'}}>{visibleStaff.size}/{staff.length} shown</span>
                     )}
                   </div>
-                  <span style={{fontSize:13,color:'#4b5563',userSelect:'none',transition:'transform 0.2s',display:'inline-block',transform:filtersCollapsed?'rotate(-90deg)':'rotate(0deg)'}}>&#9660;</span>
+                  <span style={{fontSize:13,color:'#4b5563',userSelect:'none',transition:'transform 0.2s',display:'inline-block',transform:providersCollapsed?'rotate(-90deg)':'rotate(0deg)'}}>&#9660;</span>
                 </div>
-
-                {!filtersCollapsed && (
+                {!providersCollapsed && (
                   <div style={{padding:'12px 16px'}}>
-                    {/* Provider filter */}
-                    <div style={{marginBottom:14}}>
+                    <div>
                       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                        <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Providers:</span>
                         <span onClick={e=>{e.stopPropagation();showAllStaff();}}
                           style={{fontSize:12,color:visibleStaff.size===staff.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleStaff.size===staff.length?'#6366f122':'transparent',border:'1px solid ' + (visibleStaff.size===staff.length?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
                           Show All
@@ -2496,10 +2496,26 @@ For questions (not changes), just respond normally without action blocks. Be con
                       </div>
                     </div>
 
-                    {/* Location filter */}
+                  </div>
+                )}
+              </div>
+
+              {/* Location Filter — collapsible */}
+              <div style={{background:'#1a1a2e',borderRadius:10,border:'1px solid #1e1e35',marginBottom:16,overflow:'hidden'}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:locationsCollapsed?'none':'1px solid #1e1e35'}}
+                  onClick={()=>setLocationsCollapsed(p=>!p)}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Locations</span>
+                    {locationsCollapsed && (
+                      <span style={{fontSize:12,color:'#6b7280'}}>{visibleLocations.size}/{locations.length} shown</span>
+                    )}
+                  </div>
+                  <span style={{fontSize:13,color:'#4b5563',userSelect:'none',transition:'transform 0.2s',display:'inline-block',transform:locationsCollapsed?'rotate(-90deg)':'rotate(0deg)'}}>&#9660;</span>
+                </div>
+                {!locationsCollapsed && (
+                  <div style={{padding:'12px 16px'}}>
                     <div>
                       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                        <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Locations:</span>
                         <span onClick={e=>{e.stopPropagation();showAllLocations();}}
                           style={{fontSize:12,color:visibleLocations.size===locations.length?'#818cf8':'#6b7280',cursor:'pointer',fontWeight:600,padding:'2px 10px',borderRadius:12,background:visibleLocations.size===locations.length?'#6366f122':'transparent',border:'1px solid ' + (visibleLocations.size===locations.length?'#6366f144':'#2a2a4a'),transition:'all 0.15s'}}>
                           Show All
