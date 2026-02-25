@@ -1,9 +1,11 @@
 // netlify/functions/claude-proxy.mjs
 // Forwards requests to the Anthropic API.
-// Supports streaming (stream: true) — pipes SSE response body directly back to the browser,
-// which eliminates Netlify infrastructure inactivity timeouts entirely.
+// Supports streaming (stream: true) — actively pipes SSE via TransformStream,
+// which keeps the Netlify infrastructure connection alive and eliminates 504 timeouts.
+// !! DO NOT revert to `new Response(upstream.body)` — passive body pass-through does NOT
+// work reliably in Netlify serverless functions and returns an empty 200 body, causing
+// "JSON Parse error: Unexpected EOF" on the client. TransformStream is the correct fix. !!
 // Also supports non-streaming for the AI chat agent.
-// !! DO NOT REMOVE STREAMING — it is required to prevent 504 timeouts on schedule generation !!
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -50,10 +52,27 @@ export default async function handler(req) {
     });
 
     if (body.stream) {
-      // Pipe the SSE stream directly — bytes flow immediately, keeping the
-      // Netlify infrastructure connection alive for the full generation duration.
-      // This is the ONLY reliable fix for 504 timeouts on long schedule generations.
-      return new Response(upstream.body, {
+      // !! USE TransformStream active pipe — NOT `new Response(upstream.body)` !!
+      // Passive body pass-through returns an empty 200 in Netlify serverless functions,
+      // causing "JSON Parse error: Unexpected EOF" on the client side.
+      // TransformStream drives the pipe explicitly so bytes flow reliably to the browser.
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+
+      (async () => {
+        const reader = upstream.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) { await writer.close(); break; }
+            await writer.write(value);
+          }
+        } catch (e) {
+          await writer.abort(e);
+        }
+      })();
+
+      return new Response(readable, {
         status: upstream.status,
         headers: {
           'Content-Type':      'text/event-stream',
