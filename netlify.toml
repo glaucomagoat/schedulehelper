@@ -1,15 +1,19 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+  edge_functions = "netlify/edge-functions"
   command = "npm install"
 
 [functions]
   node_bundler = "esbuild"
 
-[functions."claude-proxy"]
-  # Raise timeout to Netlify maximum (26s on Pro plan)
-  # Claude API calls for complex schedules need more time
-  timeout = 26
-
 [functions."storage-proxy"]
   timeout = 10
+
+# Route /.netlify/functions/claude-proxy to the Edge Function instead of
+# the serverless function. Edge Functions support true response streaming,
+# which is required for AI schedule generation to work without timeouts.
+# The old netlify/functions/claude-proxy.mjs is kept but no longer used.
+[[edge_functions]]
+  path = "/.netlify/functions/claude-proxy"
+  function = "claude-proxy"
