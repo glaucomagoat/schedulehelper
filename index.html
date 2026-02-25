@@ -1563,10 +1563,10 @@ window.ScheduleHelper = function StaffScheduler() {
     if (conflicts.length > 0) {
       setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
       addLog('info', `Found ${conflicts.length} potential rule conflicts`);
-      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''} needing review.${holidayEdits > 0 ? \` ${holidayEdits} holiday corrections.\` : ''}`);
+      setAiLog('⚠️ Schedule generated with ' + conflicts.length + ' conflict' + (conflicts.length>1?'s':'') + ' needing review.' + (holidayEdits > 0 ? ' ' + holidayEdits + ' holiday corrections.' : ''));
     } else {
       setConflictsReport(null);
-      setAiLog(`⚠️ Schedule generated with ${conflicts.length} conflict${conflicts.length>1?'s':''} needing review.${holidayEdits > 0 ? \` ${holidayEdits} holiday corrections.\` : ''}`);
+      setAiLog('✅ Schedule generated for ' + MONTHS[currentMonth] + ' ' + currentYear + '! ' + totalDays + ' days populated — no rule conflicts detected.' + (holidayEdits > 0 ? ' ' + holidayEdits + ' holiday corrections.' : ''));
     }
 
     setGenerating(false);
