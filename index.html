@@ -507,6 +507,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [editCell, setEditCell] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [aiLog, setAiLog] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [conflictsReport, setConflictsReport] = useState(null); // {conflicts:[], month, year}
   const [rulesFilter, setRulesFilter] = useState('all');
   const [devLogs, setDevLogs] = useState([]);
@@ -753,7 +754,7 @@ window.ScheduleHelper = function StaffScheduler() {
           let fullU = { ...u };
           try {
             const rec = await window.storage.get(`user:${u.username}`);
-            if (rec) { const p = JSON.parse(rec.value); fullU = { ...u, userType: p.userType || u.userType || 'admin', email: p.email || u.email || '' }; }
+            if (rec) { const p = JSON.parse(rec.value); fullU = { ...u, userType: p.userType || u.userType || 'admin', email: p.email || u.email || '', adminUsername: p.adminUsername || u.adminUsername || null, staffId: p.staffId || u.staffId || null }; }
           } catch(e) {}
           setUser(fullU);
           setIsDev(fullU.isDev || false);
@@ -791,7 +792,9 @@ window.ScheduleHelper = function StaffScheduler() {
               await loadUserData(u.username);
             }
           } else {
-            await loadUserData(fullU.username);
+            // Staff users always load from their admin's namespace (live data, never a stale copy)
+            const sourceUser = (fullU.userType === 'staff' && fullU.adminUsername) ? fullU.adminUsername : fullU.username;
+            await loadUserData(sourceUser);
           }
         }
       } catch(e) {}
@@ -868,6 +871,23 @@ window.ScheduleHelper = function StaffScheduler() {
     }
   }, [isAdmin, finalPlanForMonth]);
 
+  // Refresh live admin data for staff users (called manually or by polling)
+  async function refreshStaffData() {
+    if (!user || isAdmin) return;
+    const adminUser = user.adminUsername;
+    if (!adminUser) return;
+    setIsRefreshing(true);
+    try { await loadUserData(adminUser); } catch(e) {}
+    setIsRefreshing(false);
+  }
+
+  // Staff users: auto-poll admin data every 60 seconds for live schedule updates
+  useEffect(() => {
+    if (isAdmin || !user) return;
+    const interval = setInterval(() => { refreshStaffData(); }, 60000);
+    return () => clearInterval(interval);
+  }, [isAdmin, user]);
+
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
@@ -903,10 +923,12 @@ window.ScheduleHelper = function StaffScheduler() {
         if (!userData) { alert('User not found'); return; }
         const parsed = JSON.parse(userData.value);
         if (parsed.password !== password) { alert('Incorrect password'); return; }
-        const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created };
+        const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created, adminUsername: parsed.adminUsername || null, staffId: parsed.staffId || null };
         localStorage.setItem('session', JSON.stringify(u));
         setUser(u); setIsDev(false); setChatMessages([]);
-        await loadUserData(username);
+        // Staff always load from their admin's namespace for live data
+        const loginSource = (u.userType === 'staff' && u.adminUsername) ? u.adminUsername : username;
+        await loadUserData(loginSource);
       } catch(e) { alert('Login failed'); }
     }
   }
@@ -1009,15 +1031,12 @@ window.ScheduleHelper = function StaffScheduler() {
       let existing = null;
       try { existing = await window.storage.get(`user:${username}`); } catch(e) {}
       if (existing) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:false,msg:'❌ Username already taken.'}})); return; }
-      // Create user record with staff type, linked to this staff member
-      const newUser = { username, userType: 'staff', staffId: staffMember.id, created: Date.now() };
-      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password }));
-      // Copy current admin's data to the new user namespace so they can read schedules
+      // Create user record with staff type, linked to admin and this staff member.
+      // adminUsername is stored so staff always load live data from the admin's namespace.
       const adminUsername = user.username;
-      const keys = ['staff','locations','rules','holidays','vacations','schedules','finalPlans','dayNotes'];
-      for (const key of keys) {
-        try { const data = await window.storage.get(`${adminUsername}:${key}`); if (data) await window.storage.set(`${username}:${key}`, data.value); } catch(e) {}
-      }
+      const newUser = { username, userType: 'staff', staffId: staffMember.id, adminUsername, created: Date.now() };
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password }));
+      // No data copy needed — staff load directly from admin namespace at runtime.
       // Store reverse lookup so we can find this account by staffId
       await window.storage.set('staffPortal:' + staffMember.id, JSON.stringify({ username }));
       setPortalAccounts(p=>({...p,[staffMember.id]:{ username }}));
@@ -1035,6 +1054,24 @@ window.ScheduleHelper = function StaffScheduler() {
       } catch(e) { result[s.id] = null; }
     }
     setPortalAccounts(result);
+    // One-time migration: patch any staff user records missing adminUsername.
+    // Runs silently on every admin load — is a no-op once all records are patched.
+    if (user && (user.userType === 'admin' || user.isDev)) {
+      const adminUsername = user.username;
+      for (const acct of Object.values(result)) {
+        if (!acct || !acct.username) continue;
+        try {
+          const rec = await window.storage.get('user:' + acct.username);
+          if (!rec) continue;
+          const parsed = JSON.parse(rec.value);
+          if (!parsed.adminUsername) {
+            parsed.adminUsername = adminUsername;
+            await window.storage.set('user:' + acct.username, JSON.stringify(parsed));
+            console.log('[migration] patched adminUsername for', acct.username);
+          }
+        } catch(e) {}
+      }
+    }
   }
 
   // Change password for an existing staff portal account
@@ -2455,7 +2492,17 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {!isMobile && <p style={{color:'#6b7280',fontSize:14,marginTop:4}}>Click any weekday to assign providers • AM & PM shifts</p>}
                 </div>
                 <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',width:isMobile?'100%':'auto'}}>
-                  {!isAdmin && <span style={{fontSize:12,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>}
+                  {!isAdmin && (
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:12,fontWeight:700,padding:'5px 12px',borderRadius:20,background:'#1e2a1e',color:'#6ee7b7',border:'1px solid #065f46',textTransform:'uppercase',letterSpacing:'0.06em'}}>👁 View Only — Final Plans</span>
+                      <button onClick={refreshStaffData} disabled={isRefreshing}
+                        title="Refresh schedule from admin"
+                        style={{fontSize:12,fontWeight:700,padding:'5px 12px',borderRadius:20,cursor:isRefreshing?'default':'pointer',background:isRefreshing?'#1a1a2e':'#1e2035',color:isRefreshing?'#4b5563':'#818cf8',border:'1px solid '+(isRefreshing?'#2a2a4a':'#6366f144'),transition:'all 0.15s',display:'flex',alignItems:'center',gap:5}}>
+                        <span style={{display:'inline-block',animation:isRefreshing?'spin 1s linear infinite':'none',fontSize:13}}>🔄</span>
+                        {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                      </button>
+                    </div>
+                  )}
                   {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
                   </Btn>}
