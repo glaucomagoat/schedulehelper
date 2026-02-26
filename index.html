@@ -390,9 +390,9 @@ function Chip({ children, color }) {
 
 // Week-of-month toggle component
 function WeekOfMonthPicker({ value, onChange }) {
-  const weeks = ["1","2","3","4"];
-  const selected = value === "all" ? ["1","2","3","4"] : value.split(",");
-  const isAll = selected.length === 4;
+  const weeks = ["1","2","3","4","5"];
+  const selected = value === "all" ? ["1","2","3","4","5"] : value.split(",");
+  const isAll = selected.length === 5;
 
   function toggle(w) {
     let next;
@@ -402,14 +402,14 @@ function WeekOfMonthPicker({ value, onChange }) {
     } else {
       next = [...selected, w].sort();
     }
-    onChange(next.length === 4 ? "all" : next.join(","));
+    onChange(next.length === 5 ? "all" : next.join(","));
   }
 
   function toggleAll() {
     onChange(isAll ? "1" : "all");
   }
 
-  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th" };
+  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th", "5": "5th" };
 
   return (
     <div style={{marginBottom:16}}>
@@ -438,7 +438,7 @@ function WeekOfMonthPicker({ value, onChange }) {
 // Format weekOfMonth for display
 function formatWeekOfMonth(wom) {
   if (wom === "all") return "Every week";
-  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th" };
+  const labels = { "1": "1st", "2": "2nd", "3": "3rd", "4": "4th", "5": "5th" };
   return wom.split(",").map(w => labels[w] || w).join(", ");
 }
 
@@ -1191,7 +1191,8 @@ window.ScheduleHelper = function StaffScheduler() {
   }
   function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
   function addRule() {
-    if (!ruleForm.staffId) return;
+    const isLocationRule = ruleForm.ruleScope === 'location';
+    if (!isLocationRule && !ruleForm.staffId) return;
     // Standard/conditional/exception rules need locationId; negative/rotation/complex may not
     if (ruleForm.ruleType === 'standard' && !ruleForm.locationId) return;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
@@ -1199,7 +1200,7 @@ window.ScheduleHelper = function StaffScheduler() {
     resetRuleForm(); setShowRuleModal(false);
   }
   function resetRuleForm(overrides) {
-    setRuleForm({ staffId:staff[0]?.id||'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:locations[0]?.id||'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'', ...(overrides||{}) });
+    setRuleForm({ staffId:staff[0]?.id||'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:locations[0]?.id||'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'', ruleScope:'staff', ...(overrides||{}) });
   }
   function removeRule(id) { setRules(prev => prev.filter(r => r.id !== id)); }
   function addVacation() {
@@ -1307,6 +1308,33 @@ window.ScheduleHelper = function StaffScheduler() {
       summary += `\n${name}:\n`;
       ruleList.forEach(r => { summary += `  • ${r}\n`; });
     }
+
+    // Location-scoped rules (constraints on the location itself, not tied to a specific staff member)
+    const locationRules = rules.filter(r => r.ruleScope === 'location');
+    if (locationRules.length > 0) {
+      summary += '\nLOCATION CONSTRAINTS:\n';
+      locationRules.forEach(r => {
+        const l = locations.find(x => x.id === r.locationId);
+        const locName = l?.name || r.locationId;
+        const womLabel = formatWeekOfMonth(r.weekOfMonth);
+        const periodLabel = r.period === 'both' ? 'Full Day' : r.period.toUpperCase();
+        const rType = r.ruleType || 'standard';
+        let line = '';
+        if (rType === 'standard') {
+          line = `${locName}: ${r.dayOfWeek} [${womLabel}] ${periodLabel} (${r.priority})${r.description ? ' — ' + r.description : ''}`;
+        } else if (rType === 'negative') {
+          line = `${locName} [NEGATIVE]: ${r.negativeText || r.description || ''}`;
+        } else if (rType === 'conditional') {
+          line = `${locName} [CONDITIONAL] ${r.dayOfWeek} [${womLabel}]: IF ${r.conditionText || r.description || ''}`;
+        } else if (rType === 'exception') {
+          line = `${locName} [EXCEPTION] ${r.dayOfWeek} [${womLabel}]: EXCEPT ${r.exceptionText || r.description || ''}`;
+        } else {
+          line = `${locName}: ${r.description || '(no description)'}`;
+        }
+        summary += `  • ${line}\n`;
+      });
+    }
+
     return summary || 'No rules defined.';
   }
 
@@ -1463,7 +1491,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
       const daysList = batchDays.map(d => {
         const dt = new Date(currentYear, currentMonth, d);
-        const wk = Math.min(Math.floor((d - 1) / 7), 3) + 1;
+        const wk = Math.floor((d - 1) / 7) + 1; // 1-5, no cap
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
@@ -1618,7 +1646,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const dow = dt.getDay();
       if (dow === 0 || dow === 6) continue;
       const dayName = DAYS_OF_WEEK[dow];
-      const wk = Math.min(Math.floor((d - 1) / 7), 3) + 1;
+      const wk = Math.floor((d - 1) / 7) + 1; // 1-5, no cap
 
       for (const [staffId, periods] of Object.entries(dayAssignments)) {
         const s = staff.find(x => x.id === staffId);
@@ -1636,7 +1664,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
         // Find applicable rules for this staff/day
         const staffRules = rules.filter(r => r.staffId === staffId && r.dayOfWeek === dayName &&
-          (r.weekOfMonth === 'all' || r.weekOfMonth === String(wk)));
+          (r.weekOfMonth === 'all' || r.weekOfMonth.split(',').includes(String(wk))));
 
         const requiredRules = staffRules.filter(r => r.priority === 'required');
 
@@ -2236,7 +2264,9 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
   function nextMonth() { if (currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1)} else setCurrentMonth(m=>m+1); }
 
   // Filtered rules for Rules tab
-  const filteredRules = rulesFilter === 'all' ? rules : rules.filter(r => r.staffId === rulesFilter);
+  const filteredRules = rulesFilter === 'all' ? rules :
+    rulesFilter.startsWith('loc_') ? rules.filter(r => r.ruleScope === 'location' && r.locationId === rulesFilter.slice(4)) :
+    rules.filter(r => r.staffId === rulesFilter && r.ruleScope !== 'location');
 
   if (loading) return (
     <div style={{minHeight:'100vh',background:'#0d0d1a',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -3170,29 +3200,29 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                 ))}
                               </div>
                               {/* Week rows */}
-                              {[1,2,3,4].map(week => (
+                              {[1,2,3,4,5].map(week => (
                                 <div key={week} style={{display:'grid',gridTemplateColumns:'60px repeat(5,1fr)'}}>
-                                  <div style={{padding:'6px 8px',fontSize:11,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderRight:'1px solid #2a2a4a',borderBottom:week<4?'1px solid #1e1e35':'none',display:'flex',alignItems:'center'}}>
+                                  <div style={{padding:'6px 8px',fontSize:11,fontWeight:700,color:'#4b5563',background:'#0d0d18',borderRight:'1px solid #2a2a4a',borderBottom:week<5?'1px solid #1e1e35':'none',display:'flex',alignItems:'center'}}>
                                     Wk {week}
                                   </div>
                                   {WEEKDAYS_ONLY.map(day => {
                                     // Find rules matching this day + week
                                     const dayRules = sr.filter(r => {
                                       if (r.dayOfWeek !== day) return false;
-                                      const weeks = r.weekOfMonth === 'all' ? [1,2,3,4] : r.weekOfMonth.split(',').map(Number);
+                                      const weeks = r.weekOfMonth === 'all' ? [1,2,3,4,5] : r.weekOfMonth.split(',').map(Number);
                                       return weeks.includes(week);
                                     });
 
                                     if (dayRules.length === 0) {
                                       return (
-                                        <div key={day} style={{padding:4,borderRight:'1px solid #1e1e35',borderBottom:week<4?'1px solid #1e1e35':'none',minHeight:40,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                        <div key={day} style={{padding:4,borderRight:'1px solid #1e1e35',borderBottom:week<5?'1px solid #1e1e35':'none',minHeight:40,display:'flex',alignItems:'center',justifyContent:'center'}}>
                                           <span style={{fontSize:11,color:'#2a2a3a',fontStyle:'italic'}}>—</span>
                                         </div>
                                       );
                                     }
 
                                     return (
-                                      <div key={day} style={{padding:3,borderRight:'1px solid #1e1e35',borderBottom:week<4?'1px solid #1e1e35':'none',minHeight:40}}>
+                                      <div key={day} style={{padding:3,borderRight:'1px solid #1e1e35',borderBottom:week<5?'1px solid #1e1e35':'none',minHeight:40}}>
                                         {dayRules.map((r,ri) => {
                                           const isOff = r.locationId === 'OFF';
                                           const loc = isOff ? null : locations.find(x=>x.id===r.locationId);
@@ -3244,7 +3274,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                         {r.description&&<div style={{fontSize:12,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                       </div>
                                       {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
                                         {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                                       </div>}
                                     </div>
@@ -3415,7 +3445,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                       {r.description&&<div style={{fontSize:12,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                     </div>
                                     <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
                                       <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
                                     </div>
                                   </div>
@@ -3449,7 +3479,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   All ({rules.length})
                 </div>
                 {staff.map(s=>{
-                  const count=rules.filter(r=>r.staffId===s.id).length;
+                  const count=rules.filter(r=>r.staffId===s.id&&r.ruleScope!=='location').length;
                   if(count===0) return null;
                   return(
                     <div key={s.id} onClick={()=>setRulesFilter(s.id)}
@@ -3459,22 +3489,38 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                     </div>
                   );
                 })}
+                {/* Location-scoped rule filters */}
+                {locations.map(l=>{
+                  const count=rules.filter(r=>r.ruleScope==='location'&&r.locationId===l.id).length;
+                  if(count===0) return null;
+                  const lc=LOCATION_COLORS[l.id]||{text:'#9ca3af',border:'#2a2a4a'};
+                  return(
+                    <div key={'loc_'+l.id} onClick={()=>setRulesFilter('loc_'+l.id)}
+                      style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
+                        background:rulesFilter==='loc_'+l.id?lc.text+'22':'#12121f',color:rulesFilter==='loc_'+l.id?lc.text:'#6b7280',border:`1px solid ${rulesFilter==='loc_'+l.id?lc.border:'#2a2a4a'}`}}>
+                      📍 {l.name} ({count})
+                    </div>
+                  );
+                })}
               </div>
 
               <div style={{display:'flex',flexDirection:'column',gap:10}}>
                 {filteredRules.map(r=>{
                   const s=staff.find(x=>x.id===r.staffId);
                   const l=r.locationId==='OFF'?{name:'OFF'}:locations.find(x=>x.id===r.locationId);
+                  const isLocRule=r.ruleScope==='location';
+                  const lc=isLocRule?(LOCATION_COLORS[r.locationId]||{text:'#9ca3af',border:'#4b5563'}):null;
+                  const accentColor=isLocRule?(lc.border||'#4b5563'):(s?.color||'#666');
                   return(
-                    <div key={r.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:16,borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                    <div key={r.id} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:16,borderLeft:`3px solid ${accentColor}`}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
                         <div style={{flex:1}}>
                           <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>
-                            <span style={{color:s?.color||'#fff'}}>{s?.name||'?'}</span>
-                            <span style={{color:'#6b7280'}}> — {r.dayOfWeek}</span>
-                            <span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
-                            <span style={{color:'#9ca3af'}}> {r.period!=='both'?`(${r.period.toUpperCase()})`:''}</span>
-                            <span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span>
+                            {isLocRule
+                              ? <span style={{color:lc.text||'#9ca3af'}}>📍 {l?.name||'?'} <span style={{color:'#4b5563',fontSize:12,fontWeight:400}}>(location rule)</span></span>
+                              : <><span style={{color:s?.color||'#fff'}}>{s?.name||'?'}</span><span style={{color:'#6b7280'}}> — {r.dayOfWeek}</span><span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span><span style={{color:'#9ca3af'}}> {r.period!=='both'?`(${r.period.toUpperCase()})`:''}</span><span style={{color:'#e8e8f0'}}> → {l?.name||'?'}</span></>
+                            }
+                            {isLocRule&&r.ruleType!=='negative'&&r.ruleType!=='complex'&&<><span style={{color:'#6b7280'}}> — {r.dayOfWeek}</span><span style={{color:'#4b5563'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span><span style={{color:'#9ca3af'}}> {r.period!=='both'?`(${r.period.toUpperCase()})`:''}</span></>}
                           </div>
                           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                             <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
@@ -3482,7 +3528,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                           </div>
                         </div>
                         <div style={{display:'flex',gap:6,flexShrink:0}}>
-                          <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
+                          <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
                           {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>}
                         </div>
                       </div>
@@ -3620,22 +3666,37 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       </Modal>
 
       <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null)}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
+        {/* Rule Scope Toggle: Staff Rule vs Location Rule */}
+        <div style={{display:'flex',gap:8,marginBottom:16}}>
+          {[{v:'staff',l:'👤 Staff Rule',c:'#6366f1'},{v:'location',l:'📍 Location Rule',c:'#10b981'}].map(s=>(
+            <div key={s.v} onClick={()=>setRuleForm(p=>({...p,ruleScope:s.v,ruleType:s.v==='location'&&p.ruleType==='rotation'?'standard':p.ruleType}))}
+              style={{flex:1,padding:'10px 0',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700,textAlign:'center',
+                background:(ruleForm.ruleScope||'staff')===s.v?s.c+'22':'#12121f',
+                color:(ruleForm.ruleScope||'staff')===s.v?s.c:'#6b7280',
+                border:'2px solid '+((ruleForm.ruleScope||'staff')===s.v?s.c:'#2a2a4a'),transition:'all 0.15s'}}>{s.l}</div>
+          ))}
+        </div>
+
         {/* Rule Type Selector */}
         <div style={{marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',marginBottom:6}}>Rule Type</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-            {[{v:'standard',l:'📋 Standard',c:'#6366f1'},{v:'conditional',l:'🔀 Conditional (IF/THEN)',c:'#f59e0b'},{v:'exception',l:'⚠️ Exception',c:'#ef4444'},{v:'negative',l:'🚫 Negative Constraint',c:'#ec4899'},{v:'rotation',l:'🔄 Rotation/Shared',c:'#10b981'},{v:'complex',l:'📝 Complex (Free Text)',c:'#8b5cf6'}].map(t=>(
-              <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))}
-                style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
-                  background:ruleForm.ruleType===t.v?t.c+'22':'#12121f',color:ruleForm.ruleType===t.v?t.c:'#6b7280',
-                  border:'1px solid '+(ruleForm.ruleType===t.v?t.c:'#2a2a4a'),transition:'all 0.15s'}}>{t.l}</div>
-            ))}
+            {[{v:'standard',l:'📋 Standard',c:'#6366f1'},{v:'conditional',l:'🔀 Conditional (IF/THEN)',c:'#f59e0b'},{v:'exception',l:'⚠️ Exception',c:'#ef4444'},{v:'negative',l:'🚫 Negative Constraint',c:'#ec4899'},{v:'rotation',l:'🔄 Rotation/Shared',c:'#10b981',staffOnly:true},{v:'complex',l:'📝 Complex (Free Text)',c:'#8b5cf6'}]
+              .filter(t=>!(t.staffOnly&&(ruleForm.ruleScope||'staff')==='location'))
+              .map(t=>(
+                <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))}
+                  style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
+                    background:ruleForm.ruleType===t.v?t.c+'22':'#12121f',color:ruleForm.ruleType===t.v?t.c:'#6b7280',
+                    border:'1px solid '+(ruleForm.ruleType===t.v?t.c:'#2a2a4a'),transition:'all 0.15s'}}>{t.l}</div>
+              ))}
           </div>
         </div>
 
-        {/* Common: Staff selector (all types) */}
-        <Select label="Staff Member" value={ruleForm.staffId} onChange={v=>setRuleForm(p=>({...p,staffId:v}))}
-          options={staff.map(s=>({value:s.id,label:s.name}))} />
+        {/* Staff selector — staff rules only */}
+        {(ruleForm.ruleScope||'staff')==='staff' && (
+          <Select label="Staff Member" value={ruleForm.staffId} onChange={v=>setRuleForm(p=>({...p,staffId:v}))}
+            options={staff.map(s=>({value:s.id,label:s.name}))} />
+        )}
 
         {/* Standard, Conditional, Exception: Day/Week/Period/Location */}
         {(ruleForm.ruleType === 'standard' || ruleForm.ruleType === 'conditional' || ruleForm.ruleType === 'exception' || ruleForm.ruleType === 'rotation') && (
@@ -3648,12 +3709,24 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             </div>
             <WeekOfMonthPicker value={ruleForm.weekOfMonth} onChange={v=>setRuleForm(p=>({...p,weekOfMonth:v}))} />
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
-              <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
-                options={[...locations.map(l=>({value:l.id,label:l.name})),{value:'OFF',label:'OFF (Day Off)'}]} />
+              {/* Location selector label changes based on scope */}
+              {(ruleForm.ruleScope||'staff')==='staff' ? (
+                <Select label="Assign to Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
+                  options={[...locations.map(l=>({value:l.id,label:l.name})),{value:'OFF',label:'OFF (Day Off)'}]} />
+              ) : (
+                <Select label="Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
+                  options={locations.map(l=>({value:l.id,label:l.name}))} />
+              )}
               <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
                 options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
             </div>
           </div>
+        )}
+
+        {/* Negative: location selector shown at top for location rules */}
+        {ruleForm.ruleType === 'negative' && (ruleForm.ruleScope||'staff')==='location' && (
+          <Select label="Location" value={ruleForm.locationId} onChange={v=>setRuleForm(p=>({...p,locationId:v}))}
+            options={locations.map(l=>({value:l.id,label:l.name}))} style={{marginTop:8}} />
         )}
 
         {/* Conditional: IF condition */}
@@ -3674,8 +3747,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             placeholder="e.g., Does NOT want 3 Stockton Thursdays in a month. Maximum 2." rows={3} />
         )}
 
-        {/* Rotation: who to rotate with and where */}
-        {ruleForm.ruleType === 'rotation' && (
+        {/* Rotation: who to rotate with and where — staff rules only */}
+        {ruleForm.ruleType === 'rotation' && (ruleForm.ruleScope||'staff')==='staff' && (
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginTop:8}}>
             <Select label="Rotates With" value={ruleForm.rotateWithStaffId} onChange={v=>setRuleForm(p=>({...p,rotateWithStaffId:v}))}
               options={staff.filter(s=>s.id!==ruleForm.staffId).map(s=>({value:s.id,label:s.name}))} />
