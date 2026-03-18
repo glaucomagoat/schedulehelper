@@ -2,10 +2,12 @@ import { getStore } from "@netlify/blobs";
 
 const STORE_NAME = "schedule-helper";
 
+// storage-proxy is called exclusively from the same Netlify origin as the app.
+// Same-origin requests don't need CORS headers, so we omit Allow-Origin entirely.
+// This prevents any cross-origin site from making authenticated storage calls.
 const cors = {
-  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, x-storage-secret",
   "Content-Type": "application/json"
 };
 
@@ -17,6 +19,20 @@ export default async (req) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405, headers: cors
+    });
+  }
+
+  // Verify shared secret — must match STORAGE_SECRET env var set in Netlify dashboard
+  const STORAGE_SECRET = process.env.STORAGE_SECRET;
+  if (!STORAGE_SECRET) {
+    return new Response(JSON.stringify({ error: "Server misconfigured — STORAGE_SECRET not set" }), {
+      status: 500, headers: cors
+    });
+  }
+  const providedSecret = req.headers.get("x-storage-secret");
+  if (!providedSecret || providedSecret !== STORAGE_SECRET) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401, headers: cors
     });
   }
 

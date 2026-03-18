@@ -22,10 +22,13 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script>
+// Global shared secret — injected at build time by Netlify sed. Used by both
+// the storage module and the Claude proxy fetch calls in the React component.
+window._S='__STORAGE_SECRET__';
 window.storage=(function(){
   var API='/.netlify/functions/storage-proxy';
   async function call(body){
-    var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-storage-secret':window._S},body:JSON.stringify(body)});
     var d=await r.json();
     if(!r.ok)throw new Error(d.error||'Storage error');
     return d;
@@ -72,8 +75,8 @@ const defaultColors = [
   "#14B8A6","#E11D48","#7C3AED","#0EA5E9","#D946EF","#F43F5E","#22D3EE","#A3E635","#FB923C","#818CF8"
 ];
 
-const DEV_USERNAME = "mike";
-const DEV_PASSWORD = "banchan";
+const DEV_USERNAME = "__DEV_USERNAME__";
+const DEV_PASSWORD = "__DEV_PASSWORD__";
 
 const PRESET_STAFF = [
   { id: "s1", name: "Steve Kim MD", role: "Ophthalmologist", color: "#3B82F6" },
@@ -443,6 +446,100 @@ function formatWeekOfMonth(wom) {
 }
 
 // ============================================================
+// DRAGGABLE NOTE — defined outside StaffScheduler so its
+// component identity is stable across parent re-renders.
+// (Defining it inside the render cycle caused React to unmount
+//  and remount it on every keystroke, resetting its drag position.)
+// ============================================================
+function DraggableNote({ initLeft, initTop, boxW, vw, vh, noteText, noteReadOnly, dk, onClose, onNoteChange, onClearNote }) {
+  const [pos, setPos] = React.useState({ x: initLeft, y: initTop });
+  const isDragging = React.useRef(false);
+  const dragStart = React.useRef({ mx: 0, my: 0, px: 0, py: 0 });
+  const mob = useIsMobile();
+
+  function onMouseDown(e) {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SPAN') return;
+    isDragging.current = true;
+    dragStart.current = { mx: e.clientX, my: e.clientY, px: pos.x, py: pos.y };
+    e.preventDefault();
+  }
+  React.useEffect(() => {
+    function onMouseMove(e) {
+      if (!isDragging.current) return;
+      const dx = e.clientX - dragStart.current.mx;
+      const dy = e.clientY - dragStart.current.my;
+      const nx = Math.max(0, Math.min(vw - boxW - 4, dragStart.current.px + dx));
+      const ny = Math.max(0, Math.min(vh - 80, dragStart.current.py + dy));
+      setPos({ x: nx, y: ny });
+    }
+    function onMouseUp() { isDragging.current = false; }
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+  }, []);
+
+  return (
+    <div onClick={e=>e.stopPropagation()} style={{
+      position:'fixed',
+      left: mob ? 0 : pos.x,
+      bottom: mob ? 0 : undefined,
+      top: mob ? undefined : pos.y,
+      width: mob ? '100vw' : boxW,
+      zIndex:1000,
+      background:'#1a1a2e', border:'1px solid #4b5563',
+      borderRadius: mob ? '16px 16px 0 0' : 12,
+      boxShadow:'0 -4px 32px #000a'
+    }}>
+      {/* Drag handle header */}
+      <div onMouseDown={onMouseDown} style={{
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+        padding:'10px 14px 8px', cursor:'grab', borderBottom:'1px solid #2a2a4a',
+        borderRadius:'12px 12px 0 0', background:'#1e1e35', userSelect:'none'
+      }}>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
+          {noteReadOnly && <span style={{fontSize:9,fontWeight:700,color:'#6b7280',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:4,padding:'1px 5px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Read Only</span>}
+        </div>
+        <span onClick={onClose}
+          style={{fontSize:18,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:400,padding:'0 2px'}}>×</span>
+      </div>
+      {/* Body */}
+      <div style={{padding:'12px 14px 10px'}}>
+        <textarea
+          autoFocus={!noteReadOnly}
+          value={noteText}
+          readOnly={noteReadOnly}
+          onChange={noteReadOnly ? undefined : e=>onNoteChange(e.target.value)}
+          placeholder={noteReadOnly ? 'No note for this day.' : 'Add a note for this day…'}
+          rows={4}
+          style={{width:'100%',background: noteReadOnly ? '#0f0f1a' : '#12121f',
+            border:'1px solid #374151',borderRadius:8,
+            color: noteReadOnly ? '#9ca3af' : '#e8e8f0',
+            fontSize:14,fontFamily:'"DM Sans",sans-serif',
+            padding:'8px 10px',
+            resize: noteReadOnly ? 'none' : 'vertical',
+            lineHeight:1.5,outline:'none',display:'block',
+            cursor: noteReadOnly ? 'default' : 'text'}}
+        />
+        {/* Footer */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
+          {!noteReadOnly && noteText ? (
+            <span
+              onClick={()=>{if(window.confirm('Clear this note? This cannot be undone.')){onClearNote();}}}
+              style={{fontSize:12,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
+              onMouseEnter={e=>{e.currentTarget.style.color='#ef4444';e.currentTarget.style.borderColor='#ef4444';}}
+              onMouseLeave={e=>{e.currentTarget.style.color='#6b7280';e.currentTarget.style.borderColor='#374151';}}>
+              Clear
+            </span>
+          ) : <span />}
+          {!noteReadOnly && <span style={{fontSize:11,color:'#4b5563'}}>Saves automatically</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // MAIN APP
 // ============================================================
 window.ScheduleHelper = function StaffScheduler() {
@@ -547,7 +644,7 @@ window.ScheduleHelper = function StaffScheduler() {
   async function callClaudeAPI(body) {
     var res = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-storage-secret': window._S },
       body: JSON.stringify(body)
     });
     return res;
@@ -562,7 +659,7 @@ window.ScheduleHelper = function StaffScheduler() {
     var payload = Object.assign({}, body, { stream: true });
     var response = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-storage-secret': window._S },
       body: JSON.stringify(payload)
     });
 
@@ -906,6 +1003,13 @@ window.ScheduleHelper = function StaffScheduler() {
     return () => document.removeEventListener('click', handler, true);
   }, [showProfileMenu]);
 
+  // Hash a password with SHA-256 using the browser's native Web Crypto API.
+  // Returns a lowercase hex string. Used for all password store/compare operations.
+  async function hashPassword(pw) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function handleAuth() {
     const { username, password, email, isRegister } = loginForm;
     if (!username || !password) return;
@@ -914,7 +1018,7 @@ window.ScheduleHelper = function StaffScheduler() {
       try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username already taken. Please choose another.'); return; } } catch(e) {}
       const userType = loginForm.userType || 'admin';
       const u = { username, email, userType, created: Date.now() };
-      await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password }));
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password: await hashPassword(password) }));
       localStorage.setItem('session', JSON.stringify(u));
       setUser(u); setIsDev(false); setChatMessages([]);
     } else {
@@ -922,7 +1026,13 @@ window.ScheduleHelper = function StaffScheduler() {
         const userData = await window.storage.get(`user:${username}`);
         if (!userData) { alert('User not found'); return; }
         const parsed = JSON.parse(userData.value);
-        if (parsed.password !== password) { alert('Incorrect password'); return; }
+        const h = await hashPassword(password);
+        if (parsed.password !== h) {
+          // Plaintext legacy account — migrate to hash on the fly
+          if (parsed.password !== password) { alert('Incorrect password'); return; }
+          parsed.password = h;
+          await window.storage.set(`user:${username}`, JSON.stringify(parsed));
+        }
         const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created, adminUsername: parsed.adminUsername || null, staffId: parsed.staffId || null };
         localStorage.setItem('session', JSON.stringify(u));
         setUser(u); setIsDev(false); setChatMessages([]);
@@ -958,7 +1068,7 @@ window.ScheduleHelper = function StaffScheduler() {
         return;
       }
       // Generate token
-      const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      const token = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
       const expiry = Date.now() + 1000 * 60 * 60; // 1 hour
       await window.storage.set(`reset:${token}`, JSON.stringify({ username: foundUser.username, expiry }));
       // Build reset URL
@@ -978,7 +1088,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const userData = await window.storage.get(`user:${username}`);
       if (!userData) { alert('User not found.'); return; }
       const parsed = JSON.parse(userData.value);
-      parsed.password = newPassword;
+      parsed.password = await hashPassword(newPassword);
       await window.storage.set(`user:${username}`, JSON.stringify(parsed));
       await window.storage.delete(`reset:${resetToken}`);
       alert('Password reset successfully! Please sign in with your new password.');
@@ -996,8 +1106,9 @@ window.ScheduleHelper = function StaffScheduler() {
       const userData = await window.storage.get(`user:${user.username}`);
       if (!userData) { setProfileMsg('Account not found.'); return; }
       const parsed = JSON.parse(userData.value);
-      if (parsed.password !== currentPassword) { setProfileMsg('Current password is incorrect.'); return; }
-      parsed.password = newPassword;
+      const curH = await hashPassword(currentPassword);
+      if (parsed.password !== curH && parsed.password !== currentPassword) { setProfileMsg('Current password is incorrect.'); return; }
+      parsed.password = await hashPassword(newPassword);
       await window.storage.set(`user:${user.username}`, JSON.stringify(parsed));
       setProfileMsg('✅ Password changed successfully!');
       setProfileForm(p => ({ ...p, currentPassword: '', newPassword: '', confirmPassword: '' }));
@@ -1035,7 +1146,7 @@ window.ScheduleHelper = function StaffScheduler() {
       // adminUsername is stored so staff always load live data from the admin's namespace.
       const adminUsername = user.username;
       const newUser = { username, userType: 'staff', staffId: staffMember.id, adminUsername, created: Date.now() };
-      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password }));
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password: await hashPassword(password) }));
       // No data copy needed — staff load directly from admin namespace at runtime.
       // Store reverse lookup so we can find this account by staffId
       await window.storage.set('staffPortal:' + staffMember.id, JSON.stringify({ username }));
@@ -1089,7 +1200,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const userData = await window.storage.get('user:' + acct.username);
       if (!userData) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:false,pwMsg:'❌ Account not found in storage.'}})); return; }
       const parsed = JSON.parse(userData.value);
-      parsed.password = newPassword;
+      parsed.password = await hashPassword(newPassword);
       await window.storage.set('user:' + acct.username, JSON.stringify(parsed));
       setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,newPassword:'',changingPw:false,pwMsg:'✅ Password updated.'}}));
     } catch(e) {
@@ -1150,14 +1261,15 @@ window.ScheduleHelper = function StaffScheduler() {
     await window.storage.set(`${DEV_USERNAME}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
     await window.storage.set(`${DEV_USERNAME}:vacations`, JSON.stringify([]));
     await window.storage.set(`${DEV_USERNAME}:schedules`, JSON.stringify({}));
+  }
 
   // Ensure CVE user account exists with a copy of dev data
   async function ensureCveAccount() {
-    const CVE_USER = 'cve';
-    const CVE_PASS = 'brandy';
+    const CVE_USER = '__CVE_USER__';
+    const CVE_PASS = '__CVE_PASS__';
     try { await window.storage.get(`user:${CVE_USER}`); return; } catch(e) {} // already exists
     // Create user record
-    await window.storage.set(`user:${CVE_USER}`, JSON.stringify({ username: CVE_USER, password: CVE_PASS, userType: 'admin', created: Date.now() }));
+    await window.storage.set(`user:${CVE_USER}`, JSON.stringify({ username: CVE_USER, password: await hashPassword(CVE_PASS), userType: 'admin', created: Date.now() }));
     // Copy all dev data to cve namespace
     const keys = ['staff','locations','rules','holidays','vacations','schedules','finalPlans'];
     for (const key of keys) {
@@ -1166,7 +1278,6 @@ window.ScheduleHelper = function StaffScheduler() {
         if (data) await window.storage.set(`${CVE_USER}:${key}`, data.value);
       } catch(e) {}
     }
-  }
   }
 
   async function logout() {
@@ -1674,7 +1785,7 @@ window.ScheduleHelper = function StaffScheduler() {
           const period = rule.period;
 
           if (period === 'am' || period === 'both') {
-            if (periods.am !== rule.locationId && periods.am !== 'OFF') {
+            if (periods.am !== rule.locationId) {
               const actualLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} AM (required) but is at ${actualLoc}`,
@@ -1683,7 +1794,7 @@ window.ScheduleHelper = function StaffScheduler() {
             }
           }
           if (period === 'pm' || period === 'both') {
-            if (periods.pm !== rule.locationId && periods.pm !== 'OFF') {
+            if (periods.pm !== rule.locationId) {
               const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} PM (required) but is at ${actualLoc}`,
@@ -3416,7 +3527,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                           <Chip color={lc.text}>{lr.length} rule{lr.length!==1?'s':''}</Chip>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
-                          <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
+                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>}
                           {isAdmin && <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
                           <span style={{color:'#6b7280',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
@@ -3444,10 +3555,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                       <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
                                       {r.description&&<div style={{fontSize:12,color:'#6b7280',marginTop:3}}>{r.description}</div>}
                                     </div>
-                                    <div style={{display:'flex',gap:6,flexShrink:0}}>
+                                    {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
                                       <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
                                       <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
-                                    </div>
+                                    </div>}
                                   </div>
                                 );
                               })}
@@ -3527,10 +3638,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                             {r.description && <span style={{fontSize:13,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
                           </div>
                         </div>
-                        <div style={{display:'flex',gap:6,flexShrink:0}}>
+                        {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
                           <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
-                          {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>}
-                        </div>
+                          <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>
+                        </div>}
                       </div>
                     </div>
                   );
@@ -3924,99 +4035,22 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         const initLeft = Math.min(Math.max(8, floatingNote.x), vw - boxW - 16);
         const initTop  = Math.min(Math.max(8, floatingNote.y), vh - 260);
 
-        function DraggableNote() {
-          const [pos, setPos] = React.useState({ x: initLeft, y: initTop });
-          const dragRef = React.useRef(null);
-          const isDragging = React.useRef(false);
-          const dragStart = React.useRef({ mx: 0, my: 0, px: 0, py: 0 });
-
-          function onMouseDown(e) {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SPAN') return;
-            isDragging.current = true;
-            dragStart.current = { mx: e.clientX, my: e.clientY, px: pos.x, py: pos.y };
-            e.preventDefault();
-          }
-          React.useEffect(() => {
-            function onMouseMove(e) {
-              if (!isDragging.current) return;
-              const dx = e.clientX - dragStart.current.mx;
-              const dy = e.clientY - dragStart.current.my;
-              const nx = Math.max(0, Math.min(vw - boxW - 4, dragStart.current.px + dx));
-              const ny = Math.max(0, Math.min(vh - 80, dragStart.current.py + dy));
-              setPos({ x: nx, y: ny });
-            }
-            function onMouseUp() { isDragging.current = false; }
-            window.addEventListener('mousemove', onMouseMove);
-            window.addEventListener('mouseup', onMouseUp);
-            return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
-          }, []);
-
-          const mob = useIsMobile();
-          return (
-            <div ref={dragRef} onClick={e=>e.stopPropagation()} style={{
-              position:'fixed',
-              left: mob ? 0 : pos.x,
-              bottom: mob ? 0 : undefined,
-              top: mob ? undefined : pos.y,
-              width: mob ? '100vw' : boxW,
-              zIndex:1000,
-              background:'#1a1a2e', border:'1px solid #4b5563',
-              borderRadius: mob ? '16px 16px 0 0' : 12,
-              boxShadow:'0 -4px 32px #000a'
-            }}>
-              {/* Drag handle header */}
-              <div onMouseDown={onMouseDown} style={{
-                display:'flex', justifyContent:'space-between', alignItems:'center',
-                padding:'10px 14px 8px', cursor:'grab', borderBottom:'1px solid #2a2a4a',
-                borderRadius:'12px 12px 0 0', background:'#1e1e35', userSelect:'none'
-              }}>
-                <div style={{display:'flex',alignItems:'center',gap:6}}>
-                  <span style={{fontSize:13,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.06em'}}>📝 Note</span>
-                  {noteReadOnly && <span style={{fontSize:9,fontWeight:700,color:'#6b7280',background:'#12121f',border:'1px solid #2a2a4a',borderRadius:4,padding:'1px 5px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Read Only</span>}
-                </div>
-                <span onClick={()=>setFloatingNote(null)}
-                  style={{fontSize:18,color:'#6b7280',cursor:'pointer',lineHeight:1,fontWeight:400,padding:'0 2px'}}>×</span>
-              </div>
-              {/* Body */}
-              <div style={{padding:'12px 14px 10px'}}>
-                <textarea
-                  autoFocus={!noteReadOnly}
-                  value={noteText}
-                  readOnly={noteReadOnly}
-                  onChange={noteReadOnly ? undefined : e=>setNote(floatingNote.dk,e.target.value)}
-                  placeholder={noteReadOnly ? 'No note for this day.' : 'Add a note for this day…'}
-                  rows={4}
-                  style={{width:'100%',background: noteReadOnly ? '#0f0f1a' : '#12121f',
-                    border:'1px solid #374151',borderRadius:8,
-                    color: noteReadOnly ? '#9ca3af' : '#e8e8f0',
-                    fontSize:14,fontFamily:'"DM Sans",sans-serif',
-                    padding:'8px 10px',
-                    resize: noteReadOnly ? 'none' : 'vertical',
-                    lineHeight:1.5,outline:'none',display:'block',
-                    cursor: noteReadOnly ? 'default' : 'text'}}
-                />
-                {/* Footer */}
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
-                  {!noteReadOnly && noteText ? (
-                    <span
-                      onClick={()=>{if(window.confirm('Clear this note? This cannot be undone.')){setNote(floatingNote.dk,'');}}}
-                      style={{fontSize:12,color:'#6b7280',cursor:'pointer',fontWeight:500,padding:'3px 8px',borderRadius:5,border:'1px solid #374151',transition:'color 0.15s,border-color 0.15s'}}
-                      onMouseEnter={e=>{e.currentTarget.style.color='#ef4444';e.currentTarget.style.borderColor='#ef4444';}}
-                      onMouseLeave={e=>{e.currentTarget.style.color='#6b7280';e.currentTarget.style.borderColor='#374151';}}>
-                      Clear
-                    </span>
-                  ) : <span />}
-                  {!noteReadOnly && <span style={{fontSize:11,color:'#4b5563'}}>Saves automatically</span>}
-                </div>
-              </div>
-            </div>
-          );
-        }
-
         return (
           <div>
             <div onClick={()=>setFloatingNote(null)} style={{position:'fixed',inset:0,zIndex:999}} />
-            <DraggableNote />
+            <DraggableNote
+              initLeft={initLeft}
+              initTop={initTop}
+              boxW={boxW}
+              vw={vw}
+              vh={vh}
+              noteText={noteText}
+              noteReadOnly={noteReadOnly}
+              dk={floatingNote.dk}
+              onClose={()=>setFloatingNote(null)}
+              onNoteChange={text=>setNote(floatingNote.dk,text)}
+              onClearNote={()=>setNote(floatingNote.dk,'')}
+            />
           </div>
         );
       })()}

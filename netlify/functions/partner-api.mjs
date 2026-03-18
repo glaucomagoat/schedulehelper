@@ -9,35 +9,44 @@ import { getStore } from "@netlify/blobs";
 const STORE_NAME = "schedule-helper";
 const ADMIN_USERNAME = "cve"; // The admin whose finalized schedule is exposed
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-  "Content-Type": "application/json",
-};
+// Allowed partner origins — set PARTNER_ORIGIN in Netlify dashboard.
+// Comma-separated for multiple partners, e.g. "https://a.com,https://b.com"
+// Until set, cross-origin requests are denied (same-origin requests still work).
+function getCorsHeaders(req) {
+  const allowed = (process.env.PARTNER_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean);
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigin = allowed.includes(origin) ? origin : "null";
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+    "Content-Type": "application/json",
+    "Vary": "Origin",
+  };
+}
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: CORS_HEADERS });
+function json(data, status, req) {
+  return new Response(JSON.stringify(data), { status, headers: getCorsHeaders(req) });
 }
 
 export default async function handler(req) {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("", { status: 200, headers: CORS_HEADERS });
+    return new Response("", { status: 200, headers: getCorsHeaders(req) });
   }
 
   if (req.method !== "GET") {
-    return json({ error: "Method not allowed" }, 405);
+    return json({ error: "Method not allowed" }, 405, req);
   }
 
   // ── Authentication ──────────────────────────────────────────────────────────
   const PARTNER_API_KEY = process.env.PARTNER_API_KEY;
   if (!PARTNER_API_KEY) {
-    return json({ error: "API not configured — PARTNER_API_KEY missing" }, 500);
+    return json({ error: "API not configured — PARTNER_API_KEY missing" }, 500, req);
   }
   const providedKey = req.headers.get("x-api-key");
   if (!providedKey || providedKey !== PARTNER_API_KEY) {
-    return json({ error: "Unauthorized — invalid or missing x-api-key" }, 401);
+    return json({ error: "Unauthorized — invalid or missing x-api-key" }, 401, req);
   }
 
   // ── Parse month param ───────────────────────────────────────────────────────
@@ -50,12 +59,12 @@ export default async function handler(req) {
   if (monthParam) {
     const parts = monthParam.match(/^(\d{4})-(\d{2})$/);
     if (!parts) {
-      return json({ error: "Invalid month format — use YYYY-MM e.g. 2026-03" }, 400);
+      return json({ error: "Invalid month format — use YYYY-MM e.g. 2026-03" }, 400, req);
     }
     year = parseInt(parts[1], 10);
     month1indexed = parseInt(parts[2], 10);
     if (month1indexed < 1 || month1indexed > 12) {
-      return json({ error: "Invalid month — must be 01-12" }, 400);
+      return json({ error: "Invalid month — must be 01-12" }, 400, req);
     }
   } else {
     // Default to current month
@@ -89,7 +98,7 @@ export default async function handler(req) {
     ]);
 
     if (!finalPlans) {
-      return json({ error: "No schedule data found" }, 404);
+      return json({ error: "No schedule data found" }, 404, req);
     }
 
     // ── Find the finalized plan for this month ────────────────────────────────
@@ -100,7 +109,7 @@ export default async function handler(req) {
         finalPlan: null,
         message: `No finalized plan for ${monthDisplay}. The admin has not yet published a schedule for this month.`,
         days: {},
-      });
+      }, 200, req);
     }
 
     // ── Load the schedule for the finalized plan ──────────────────────────────
@@ -113,7 +122,7 @@ export default async function handler(req) {
         finalPlan,
         message: `Plan ${finalPlan} is marked as final but has no schedule data yet.`,
         days: {},
-      });
+      }, 200, req);
     }
 
     // ── Build location name lookup ────────────────────────────────────────────
@@ -173,9 +182,9 @@ export default async function handler(req) {
       lastUpdated,
       locations: locationsMap,
       days,
-    });
+    }, 200, req);
 
   } catch (err) {
-    return json({ error: "Server error", detail: err.message }, 500);
+    return json({ error: "Server error", detail: err.message }, 500, req);
   }
 }

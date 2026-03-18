@@ -11,9 +11,28 @@
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
+// Hard cap on tokens per request — prevents a single call from draining budget.
+// Schedule generation uses ~4k tokens per batch; chat uses ~1.5k. 16k is generous headroom.
+const MAX_TOKENS_LIMIT = 16384;
+
+// Pin the model server-side. Ignoring whatever the client sends prevents a caller
+// from switching to a more expensive model.
+const PINNED_MODEL = 'claude-sonnet-4-6';
+
 export default async function handler(req) {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: JSON_HEADERS });
+  }
+
+  // Verify shared secret — same value as STORAGE_SECRET, set in Netlify env vars.
+  // This prevents the proxy from being called by anyone outside the app.
+  const STORAGE_SECRET = Deno.env.get('STORAGE_SECRET');
+  if (!STORAGE_SECRET) {
+    return new Response(JSON.stringify({ error: 'Server misconfigured — STORAGE_SECRET not set' }), { status: 500, headers: JSON_HEADERS });
+  }
+  const providedSecret = req.headers.get('x-storage-secret');
+  if (!providedSecret || providedSecret !== STORAGE_SECRET) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: JSON_HEADERS });
   }
 
   const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -29,15 +48,17 @@ export default async function handler(req) {
   }
 
   const anthropicPayload = {
-    model:      body.model      || 'claude-sonnet-4-6',
-    max_tokens: body.max_tokens || 4096,
+    model:      PINNED_MODEL,   // always server-side; ignore body.model
+    max_tokens: Math.min(body.max_tokens || 4096, MAX_TOKENS_LIMIT),
     messages:   body.messages   || [],
   };
 
   if (body.system) anthropicPayload.system = body.system;
   if (body.stream) anthropicPayload.stream = true;
 
-  const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences', 'tools', 'tool_choice', 'metadata'];
+  // Only pass safe, non-capability-expanding fields. 'tools' and 'tool_choice'
+  // are excluded — they enable arbitrary AI tool use that the app doesn't need.
+  const passthroughFields = ['temperature', 'top_p', 'top_k', 'stop_sequences'];
   for (const field of passthroughFields) {
     if (body[field] !== undefined) anthropicPayload[field] = body[field];
   }

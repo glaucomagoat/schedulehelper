@@ -2,7 +2,18 @@
   publish = "."
   functions = "netlify/functions"
   edge_functions = "netlify/edge-functions"
-  command = "npm install"
+  # sed replacements inject env var values into index.html at deploy time.
+  # Set STORAGE_SECRET, DEV_USERNAME, DEV_PASSWORD, CVE_USER, CVE_PASS in Netlify dashboard.
+  command = "npm install && sed -i 's/__STORAGE_SECRET__/'\"$STORAGE_SECRET\"'/g; s/__DEV_USERNAME__/'\"$DEV_USERNAME\"'/g; s/__DEV_PASSWORD__/'\"$DEV_PASSWORD\"'/g; s/__CVE_USER__/'\"$CVE_USER\"'/g; s/__CVE_PASS__/'\"$CVE_PASS\"'/g' index.html"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
 
 [functions]
   node_bundler = "esbuild"
