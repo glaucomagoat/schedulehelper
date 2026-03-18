@@ -22,13 +22,11 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script>
-// Global shared secret — injected at build time by Netlify sed. Used by both
-// the storage module and the Claude proxy fetch calls in the React component.
-window._S='__STORAGE_SECRET__';
 window.storage=(function(){
   var API='/.netlify/functions/storage-proxy';
   async function call(body){
-    var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-storage-secret':window._S},body:JSON.stringify(body)});
+    var token=localStorage.getItem('sessionToken')||'';
+    var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-session-token':token},body:JSON.stringify(body)});
     var d=await r.json();
     if(!r.ok)throw new Error(d.error||'Storage error');
     return d;
@@ -60,7 +58,8 @@ window.storage=(function(){
     async get(key){await ensureMigrated();var d=await call({action:'get',key:key});return{key:d.key,value:d.value,shared:false};},
     async set(key,value){await ensureMigrated();await call({action:'set',key:key,value:value});return{key:key,value:value,shared:false};},
     async delete(key){await ensureMigrated();await call({action:'delete',key:key});return{key:key,deleted:true,shared:false};},
-    async list(prefix){await ensureMigrated();var d=await call({action:'list',prefix:prefix||''});return{keys:d.keys||[],prefix:prefix,shared:false};}
+    async list(prefix){await ensureMigrated();var d=await call({action:'list',prefix:prefix||''});return{keys:d.keys||[],prefix:prefix,shared:false};},
+    async call(body){await ensureMigrated();return call(body);}
   };
 })();
 </script><script type="text/babel">
@@ -75,8 +74,6 @@ const defaultColors = [
   "#14B8A6","#E11D48","#7C3AED","#0EA5E9","#D946EF","#F43F5E","#22D3EE","#A3E635","#FB923C","#818CF8"
 ];
 
-const DEV_USERNAME = "__DEV_USERNAME__";
-const DEV_PASSWORD = "__DEV_PASSWORD__";
 
 const PRESET_STAFF = [
   { id: "s1", name: "Steve Kim MD", role: "Ophthalmologist", color: "#3B82F6" },
@@ -644,7 +641,7 @@ window.ScheduleHelper = function StaffScheduler() {
   async function callClaudeAPI(body) {
     var res = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-storage-secret': window._S },
+      headers: { 'Content-Type': 'application/json', 'x-session-token': localStorage.getItem('sessionToken') || '' },
       body: JSON.stringify(body)
     });
     return res;
@@ -659,7 +656,7 @@ window.ScheduleHelper = function StaffScheduler() {
     var payload = Object.assign({}, body, { stream: true });
     var response = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-storage-secret': window._S },
+      headers: { 'Content-Type': 'application/json', 'x-session-token': localStorage.getItem('sessionToken') || '' },
       body: JSON.stringify(payload)
     });
 
@@ -842,9 +839,17 @@ window.ScheduleHelper = function StaffScheduler() {
         setLoading(false);
         return;
       }
+      // Validate stored session token before making any authenticated storage calls
+      const sessRaw = localStorage.getItem('session');
+      const storedToken = localStorage.getItem('sessionToken');
+      if (!sessRaw || !storedToken || isTokenExpired(storedToken)) {
+        localStorage.removeItem('session');
+        localStorage.removeItem('sessionToken');
+        setLoading(false);
+        return;
+      }
       // Clean up any stale cloud session key from before this fix
       try { await window.storage.delete('session'); } catch(e) {}
-      const sessRaw = localStorage.getItem('session');
       if (sessRaw) {
           const u = JSON.parse(sessRaw);
           // Re-read user record to get latest userType (may have been updated)
@@ -1003,77 +1008,55 @@ window.ScheduleHelper = function StaffScheduler() {
     return () => document.removeEventListener('click', handler, true);
   }, [showProfileMenu]);
 
-  // Hash a password with SHA-256 using the browser's native Web Crypto API.
-  // Returns a lowercase hex string. Used for all password store/compare operations.
+  // Hash a password with SHA-256. Used for authenticated operations where the
+  // user already has a session (change-password, create-staff-account, etc.).
+  // Login/register/reset now go through server actions that hash server-side.
   async function hashPassword(pw) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  // Decode JWT payload (no signature check — server verifies on every request).
+  // Used client-side only to detect expiry for UX purposes.
+  function isTokenExpired(token) {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return Date.now() > payload.exp;
+    } catch(e) { return true; }
+  }
+
   async function handleAuth() {
     const { username, password, email, isRegister } = loginForm;
     if (!username || !password) return;
-    if (isRegister) {
-      if (!email || !email.includes('@')) { alert('Please enter a valid email address.'); return; }
-      try { const existing = await window.storage.get(`user:${username}`); if (existing) { alert('Username already taken. Please choose another.'); return; } } catch(e) {}
-      const userType = loginForm.userType || 'admin';
-      const u = { username, email, userType, created: Date.now() };
-      await window.storage.set(`user:${username}`, JSON.stringify({ ...u, password: await hashPassword(password) }));
+    try {
+      const action = isRegister ? 'register' : 'login';
+      if (isRegister && (!email || !email.includes('@'))) { alert('Please enter a valid email address.'); return; }
+      const result = await window.storage.call({ action, username, password, email, userType: loginForm.userType || 'admin' });
+      localStorage.setItem('sessionToken', result.token);
+      const u = result.user;
       localStorage.setItem('session', JSON.stringify(u));
       setUser(u); setIsDev(false); setChatMessages([]);
-    } else {
-      try {
-        const userData = await window.storage.get(`user:${username}`);
-        if (!userData) { alert('User not found'); return; }
-        const parsed = JSON.parse(userData.value);
-        const h = await hashPassword(password);
-        if (parsed.password !== h) {
-          // Plaintext legacy account — migrate to hash on the fly
-          if (parsed.password !== password) { alert('Incorrect password'); return; }
-          parsed.password = h;
-          await window.storage.set(`user:${username}`, JSON.stringify(parsed));
-        }
-        const u = { username, email: parsed.email || '', userType: parsed.userType || 'admin', created: parsed.created, adminUsername: parsed.adminUsername || null, staffId: parsed.staffId || null };
-        localStorage.setItem('session', JSON.stringify(u));
-        setUser(u); setIsDev(false); setChatMessages([]);
-        // Staff always load from their admin's namespace for live data
+      if (!isRegister) {
         const loginSource = (u.userType === 'staff' && u.adminUsername) ? u.adminUsername : username;
         await loadUserData(loginSource);
-      } catch(e) { alert('Login failed'); }
+      }
+    } catch(e) {
+      alert(isRegister ? (e.message || 'Registration failed') : (e.message || 'Login failed'));
     }
   }
 
   async function handleForgotPassword() {
     const { forgotEmail } = loginForm;
     if (!forgotEmail || !forgotEmail.includes('@')) { alert('Please enter a valid email address.'); return; }
-    // Find user with this email
     try {
-      const allKeys = await window.storage.list('user:');
-      let foundUser = null;
-      for (const key of (allKeys.keys || [])) {
-        try {
-          const rec = await window.storage.get(key);
-          if (rec) {
-            const parsed = JSON.parse(rec.value);
-            if (parsed.email && parsed.email.toLowerCase() === forgotEmail.toLowerCase()) {
-              foundUser = { key, ...parsed };
-              break;
-            }
-          }
-        } catch(e) {}
-      }
-      if (!foundUser) {
-        // Don't reveal whether email exists - show same success message
+      const result = await window.storage.call({ action: 'forgot-password', email: forgotEmail });
+      if (result.resetToken) {
+        const resetUrl = window.location.origin + window.location.pathname + '?reset=' + result.resetToken;
+        setLoginForm(p => ({ ...p, forgotSent: true, resetUrl }));
+      } else {
+        // Email not found — show same success message to avoid revealing registration status
         setLoginForm(p => ({ ...p, forgotSent: true }));
-        return;
       }
-      // Generate token
-      const token = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
-      const expiry = Date.now() + 1000 * 60 * 60; // 1 hour
-      await window.storage.set(`reset:${token}`, JSON.stringify({ username: foundUser.username, expiry }));
-      // Build reset URL
-      const resetUrl = window.location.origin + window.location.pathname + '?reset=' + token;
-      setLoginForm(p => ({ ...p, forgotSent: true, resetUrl }));
     } catch(e) { alert('An error occurred. Please try again.'); }
   }
 
@@ -1081,16 +1064,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const { resetToken, newPassword } = loginForm;
     if (!newPassword || newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
     try {
-      const tokenData = await window.storage.get(`reset:${resetToken}`);
-      if (!tokenData) { alert('Invalid or expired reset link.'); return; }
-      const { username, expiry } = JSON.parse(tokenData.value);
-      if (Date.now() > expiry) { alert('This reset link has expired. Please request a new one.'); return; }
-      const userData = await window.storage.get(`user:${username}`);
-      if (!userData) { alert('User not found.'); return; }
-      const parsed = JSON.parse(userData.value);
-      parsed.password = await hashPassword(newPassword);
-      await window.storage.set(`user:${username}`, JSON.stringify(parsed));
-      await window.storage.delete(`reset:${resetToken}`);
+      await window.storage.call({ action: 'reset-password', resetToken, newPassword });
       alert('Password reset successfully! Please sign in with your new password.');
       setLoginForm(p => ({ ...p, resetToken: '', resetStep: false, newPassword: '', forgotMode: false }));
       window.history.replaceState({}, '', window.location.pathname);
@@ -1210,17 +1184,26 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function handleDevLogin() {
     const devPw = prompt('Developer password:');
-    if (devPw !== DEV_PASSWORD) { alert('Wrong password'); return; }
-    const u = { username: DEV_USERNAME, isDev: true, created: Date.now() };
+    if (!devPw) return;
+    let devUsername;
+    try {
+      const result = await window.storage.call({ action: 'dev-auth', password: devPw });
+      devUsername = result.username;
+      localStorage.setItem('sessionToken', result.token);
+    } catch(e) {
+      alert('Wrong password');
+      return;
+    }
+    const u = { username: devUsername, isDev: true, created: Date.now() };
     localStorage.setItem('session', JSON.stringify(u));
     setUser(u); setIsDev(true); setChatMessages([]);
 
     // Check if ALL essential preset data exists (staff, locations, AND rules)
     let hasCompleteData = false;
     try {
-      const staffData = await window.storage.get(`${DEV_USERNAME}:staff`);
-      const locData = await window.storage.get(`${DEV_USERNAME}:locations`);
-      const rulesData = await window.storage.get(`${DEV_USERNAME}:rules`);
+      const staffData = await window.storage.get(`${devUsername}:staff`);
+      const locData = await window.storage.get(`${devUsername}:locations`);
+      const rulesData = await window.storage.get(`${devUsername}:rules`);
 
       const staffOk = staffData && JSON.parse(staffData.value).length > 0;
       const locsOk = locData && JSON.parse(locData.value).length > 0;
@@ -1234,20 +1217,20 @@ window.ScheduleHelper = function StaffScheduler() {
       let existingVacations = [];
       let existingSchedules = {};
       try {
-        const vacData = await window.storage.get(`${DEV_USERNAME}:vacations`);
+        const vacData = await window.storage.get(`${devUsername}:vacations`);
         if (vacData) existingVacations = JSON.parse(vacData.value);
-        const schedData = await window.storage.get(`${DEV_USERNAME}:schedules`);
+        const schedData = await window.storage.get(`${devUsername}:schedules`);
         if (schedData) existingSchedules = JSON.parse(schedData.value);
       } catch(e) {}
 
       setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
       setVacations(existingVacations); setSchedules(existingSchedules);
-      await window.storage.set(`${DEV_USERNAME}:staff`, JSON.stringify(PRESET_STAFF));
-      await window.storage.set(`${DEV_USERNAME}:locations`, JSON.stringify(PRESET_LOCATIONS));
-      await window.storage.set(`${DEV_USERNAME}:rules`, JSON.stringify(PRESET_RULES));
-      await window.storage.set(`${DEV_USERNAME}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
+      await window.storage.set(`${devUsername}:staff`, JSON.stringify(PRESET_STAFF));
+      await window.storage.set(`${devUsername}:locations`, JSON.stringify(PRESET_LOCATIONS));
+      await window.storage.set(`${devUsername}:rules`, JSON.stringify(PRESET_RULES));
+      await window.storage.set(`${devUsername}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
     } else {
-      await loadUserData(DEV_USERNAME);
+      await loadUserData(devUsername);
     }
     await ensureCveAccount();
   }
@@ -1255,33 +1238,23 @@ window.ScheduleHelper = function StaffScheduler() {
   async function resetDevData() {
     if (!confirm('Reset all data to presets? This will clear schedules, vacations, and restore default staff, locations & rules.')) return;
     setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS); setVacations([]); setSchedules({});
-    await window.storage.set(`${DEV_USERNAME}:staff`, JSON.stringify(PRESET_STAFF));
-    await window.storage.set(`${DEV_USERNAME}:locations`, JSON.stringify(PRESET_LOCATIONS));
-    await window.storage.set(`${DEV_USERNAME}:rules`, JSON.stringify(PRESET_RULES));
-    await window.storage.set(`${DEV_USERNAME}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
-    await window.storage.set(`${DEV_USERNAME}:vacations`, JSON.stringify([]));
-    await window.storage.set(`${DEV_USERNAME}:schedules`, JSON.stringify({}));
+    await window.storage.set(`${user.username}:staff`, JSON.stringify(PRESET_STAFF));
+    await window.storage.set(`${user.username}:locations`, JSON.stringify(PRESET_LOCATIONS));
+    await window.storage.set(`${user.username}:rules`, JSON.stringify(PRESET_RULES));
+    await window.storage.set(`${user.username}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
+    await window.storage.set(`${user.username}:vacations`, JSON.stringify([]));
+    await window.storage.set(`${user.username}:schedules`, JSON.stringify({}));
   }
 
-  // Ensure CVE user account exists with a copy of dev data
+  // Ensure CVE user account exists — handled entirely server-side so credentials
+  // never appear in client HTML. Silently no-ops if the account already exists.
   async function ensureCveAccount() {
-    const CVE_USER = '__CVE_USER__';
-    const CVE_PASS = '__CVE_PASS__';
-    try { await window.storage.get(`user:${CVE_USER}`); return; } catch(e) {} // already exists
-    // Create user record
-    await window.storage.set(`user:${CVE_USER}`, JSON.stringify({ username: CVE_USER, password: await hashPassword(CVE_PASS), userType: 'admin', created: Date.now() }));
-    // Copy all dev data to cve namespace
-    const keys = ['staff','locations','rules','holidays','vacations','schedules','finalPlans'];
-    for (const key of keys) {
-      try {
-        const data = await window.storage.get(`${DEV_USERNAME}:${key}`);
-        if (data) await window.storage.set(`${CVE_USER}:${key}`, data.value);
-      } catch(e) {}
-    }
+    try { await window.storage.call({ action: 'ensure-cve-account' }); } catch(e) {}
   }
 
   async function logout() {
     localStorage.removeItem('session');
+    localStorage.removeItem('sessionToken');
     try { await window.storage.delete('session'); } catch(e) {} // clean up any old cloud session
     setUser(null); setIsDev(false); setChatMessages([]);
     setStaff([]); setLocations([]); setRules([]); setVacations([]); setHolidays([]); setSchedules({});

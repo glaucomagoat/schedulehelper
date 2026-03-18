@@ -19,20 +19,47 @@ const MAX_TOKENS_LIMIT = 16384;
 // from switching to a more expensive model.
 const PINNED_MODEL = 'claude-sonnet-4-6';
 
+// ── JWT verification (same algorithm as storage-proxy.mjs) ───────────────────
+
+function fromB64url(str) {
+  return atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+}
+
+async function verifyToken(token, secret) {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('Invalid token format');
+  const [header, body, sig] = parts;
+  const data = `${header}.${body}`;
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+  );
+  const sigBytes = Uint8Array.from(fromB64url(sig), c => c.charCodeAt(0));
+  const valid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(data));
+  if (!valid) throw new Error('Invalid token signature');
+  const payload = JSON.parse(fromB64url(body));
+  if (Date.now() > payload.exp) throw new Error('Token expired');
+  return payload;
+}
+
+// ── Handler ──────────────────────────────────────────────────────────────────
+
 export default async function handler(req) {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: JSON_HEADERS });
   }
 
-  // Verify shared secret — same value as STORAGE_SECRET, set in Netlify env vars.
-  // This prevents the proxy from being called by anyone outside the app.
-  const STORAGE_SECRET = Deno.env.get('STORAGE_SECRET');
-  if (!STORAGE_SECRET) {
-    return new Response(JSON.stringify({ error: 'Server misconfigured — STORAGE_SECRET not set' }), { status: 500, headers: JSON_HEADERS });
+  // Verify session JWT — same SESSION_SECRET used by storage-proxy.
+  // Only authenticated users (valid session from login) may call the AI proxy.
+  const SESSION_SECRET = Deno.env.get('SESSION_SECRET');
+  if (!SESSION_SECRET) {
+    return new Response(JSON.stringify({ error: 'Server misconfigured — SESSION_SECRET not set' }), { status: 500, headers: JSON_HEADERS });
   }
-  const providedSecret = req.headers.get('x-storage-secret');
-  if (!providedSecret || providedSecret !== STORAGE_SECRET) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: JSON_HEADERS });
+  const sessionToken = req.headers.get('x-session-token') || '';
+  try {
+    await verifyToken(sessionToken, SESSION_SECRET);
+  } catch(e) {
+    return new Response(JSON.stringify({ error: 'Unauthorized — ' + e.message }), { status: 401, headers: JSON_HEADERS });
   }
 
   const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
