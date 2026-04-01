@@ -546,12 +546,18 @@ window.ScheduleHelper = function StaffScheduler() {
   const isMobile = useIsMobile();
   const [loginForm, setLoginForm] = useState({ username: '', password: '', email: '', userType: 'admin', isRegister: false, forgotMode: false, forgotEmail: '', forgotSent: false, resetToken: '', resetStep: false, newPassword: '' });
   const isAdmin = isDev || (user && (user.userType === 'admin'));
+  const isTopLevelAdmin = isAdmin && !user?.adminUsername;
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
   const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:'',newPassword:'',changingPw:false,pwMsg:''} }
   const [portalAccounts, setPortalAccounts] = useState({}); // { [staffId]: { username } | null }
+  const [managedUsers, setManagedUsers] = useState([]);
+  const [managersLoading, setManagersLoading] = useState(false);
+  const [showManagerModal, setShowManagerModal] = useState(false);
+  const [managerForm, setManagerForm] = useState({username:'', password:'', userType:'staff', msg:''});
+  const [managerPwForms, setManagerPwForms] = useState({});
 
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -604,6 +610,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [conflictsReport, setConflictsReport] = useState(null); // {conflicts:[], month, year}
   const [rulesFilter, setRulesFilter] = useState('all');
+  const [rulesSort, setRulesSort] = useState('newest');
   const [devLogs, setDevLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(true);
   const [showUserLogs, setShowUserLogs] = useState(false);
@@ -714,6 +721,11 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => {
     if (staff.length > 0) loadPortalAccounts();
   }, [staff.length]);
+
+  // Load managed users when Managers tab is active
+  useEffect(() => {
+    if (activeTab === 'managers' && isTopLevelAdmin) loadManagedUsers();
+  }, [activeTab]);
 
   // Initialize visibleStaff and visibleLocations to show all when data loads
   useEffect(() => {
@@ -895,7 +907,7 @@ window.ScheduleHelper = function StaffScheduler() {
             }
           } else {
             // Staff users always load from their admin's namespace (live data, never a stale copy)
-            const sourceUser = (fullU.userType === 'staff' && fullU.adminUsername) ? fullU.adminUsername : fullU.username;
+            const sourceUser = fullU.adminUsername ? fullU.adminUsername : fullU.username;
             await loadUserData(sourceUser);
           }
         }
@@ -953,7 +965,7 @@ window.ScheduleHelper = function StaffScheduler() {
     // Staff users are read-only — never write schedule data back
     const uType = user.userType || 'admin';
     if (uType === 'staff' && !user.isDev) return;
-    try { await window.storage.set(`${user.username}:${key}`, JSON.stringify(data)); } catch(e) {}
+    try { await window.storage.set(`${user.adminUsername || user.username}:${key}`, JSON.stringify(data)); } catch(e) {}
   }
 
   useEffect(() => { if (user) saveData('staff', staff); }, [staff]);
@@ -1037,7 +1049,7 @@ window.ScheduleHelper = function StaffScheduler() {
       localStorage.setItem('session', JSON.stringify(u));
       setUser(u); setIsDev(false); setChatMessages([]);
       if (!isRegister) {
-        const loginSource = (u.userType === 'staff' && u.adminUsername) ? u.adminUsername : username;
+        const loginSource = u.adminUsername ? u.adminUsername : username;
         await loadUserData(loginSource);
       }
     } catch(e) {
@@ -1182,6 +1194,75 @@ window.ScheduleHelper = function StaffScheduler() {
     }
   }
 
+  // ── Managed-user (Managers tab) helpers ──────────────────────────────────
+
+  async function loadManagedUsers() {
+    if (!isTopLevelAdmin) return;
+    setManagersLoading(true);
+    try {
+      const adminUsername = user.username;
+      const raw = await window.storage.get(`managers:${adminUsername}`);
+      if (raw && raw.value) {
+        const list = JSON.parse(raw.value);
+        setManagedUsers(list);
+      } else {
+        setManagedUsers([]);
+      }
+    } catch(e) { setManagedUsers([]); }
+    setManagersLoading(false);
+  }
+
+  async function createManagedUser() {
+    const { username, password, userType } = managerForm;
+    if (!username || username.length < 2) { setManagerForm(p=>({...p,msg:'❌ Username must be at least 2 characters.'})); return; }
+    if (!password || password.length < 4) { setManagerForm(p=>({...p,msg:'❌ Password must be at least 4 characters.'})); return; }
+    setManagerForm(p=>({...p,msg:'Saving…'}));
+    try {
+      const adminUsername = user.username;
+      let existing = null;
+      try { existing = await window.storage.get(`user:${username}`); } catch(e) {}
+      if (existing) { setManagerForm(p=>({...p,msg:'❌ Username already taken.'})); return; }
+      const resolvedType = userType === 'admin' ? 'admin' : 'staff';
+      const newUser = { username, userType: resolvedType, adminUsername, created: Date.now() };
+      await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password: await hashPassword(password) }));
+      // Update index
+      const updatedList = [...managedUsers, { username, userType: resolvedType }];
+      await window.storage.set(`managers:${adminUsername}`, JSON.stringify(updatedList));
+      setManagedUsers(updatedList);
+      setManagerForm({username:'',password:'',userType:'staff',msg:`✅ User "${username}" created successfully.`});
+    } catch(e) { setManagerForm(p=>({...p,msg:'❌ Failed to create user.'})); }
+  }
+
+  async function deleteManagedUser(username) {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    try {
+      const adminUsername = user.username;
+      await window.storage.delete(`user:${username}`);
+      const updatedList = managedUsers.filter(mu => mu.username !== username);
+      await window.storage.set(`managers:${adminUsername}`, JSON.stringify(updatedList));
+      setManagedUsers(updatedList);
+      setManagerPwForms(p => { const n={...p}; delete n[username]; return n; });
+    } catch(e) { alert('Failed to delete user.'); }
+  }
+
+  async function changeManagedUserPassword(username) {
+    const form = managerPwForms[username] || {};
+    const newPassword = form.newPassword || '';
+    if (!newPassword || newPassword.length < 4) {
+      setManagerPwForms(p=>({...p,[username]:{...form,msg:'❌ Password must be at least 4 characters.'}}));
+      return;
+    }
+    setManagerPwForms(p=>({...p,[username]:{...form,saving:true,msg:''}}));
+    try {
+      const raw = await window.storage.get(`user:${username}`);
+      if (!raw) { setManagerPwForms(p=>({...p,[username]:{...form,saving:false,msg:'❌ User not found.'}})); return; }
+      const parsed = JSON.parse(raw.value);
+      parsed.password = await hashPassword(newPassword);
+      await window.storage.set(`user:${username}`, JSON.stringify(parsed));
+      setManagerPwForms(p=>({...p,[username]:{newPassword:'',saving:false,msg:'✅ Password updated.'}}));
+    } catch(e) { setManagerPwForms(p=>({...p,[username]:{...form,saving:false,msg:'❌ Failed to update password.'}})); }
+  }
+
   async function handleDevLogin() {
     const devPw = prompt('Developer password:');
     if (!devPw) return;
@@ -1280,7 +1361,7 @@ window.ScheduleHelper = function StaffScheduler() {
     // Standard/conditional/exception rules need locationId; negative/rotation/complex may not
     if (ruleForm.ruleType === 'standard' && !ruleForm.locationId) return;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
-    else { setRules(prev => [...prev, { id: 'r' + Date.now(), ...ruleForm }]); }
+    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, ...ruleForm }]); }
     resetRuleForm(); setShowRuleModal(false);
   }
   function resetRuleForm(overrides) {
@@ -1615,7 +1696,6 @@ window.ScheduleHelper = function StaffScheduler() {
         '  "ambiguities": [\n' +
         '    { "id": "unique_id", "severity": "critical|minor", "question": "≤12 words" }\n' +
         '  ]\n' +
-        '  // !! NO auto_resolved field — omit entirely to save tokens !!\n' +
         '}\n' +
         'Use exact IDs. Include every listed day and every staff member.\n' +
         'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly.\n' +
@@ -1629,7 +1709,7 @@ window.ScheduleHelper = function StaffScheduler() {
         // timeout never fires — this is the fix for 504 errors on schedule generation.
         const result = await streamClaudeAPI({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 8192,
           system: systemPrompt,
           messages: [{ role: "user", content: batchPrompt }]
         }, function(charsReceived) {
@@ -1840,30 +1920,70 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Removed location: ${loc.name}`;
         }
         case 'add_rule': {
+          const ruleType = action.ruleType || 'standard';
           const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
-          const loc = locations.find(l => l.name.toLowerCase().includes(action.locationName?.toLowerCase()));
           if (!s) return `❌ Staff "${action.staffName}" not found.`;
-          if (!loc) return `❌ Location "${action.locationName}" not found.`;
+          const requiresLocation = ['standard', 'conditional', 'exception', 'rotation'].includes(ruleType);
+          let loc = null;
+          if (action.locationName) {
+            loc = locations.find(l => l.name.toLowerCase().includes(action.locationName.toLowerCase()));
+            if (!loc && requiresLocation) return `❌ Location "${action.locationName}" not found.`;
+          } else if (requiresLocation) {
+            return `❌ A location is required for ${ruleType} rules.`;
+          }
+          let rotateWithStaffId = '';
+          let rotateAtLocationId = '';
+          if (ruleType === 'rotation') {
+            const partner = staff.find(x => x.name.toLowerCase().includes(action.rotateWithStaffName?.toLowerCase()));
+            if (!partner) return `❌ Rotation partner "${action.rotateWithStaffName}" not found.`;
+            rotateWithStaffId = partner.id;
+            const rotLoc = action.rotateAtLocationName
+              ? locations.find(l => l.name.toLowerCase().includes(action.rotateAtLocationName.toLowerCase()))
+              : loc;
+            if (!rotLoc) return `❌ Rotation location "${action.rotateAtLocationName}" not found.`;
+            rotateAtLocationId = rotLoc.id;
+          }
+          const _ruleTs = Date.now();
           const newRule = {
-            id: 'r' + Date.now(), staffId: s.id, locationId: loc.id,
-            dayOfWeek: action.dayOfWeek || 'Mon', weekOfMonth: action.weekOfMonth || 'all',
-            period: action.period || 'both', priority: action.priority || 'preferred',
-            description: action.description || ''
+            id: 'r' + _ruleTs, createdAt: _ruleTs, staffId: s.id, ruleScope: 'staff', ruleType,
+            locationId: loc?.id || '', dayOfWeek: action.dayOfWeek || 'Mon',
+            weekOfMonth: action.weekOfMonth || 'all', period: action.period || 'both',
+            priority: action.priority || 'preferred', description: action.description || '',
+            conditionText: action.conditionText || '', exceptionText: action.exceptionText || '',
+            negativeText: action.negativeText || '', rotateWithStaffId, rotateAtLocationId,
           };
           setRules(prev => [...prev, newRule]);
-          return `✅ Added rule: ${s.name} → ${loc.name} on ${newRule.dayOfWeek} (${newRule.weekOfMonth}, ${newRule.period}, ${newRule.priority})`;
+          let msg = `✅ Added ${ruleType} rule for ${s.name}`;
+          if (loc) msg += ` → ${loc.name}`;
+          if (requiresLocation) msg += ` on ${newRule.dayOfWeek} [${newRule.weekOfMonth}] (${newRule.period}, ${newRule.priority})`;
+          if (ruleType === 'rotation') {
+            const partner = staff.find(x => x.id === rotateWithStaffId);
+            const rl = locations.find(x => x.id === rotateAtLocationId);
+            msg += ` — rotating with ${partner?.name} at ${rl?.name}`;
+          }
+          return msg;
         }
         case 'remove_rule': {
           const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
           if (!s) return `❌ Staff "${action.staffName}" not found.`;
           const matching = rules.filter(r => r.staffId === s.id &&
+            (!action.ruleType || (r.ruleType || 'standard') === action.ruleType) &&
             (!action.dayOfWeek || r.dayOfWeek === action.dayOfWeek) &&
-            (!action.locationName || locations.find(l => l.id === r.locationId)?.name.toLowerCase().includes(action.locationName.toLowerCase()))
+            (!action.locationName || locations.find(l => l.id === r.locationId)?.name.toLowerCase().includes(action.locationName.toLowerCase())) &&
+            (!action.description || r.description?.toLowerCase().includes(action.description.toLowerCase()))
           );
-          if (matching.length === 0) return `❌ No matching rule found.`;
-          setRules(prev => prev.filter(r => r.id !== matching[0].id));
-          const loc = locations.find(l => l.id === matching[0].locationId);
-          return `✅ Removed rule: ${s.name} → ${loc?.name} on ${matching[0].dayOfWeek}`;
+          if (matching.length === 0) return `❌ No matching rule found for ${s.name}.`;
+          if (matching.length > 1) return `❌ ${matching.length} rules matched for ${s.name} — add ruleType or description text to narrow it down.`;
+          const removed = matching[0];
+          setRules(prev => prev.filter(r => r.id !== removed.id));
+          const rType = removed.ruleType || 'standard';
+          const loc = locations.find(l => l.id === removed.locationId);
+          const hasLocDay = ['standard','conditional','exception','rotation'].includes(rType);
+          let confirmMsg = `✅ Removed ${rType} rule for ${s.name}`;
+          if (hasLocDay && loc) confirmMsg += ` → ${loc.name}`;
+          if (hasLocDay) confirmMsg += ` on ${removed.dayOfWeek}`;
+          if (removed.description) confirmMsg += ` — "${removed.description}"`;
+          return confirmMsg;
         }
         case 'add_holiday': {
           if (!action.name || action.month == null || !action.day) return '❌ Missing holiday details.';
@@ -1982,8 +2102,17 @@ Available actions:
 - remove_staff: {"type":"remove_staff", "staffName":"Last Name"}
 - add_location: {"type":"add_location", "name":"Location Name", "address":"optional"}
 - remove_location: {"type":"remove_location", "name":"Location Name"}
-- add_rule: {"type":"add_rule", "staffName":"Last Name", "locationName":"Location", "dayOfWeek":"Mon|Tue|Wed|Thu|Fri", "weekOfMonth":"all|1|2|3|4", "period":"am|pm|both", "priority":"required|preferred", "description":"optional"}
-- remove_rule: {"type":"remove_rule", "staffName":"Last Name", "dayOfWeek":"Mon", "locationName":"Location"}
+- add_rule: {"type":"add_rule", "staffName":"Last Name", "ruleType":"standard|conditional|exception|negative|rotation|complex", ...fields by type}
+  Fields required per ruleType — ask the user for any missing required field before emitting the action block:
+  • standard:    locationName, dayOfWeek (Mon/Tue/Wed/Thu/Fri), weekOfMonth ("all" or "1"/"2"/"3"/"4" or comma-separated e.g. "1,2,4"), period (am|pm|both), priority (required|preferred), description (optional)
+  • conditional: same as standard, plus conditionText (the IF condition that triggers this rule)
+  • exception:   same as standard, plus exceptionText (the condition under which the base rule does NOT apply)
+  • negative:    negativeText (what must NOT happen — e.g. "no more than 2 Stockton Thursdays"), description (optional) — no location or day required
+  • rotation:    locationName, dayOfWeek, weekOfMonth, period, priority, rotateWithStaffName (the other provider), rotateAtLocationName (the shared rotation location)
+                 !! ROTATION: always emit TWO add_rule blocks — one per provider, each pointing to the other !!
+  • complex:     description (full plain-English rule — this is the entire rule, no other fields needed)
+- remove_rule: {"type":"remove_rule", "staffName":"Last Name", "dayOfWeek":"Mon", "locationName":"Location", "ruleType":"optional", "description":"optional partial text from rule description"}
+  For complex/negative rules with no location or distinctive day, use ruleType and/or description to identify the rule. If multiple rules match you will get an error — add more fields to narrow down.
 - add_holiday: {"type":"add_holiday", "name":"Holiday Name", "month":0, "day":1, "halfDay":"closed|am", "note":"optional"}  (month is 0-indexed: 0=Jan, 11=Dec)
 - remove_holiday: {"type":"remove_holiday", "name":"Holiday Name"}
 - update_schedule: {"type":"update_schedule", "staffName":"Last Name", "date":"YYYY-MM-DD", "location":"Location Name or OFF", "period":"am|pm|both"}
@@ -1999,7 +2128,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
 
 
     try {
-      const apiMessages = chatMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+      const apiMessages = chatMessages.map(m => ({ role: m.role, content: m.content }));
       apiMessages.push({ role: 'user', content: userMsg });
 
       const response = await callClaudeAPI({
@@ -2347,10 +2476,14 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
   function prevMonth() { if (currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1)} else setCurrentMonth(m=>m-1); }
   function nextMonth() { if (currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1)} else setCurrentMonth(m=>m+1); }
 
-  // Filtered rules for Rules tab
-  const filteredRules = rulesFilter === 'all' ? rules :
-    rulesFilter.startsWith('loc_') ? rules.filter(r => r.ruleScope === 'location' && r.locationId === rulesFilter.slice(4)) :
-    rules.filter(r => r.staffId === rulesFilter && r.ruleScope !== 'location');
+  // Filtered and sorted rules for Rules tab
+  const filteredRules = (() => {
+    const base = rulesFilter === 'all' ? rules :
+      rulesFilter.startsWith('loc_') ? rules.filter(r => r.ruleScope === 'location' && r.locationId === rulesFilter.slice(4)) :
+      rules.filter(r => r.staffId === rulesFilter && r.ruleScope !== 'location');
+    if (rulesSort === 'newest') return [...base].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return base; // 'default' = original insertion order
+  })();
 
   if (loading) return (
     <div style={{minHeight:'100vh',background:'#0d0d1a',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -2548,7 +2681,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           {[
             {id:'schedule',icon:'📅',label:'Schedule'},
             ...(isAdmin ? [
-              {id:'staff',icon:'👥',label:'Staff'},
+              {id:'staff',icon:'👥',label:'Doctors'},
+              ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
               {id:'locations',icon:'🏢',label:'Locations'},
               {id:'rules',icon:'⚙️',label:'Rules'},
               {id:'vacations',icon:'🏖️',label:'Vacation'},
@@ -2577,7 +2711,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             {[
               {id:'schedule',icon:'📅',label:'Schedule'},
               ...(isAdmin ? [
-                {id:'staff',icon:'👥',label:`Staff (${staff.length})`},
+                {id:'staff',icon:'👥',label:`Doctors (${staff.length})`},
+                ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
                 {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
                 {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
                 {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
@@ -2646,7 +2781,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:providersCollapsed?'none':'1px solid #1e1e35'}}
                   onClick={()=>setProvidersCollapsed(p=>!p)}>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Providers</span>
+                    <span style={{fontSize:12,color:'#4b5563',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Doctors</span>
                     {providersCollapsed && (
                       <span style={{fontSize:12,color:'#6b7280'}}>{visibleStaff.size}/{staff.length} shown</span>
                     )}
@@ -3241,7 +3376,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           {activeTab === 'staff' && (
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
-                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Staff Members</h2>
+                <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Doctors</h2>
                 {isAdmin && <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});setShowStaffModal(true)}}>+ Add Staff</Btn>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -3476,6 +3611,58 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             </div>
           )}
 
+          {/* ===== MANAGERS TAB ===== */}
+          {activeTab === 'managers' && isTopLevelAdmin && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>🔐 Managers</h2>
+                <Btn onClick={()=>{setManagerForm({username:'',password:'',userType:'staff',msg:''});setShowManagerModal(true)}}>+ Add User</Btn>
+              </div>
+              <p style={{color:'#6b7280',fontSize:14,marginTop:-12,marginBottom:20}}>
+                Users created here share your data. Choose <b style={{color:'#e8e8f0'}}>Read Only</b> for view-only access or <b style={{color:'#e8e8f0'}}>Full Editing</b> for complete access.
+              </p>
+              {managersLoading ? (
+                <div style={{color:'#6b7280',padding:24}}>Loading…</div>
+              ) : managedUsers.length === 0 ? (
+                <div style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:32,textAlign:'center',color:'#6b7280'}}>
+                  No managed users yet. Click <b>+ Add User</b> to create one.
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {managedUsers.map(mu => {
+                    const pf = managerPwForms[mu.username] || {};
+                    const roleLabel = mu.userType === 'admin' ? 'Full Editing' : 'Read Only';
+                    const roleColor = mu.userType === 'admin' ? '#6366f1' : '#10b981';
+                    return (
+                      <div key={mu.username} style={{background:'#1a1a2e',border:'1px solid #2a2a4a',borderRadius:12,padding:'16px 20px'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                          <div style={{display:'flex',alignItems:'center',gap:12}}>
+                            <span style={{fontWeight:700,fontSize:15}}>{mu.username}</span>
+                            <span style={{fontSize:12,fontWeight:600,padding:'3px 10px',borderRadius:20,background:'#12121f',color:roleColor,border:`1px solid ${roleColor}44`}}>{roleLabel}</span>
+                          </div>
+                          <span onClick={()=>deleteManagedUser(mu.username)} style={{cursor:'pointer',fontSize:15,color:'#ef4444'}}>🗑️ Delete</span>
+                        </div>
+                        <div style={{marginTop:14,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                          <input
+                            type="password"
+                            placeholder="New password"
+                            value={pf.newPassword || ''}
+                            onChange={e=>setManagerPwForms(p=>({...p,[mu.username]:{...(p[mu.username]||{}),newPassword:e.target.value,msg:''}}))}
+                            style={{background:'#12121f',border:'1px solid #2a2a4a',borderRadius:8,padding:'6px 12px',color:'#e8e8f0',fontSize:13,width:180}}
+                          />
+                          <Btn onClick={()=>changeManagedUserPassword(mu.username)} disabled={pf.saving} style={{fontSize:13,padding:'6px 14px'}}>
+                            {pf.saving ? 'Saving…' : 'Change Password'}
+                          </Btn>
+                          {pf.msg && <span style={{fontSize:12,color:pf.msg.startsWith('✅')?'#10b981':'#ef4444'}}>{pf.msg}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ===== LOCATIONS TAB ===== */}
           {activeTab === 'locations' && (
             <div>
@@ -3551,8 +3738,19 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
                 <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Scheduling Rules</h2>
-                <Btn onClick={()=>{setEditingRule(null);resetRuleForm();setShowRuleModal(true)}}
-                  disabled={!isAdmin||staff.length===0||locations.length===0}>+ Add Rule</Btn>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <div style={{display:'flex',gap:4,background:'#12121f',borderRadius:8,padding:3,border:'1px solid #2a2a4a'}}>
+                    {[{v:'newest',l:'Newest'},{v:'default',l:'Default'}].map(opt=>(
+                      <div key={opt.v} onClick={()=>setRulesSort(opt.v)}
+                        style={{padding:'4px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all 0.15s',
+                          background:rulesSort===opt.v?'#1e1e35':'transparent',color:rulesSort===opt.v?'#818cf8':'#6b7280'}}>
+                        {opt.l}
+                      </div>
+                    ))}
+                  </div>
+                  <Btn onClick={()=>{setEditingRule(null);resetRuleForm();setShowRuleModal(true)}}
+                    disabled={!isAdmin||staff.length===0||locations.length===0}>+ Add Rule</Btn>
+                </div>
               </div>
 
               {/* Filter by provider */}
@@ -3609,6 +3807,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                             <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
                             {r.description && <span style={{fontSize:13,color:'#6b7280',lineHeight:1.4}}>{r.description}</span>}
+                            {r.createdAt && <span style={{fontSize:11,color:'#6b7280',marginLeft:'auto',flexShrink:0}}>Added {new Date(r.createdAt).toLocaleDateString()}</span>}
                           </div>
                         </div>
                         {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
@@ -3737,6 +3936,28 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
           <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setEditingStaff(null)}}>Cancel</Btn>
           <Btn onClick={addStaff}>{editingStaff?'Save':'Add Staff'}</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={showManagerModal} onClose={()=>setShowManagerModal(false)} title="Add Managed User">
+        <Input label="Username" value={managerForm.username} onChange={v=>setManagerForm(p=>({...p,username:v,msg:''}))} placeholder="e.g., drsmith_view" />
+        <Input label="Password" value={managerForm.password} onChange={v=>setManagerForm(p=>({...p,password:v,msg:''}))} placeholder="Min 4 characters" type="password" />
+        <div style={{marginBottom:16}}>
+          <label style={{display:'block',fontSize:13,color:'#9ca3af',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Access Level</label>
+          <div style={{display:'flex',gap:8}}>
+            {[{v:'staff',l:'👁 Read Only',desc:'View final schedules only'},{v:'admin',l:'✏️ Full Editing',desc:'Edit schedules, staff & rules'}].map(opt=>(
+              <div key={opt.v} onClick={()=>setManagerForm(p=>({...p,userType:opt.v}))}
+                style={{flex:1,padding:'10px 12px',borderRadius:8,cursor:'pointer',border:`2px solid ${managerForm.userType===opt.v?'#6366f1':'#2a2a4a'}`,background:managerForm.userType===opt.v?'#1e1e3f':'#12121f',transition:'all 0.15s'}}>
+                <div style={{fontWeight:700,fontSize:13}}>{opt.l}</div>
+                <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>{opt.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {managerForm.msg && <div style={{padding:'8px 12px',borderRadius:8,background:managerForm.msg.startsWith('✅')?'#052e16':'#2d1515',color:managerForm.msg.startsWith('✅')?'#10b981':'#ef4444',fontSize:13,marginBottom:12}}>{managerForm.msg}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
+          <Btn variant="ghost" onClick={()=>setShowManagerModal(false)}>Cancel</Btn>
+          <Btn onClick={createManagedUser}>Create User</Btn>
         </div>
       </Modal>
 
