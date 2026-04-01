@@ -13,6 +13,7 @@ html,body{background:var(--bg-base);color:var(--text-primary);font-family:'DM Sa
   --bg-active: #1e2035;
   --border-subtle: #1e1e35;
   --border-default: #2a2a4a;
+  --border-interactive: #2a2a4a;
   --text-primary: #e8e8f0;
   --text-secondary: #9ca3af;
   --text-muted: #6b7280;
@@ -28,16 +29,17 @@ html,body{background:var(--bg-base);color:var(--text-primary);font-family:'DM Sa
   --bg-base: #f0f0f8;
   --bg-deep: #e8e8f5;
   --bg-surface: #ffffff;
-  --bg-elevated: #f4f4fd;
+  --bg-elevated: #eceeff;
   --bg-hover: #ebebff;
   --bg-active: #e2e2f8;
   --border-subtle: #d8d8ee;
   --border-default: #c0c0dc;
+  --border-interactive: #9090b8;
   --text-primary: #1a1a2e;
   --text-secondary: #4b5563;
   --text-muted: #6b7280;
   --text-dim: #9ca3af;
-  --text-faint: #c0c0d8;
+  --text-faint: #8080a8;
   --input-bg: #fafafe;
   --overlay-bg: rgba(26,26,46,0.6);
   --cell-weekend: #eeeefa;
@@ -112,8 +114,8 @@ const MONTHS = ["January","February","March","April","May","June","July","August
 const WEEKDAYS_ONLY = ["Mon","Tue","Wed","Thu","Fri"];
 
 const defaultColors = [
-  "#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#84CC16","#F97316","#6366F1",
-  "#14B8A6","#E11D48","#7C3AED","#0EA5E9","#D946EF","#F43F5E","#22D3EE","#A3E635","#FB923C","#818CF8"
+  "#3B82F6","#10B981","#D97706","#EF4444","#8B5CF6","#EC4899","#06B6D4","#65A30D","#F97316","#6366F1",
+  "#14B8A6","#E11D48","#7C3AED","#0EA5E9","#D946EF","#F43F5E","#0891B2","#84CC16","#FB923C","#818CF8"
 ];
 
 
@@ -163,19 +165,19 @@ const LOCATION_COLORS = {
 };
 
 const LOCATION_COLORS_LIGHT = {
-  l1:  {bg:'#ddeeff', border:'#2d6a9f', text:'#1a4a7a'},
-  l2:  {bg:'#ddfff0', border:'#1a7a4a', text:'#0a5030'},
-  l5:  {bg:'#f0ddff', border:'#7a30a0', text:'#4a0a70'},
-  l6:  {bg:'#fffadd', border:'#9f8030', text:'#5a4a00'},
-  l7:  {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},
-  l8:  {bg:'#fff0e8', border:'#b06030', text:'#6a3000'},
-  l9:  {bg:'#ddeeff', border:'#3070c0', text:'#0a3a70'},
-  l10: {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},
-  l11: {bg:'#ddfaff', border:'#2090a0', text:'#005060'},
-  l12: {bg:'#eeddff', border:'#6050b0', text:'#300070'},
-  l13: {bg:'#f0f0f4', border:'#606070', text:'#303040'},
-  l14: {bg:'#ddfff0', border:'#208060', text:'#004030'},
-  OFF: {bg:'#f0f0f5', border:'#aaaacc', text:'#666688'},
+  l1:  {bg:'#cce0ff', border:'#2d6a9f', text:'#1a4a7a'},  // Manteca - blue (distinct from l9)
+  l2:  {bg:'#ddfff0', border:'#1a7a4a', text:'#0a5030'},  // Stockton - green
+  l5:  {bg:'#f0ddff', border:'#7a30a0', text:'#4a0a70'},  // Modesto - purple
+  l6:  {bg:'#fffadd', border:'#9f8030', text:'#5a4a00'},  // Turlock - gold
+  l7:  {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},  // VLSC - rose
+  l8:  {bg:'#fff0e8', border:'#b06030', text:'#6a3000'},  // MSC - orange
+  l9:  {bg:'#ddf0ff', border:'#3070c0', text:'#0a3a70'},  // DHM - sky (distinct from l1)
+  l10: {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},  // LVC - rose
+  l11: {bg:'#ddfaff', border:'#2090a0', text:'#005060'},  // NCSC - teal
+  l12: {bg:'#eeddff', border:'#6050b0', text:'#300070'},  // SJLSC - indigo
+  l13: {bg:'#e2e2ec', border:'#606070', text:'#303040'},  // Admin - grey (more visible)
+  l14: {bg:'#c8f5e0', border:'#208060', text:'#004030'},  // VA - sea green (distinct from l2)
+  OFF: {bg:'#e6e6f0', border:'#8888aa', text:'#44446a'},  // OFF - dim (readable)
 };
 
 // ============================================================
@@ -429,9 +431,9 @@ function Btn({ children, onClick, variant = "primary", style: sx, disabled }) {
   const base = {padding:'10px 20px',borderRadius:8,border:'none',fontSize:14,fontWeight:600,cursor:disabled?'not-allowed':'pointer',fontFamily:'"DM Sans",sans-serif',transition:'all 0.2s',opacity:disabled?0.5:1,...sx};
   const variants = {
     primary:{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'#fff'},
-    secondary:{background:'var(--border-default)',color:'var(--text-primary)'},
+    secondary:{background:'var(--bg-active)',color:'var(--text-primary)'},
     danger:{background:'#dc2626',color:'#fff'},
-    ghost:{background:'transparent',color:'var(--text-secondary)',border:'1px solid var(--border-default)'},
+    ghost:{background:'transparent',color:'var(--text-secondary)',border:'1px solid var(--border-interactive)'},
     success:{background:'linear-gradient(135deg,#059669,#10b981)',color:'#fff'},
     dev:{background:'linear-gradient(135deg,#b45309,#d97706)',color:'#fff'},
   };
@@ -475,7 +477,7 @@ function WeekOfMonthPicker({ value, onChange }) {
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
         <div onClick={toggleAll}
           style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
-            background:isAll?'#6366f122':'var(--bg-surface)',color:isAll?'#818cf8':'var(--text-muted)',border:`1px solid ${isAll?'#6366f1':'var(--border-default)'}`,transition:'all 0.15s'}}>
+            background:isAll?'#6366f122':'var(--bg-surface)',color:isAll?'#818cf8':'var(--text-muted)',border:`1px solid ${isAll?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
           All Weeks
         </div>
         {weeks.map(w => {
@@ -483,7 +485,7 @@ function WeekOfMonthPicker({ value, onChange }) {
           return (
             <div key={w} onClick={() => toggle(w)}
               style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
-                background:active?'#6366f122':'var(--bg-surface)',color:active?'#818cf8':'var(--text-muted)',border:`1px solid ${active?'#6366f1':'var(--border-default)'}`,transition:'all 0.15s'}}>
+                background:active?'#6366f122':'var(--bg-surface)',color:active?'#818cf8':'var(--text-muted)',border:`1px solid ${active?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
               {labels[w]}
             </div>
           );
@@ -3144,7 +3146,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   return (
                     <div key={plan} onClick={()=>setActivePlan(plan)}
                       style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700,userSelect:'none',transition:'all 0.15s',
-                        background:isActive?(isFinal?'#065f4622':'#6366f122'):'var(--bg-surface)',
+                        background:isActive?(isFinal?(theme==='light'?'#e6fff5':'#065f4622'):(theme==='light'?'#eeeeff':'#6366f122')):'var(--bg-surface)',
                         color:isActive?(isFinal?'#34d399':'#818cf8'):(hasData?'var(--text-secondary)':'var(--text-dim)'),
                         border:`1px solid ${isActive?(isFinal?'#065f46':'#6366f1'):(hasData?'var(--border-default)':'var(--border-subtle)')}`}}>
                       Plan {plan}
@@ -3282,8 +3284,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                               <div style={{display:'flex',flexWrap:'wrap',gap:isWk?'2px 8px':'1px 6px',flex:1,minWidth:0}}>
                                 {g.staff.map(function(s){return(
                                   <div key={s.id} style={{display:'flex',alignItems:'center',gap:2}}>
-                                    <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'#444':s.color,flexShrink:0}} />
-                                    <span style={{fontSize:fs.name,color:isOff?'#556':s.color,fontWeight:600,whiteSpace:'nowrap'}}>
+                                    <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'var(--text-muted)':s.color,flexShrink:0}} />
+                                    <span style={{fontSize:fs.name,color:isOff?'var(--text-muted)':s.color,fontWeight:600,whiteSpace:'nowrap'}}>
                                       {getLastName(s.name)}
                                     </span>
                                   </div>
@@ -3564,8 +3566,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                           const lc = locColors[r.locationId] || locColors.OFF;
                                           const periodLabel = r.period === 'am' ? 'AM' : r.period === 'pm' ? 'PM' : '';
                                           return (
-                                            <div key={ri} style={{background:isOff?'#15151f':lc.bg,borderLeft:`2px solid ${isOff?'#333':lc.border}`,borderRadius:3,padding:'3px 5px',marginBottom:ri<dayRules.length-1?2:0}}>
-                                              <div style={{fontSize:11,fontWeight:700,color:isOff?'#555':lc.text,lineHeight:1.3,display:'flex',alignItems:'center',gap:3}}>
+                                            <div key={ri} style={{background:isOff?locColors.OFF.bg:lc.bg,borderLeft:`2px solid ${isOff?locColors.OFF.border:lc.border}`,borderRadius:3,padding:'3px 5px',marginBottom:ri<dayRules.length-1?2:0}}>
+                                              <div style={{fontSize:11,fontWeight:700,color:isOff?locColors.OFF.text:lc.text,lineHeight:1.3,display:'flex',alignItems:'center',gap:3}}>
                                                 {periodLabel && <span style={{fontSize:8,color:'var(--text-muted)',fontWeight:800}}>{periodLabel}</span>}
                                                 {isOff ? 'OFF' : (loc?.name || '?')}
                                               </div>
