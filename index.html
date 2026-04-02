@@ -2726,6 +2726,13 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       {/* Top Bar */}
       <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
+          {!isMobile && (
+            <button onClick={toggleSidebar}
+              title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
+              style={{background:'none',border:'1px solid var(--border-interactive)',borderRadius:8,padding:'6px 10px',cursor:'pointer',color:'var(--text-muted)',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,fontFamily:'"DM Sans",sans-serif',transition:'background 0.15s',flexShrink:0}}>
+              {sidebarCollapsed?'▶':'◀'}
+            </button>
+          )}
           <img src="logo.png" alt="logo" style={{width:isMobile?32:36,height:isMobile?32:36,objectFit:'contain',flexShrink:0}} />
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
             <span style={{fontSize:isMobile?16:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
@@ -2804,7 +2811,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
               {id:'locations',icon:'🏢',label:'Locations'},
               {id:'rules',icon:'⚙️',label:'Rules'},
               {id:'vacations',icon:'🏖️',label:'Vacation'},
-              {id:'holidays',icon:'📆',label:'Holidays'},
+              {id:'holidays',icon:'🎉',label:'Holidays'},
             ] : []),
           ].map(tab => {
             const active = activeTab === tab.id;
@@ -2826,13 +2833,6 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         {/* Sidebar — desktop only */}
         {!isMobile && (
           <div style={{width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',userSelect:'none'}}>
-            <div style={{borderBottom:'1px solid var(--border-subtle)',padding:'10px',display:'flex',justifyContent:sidebarCollapsed?'center':'flex-end'}}>
-              <button onClick={toggleSidebar}
-                title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
-                style={{background:'var(--bg-active)',border:'1px solid var(--border-interactive)',borderRadius:8,padding:'6px 9px',cursor:'pointer',color:'var(--text-muted)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,fontFamily:'"DM Sans",sans-serif',transition:'background 0.15s'}}>
-                {sidebarCollapsed?'▶':'◀'}
-              </button>
-            </div>
             <div style={{flex:1,padding:'20px 0'}}>
               {[
                 {id:'schedule',icon:'📅',label:'Schedule'},
@@ -2842,7 +2842,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
                   {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
                   {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
-                  {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+                  {id:'holidays',icon:'🎉',label:`Holidays (${holidays.length})`},
                 ] : []),
               ].map(tab => (
                 <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
@@ -3378,6 +3378,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                                     )})}
                                   </div>
                                 )}
+                              </div>
+                            )}
+                            {!wkend && getNotes()[dk] && (
+                              <div style={{marginTop:isWk?4:2,padding:isWk?'3px 5px':'2px 4px',background:theme==='light'?'#fffbeb':'#78350f44',borderLeft:`2px solid ${theme==='light'?'#f59e0b':'#f59e0b66'}`,borderRadius:2,fontSize:isWk?10:9,color:theme==='light'?'#78350f':'#fcd34d',fontStyle:'italic',lineHeight:1.3,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:isWk?3:2,WebkitBoxOrient:'vertical',wordBreak:'break-word'}}>
+                                {getNotes()[dk]}
                               </div>
                             )}
                           </div>
