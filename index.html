@@ -2797,7 +2797,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       {isMobile && (
         <div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:150,background:'var(--bg-surface)',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'stretch',height:58,WebkitOverflowScrolling:'touch',overflowX:'auto'}}>
           {[
-            {id:'schedule',img:'logo.png',label:'Schedule'},
+            {id:'schedule',icon:'📅',label:'Schedule'},
             ...(isAdmin ? [
               {id:'staff',icon:'👥',label:'Doctors'},
               ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
@@ -2826,9 +2826,16 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         {/* Sidebar — desktop only */}
         {!isMobile && (
           <div style={{width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',userSelect:'none'}}>
+            <div style={{borderBottom:'1px solid var(--border-subtle)',padding:'10px',display:'flex',justifyContent:sidebarCollapsed?'center':'flex-end'}}>
+              <button onClick={toggleSidebar}
+                title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
+                style={{background:'var(--bg-active)',border:'1px solid var(--border-interactive)',borderRadius:8,padding:'6px 9px',cursor:'pointer',color:'var(--text-muted)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,fontFamily:'"DM Sans",sans-serif',transition:'background 0.15s'}}>
+                {sidebarCollapsed?'▶':'◀'}
+              </button>
+            </div>
             <div style={{flex:1,padding:'20px 0'}}>
               {[
-                {id:'schedule',img:'logo.png',label:'Schedule'},
+                {id:'schedule',icon:'📅',label:'Schedule'},
                 ...(isAdmin ? [
                   {id:'staff',icon:'👥',label:`Doctors (${staff.length})`},
                   ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
@@ -2852,13 +2859,6 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   </span>
                 </div>
               ))}
-            </div>
-            <div style={{borderTop:'1px solid var(--border-subtle)',padding:'10px',display:'flex',justifyContent:sidebarCollapsed?'center':'flex-end'}}>
-              <button onClick={toggleSidebar}
-                title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
-                style={{background:'var(--bg-active)',border:'1px solid var(--border-interactive)',borderRadius:8,padding:'6px 9px',cursor:'pointer',color:'var(--text-muted)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,fontFamily:'"DM Sans",sans-serif',transition:'background 0.15s'}}>
-                {sidebarCollapsed?'▶':'◀'}
-              </button>
             </div>
           </div>
         )}
