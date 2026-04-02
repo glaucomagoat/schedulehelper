@@ -1,5 +1,5 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Schedule Helper</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+<link rel="icon" href="logo.png" type="image/png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{transition:background-color 0.2s,color 0.2s;}
@@ -59,7 +59,7 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
   .mob-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 }
 </style>
-<script>(function(){try{var s=localStorage.getItem('session');if(s){var u=JSON.parse(s);if(u&&u.username){var t=localStorage.getItem('theme:'+u.username)||'dark';document.documentElement.setAttribute('data-theme',t);}}}catch(e){}})()</script>
+<script>(function(){try{var s=localStorage.getItem('session');if(s){var u=JSON.parse(s);if(u&&u.username){var t=localStorage.getItem('theme:'+u.username)||'light';document.documentElement.setAttribute('data-theme',t);return;}}document.documentElement.setAttribute('data-theme','light');}catch(e){document.documentElement.setAttribute('data-theme','light');}})()</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head><body><div id="root"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -165,18 +165,18 @@ const LOCATION_COLORS = {
 };
 
 const LOCATION_COLORS_LIGHT = {
-  l1:  {bg:'#cce0ff', border:'#2d6a9f', text:'#1a4a7a'},  // Manteca - blue (distinct from l9)
-  l2:  {bg:'#ddfff0', border:'#1a7a4a', text:'#0a5030'},  // Stockton - green
-  l5:  {bg:'#f0ddff', border:'#7a30a0', text:'#4a0a70'},  // Modesto - purple
-  l6:  {bg:'#fffadd', border:'#9f8030', text:'#5a4a00'},  // Turlock - gold
-  l7:  {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},  // VLSC - rose
-  l8:  {bg:'#fff0e8', border:'#b06030', text:'#6a3000'},  // MSC - orange
-  l9:  {bg:'#ddf0ff', border:'#3070c0', text:'#0a3a70'},  // DHM - sky (distinct from l1)
-  l10: {bg:'#ffe8f0', border:'#c04070', text:'#7a0030'},  // LVC - rose
-  l11: {bg:'#ddfaff', border:'#2090a0', text:'#005060'},  // NCSC - teal
-  l12: {bg:'#eeddff', border:'#6050b0', text:'#300070'},  // SJLSC - indigo
-  l13: {bg:'#e2e2ec', border:'#606070', text:'#303040'},  // Admin - grey (more visible)
-  l14: {bg:'#c8f5e0', border:'#208060', text:'#004030'},  // VA - sea green (distinct from l2)
+  l1:  {bg:'#cce0ff', border:'#2d6a9f', text:'#1d4ed8'},  // Manteca - blue
+  l2:  {bg:'#ddfff0', border:'#1a7a4a', text:'#16a34a'},  // Stockton - green
+  l5:  {bg:'#f0ddff', border:'#7a30a0', text:'#7c3aed'},  // Modesto - purple
+  l6:  {bg:'#fffadd', border:'#9f8030', text:'#b45309'},  // Turlock - amber
+  l7:  {bg:'#ffe8f0', border:'#c04070', text:'#be185d'},  // VLSC - rose
+  l8:  {bg:'#fff0e8', border:'#b06030', text:'#c2410c'},  // MSC - orange
+  l9:  {bg:'#ddf0ff', border:'#3070c0', text:'#0369a1'},  // DHM - sky
+  l10: {bg:'#ffe8f0', border:'#c04070', text:'#be185d'},  // LVC - rose
+  l11: {bg:'#ddfaff', border:'#2090a0', text:'#0e7490'},  // NCSC - teal
+  l12: {bg:'#eeddff', border:'#6050b0', text:'#6d28d9'},  // SJLSC - indigo
+  l13: {bg:'#e2e2ec', border:'#606070', text:'#4b5563'},  // Admin - grey
+  l14: {bg:'#c8f5e0', border:'#208060', text:'#047857'},  // VA - emerald
   OFF: {bg:'#e6e6f0', border:'#8888aa', text:'#44446a'},  // OFF - dim (readable)
 };
 
@@ -609,6 +609,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const isTopLevelAdmin = isAdmin && !user?.adminUsername;
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem('sidebarCollapsed')==='1'; } catch(e) { return false; } });
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
   const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:'',newPassword:'',changingPw:false,pwMsg:''} }
@@ -685,7 +686,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [currentWeekStart, setCurrentWeekStart] = useState(null); // Date of Monday
 
   // Theme
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState('light');
   const locColors = theme === 'light' ? LOCATION_COLORS_LIGHT : LOCATION_COLORS;
 
   // Plan system: A, B, C per month
@@ -868,6 +869,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showHolidayModal, setShowHolidayModal] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState(null);
   const [holidayForm, setHolidayForm] = useState({ name:'', month:0, day:1, halfDay:'closed', note:'' });
+  const [pendingRoleChange, setPendingRoleChange] = useState(null); // {username, newType}
+  const [pendingFinalAction, setPendingFinalAction] = useState(null); // {type:'set',plan:'A'|'B'|'C'} | {type:'unset'}
 
   const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan}`;
   const monthKey = `${currentYear}-${currentMonth}`;
@@ -885,6 +888,12 @@ window.ScheduleHelper = function StaffScheduler() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     try { if (user?.username) localStorage.setItem(`theme:${user.username}`, next); } catch(e) {}
+  }
+
+  function toggleSidebar() {
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    try { localStorage.setItem('sidebarCollapsed', next ? '1' : '0'); } catch(e) {}
   }
 
   function planHasData(plan) {
@@ -1058,7 +1067,7 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => {
     if (user?.username) {
       try {
-        const saved = localStorage.getItem(`theme:${user.username}`) || 'dark';
+        const saved = localStorage.getItem(`theme:${user.username}`) || 'light';
         setTheme(saved);
       } catch(e) {}
     }
@@ -1464,7 +1473,7 @@ window.ScheduleHelper = function StaffScheduler() {
     // Standard/conditional/exception rules need locationId; negative/rotation/complex may not
     if (ruleForm.ruleType === 'standard' && !ruleForm.locationId) return;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
-    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, ...ruleForm }]); }
+    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, createdBy: user?.username || null, ...ruleForm }]); }
     resetRuleForm(); setShowRuleModal(false);
   }
   function resetRuleForm(overrides) {
@@ -1473,7 +1482,8 @@ window.ScheduleHelper = function StaffScheduler() {
   function removeRule(id) { setRules(prev => prev.filter(r => r.id !== id)); }
   function addVacation() {
     if (!vacationForm.staffId || !vacationForm.startDate || !vacationForm.endDate) return;
-    setVacations(prev => [...prev, { id: 'v' + Date.now(), ...vacationForm }]);
+    const now = Date.now();
+    setVacations(prev => [...prev, { id: 'v' + now, createdAt: now, createdBy: user?.username || null, ...vacationForm }]);
     setVacationForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowVacationModal(false);
   }
   function removeVacation(id) { setVacations(prev => prev.filter(v => v.id !== id)); }
@@ -1984,7 +1994,8 @@ window.ScheduleHelper = function StaffScheduler() {
           const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
           if (!s) return `❌ Staff member "${action.staffName}" not found.`;
           if (!action.startDate || !action.endDate) return '❌ Missing start or end date.';
-          const v = { id: 'v' + Date.now(), staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Vacation' };
+          const _vTs = Date.now();
+          const v = { id: 'v' + _vTs, createdAt: _vTs, createdBy: user?.username || null, staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Vacation' };
           setVacations(prev => [...prev, v]);
           return `✅ Added vacation for ${s.name}: ${action.startDate} to ${action.endDate}${action.reason ? ' (' + action.reason + ')' : ''}`;
         }
@@ -2048,7 +2059,7 @@ window.ScheduleHelper = function StaffScheduler() {
           }
           const _ruleTs = Date.now();
           const newRule = {
-            id: 'r' + _ruleTs, createdAt: _ruleTs, staffId: s.id, ruleScope: 'staff', ruleType,
+            id: 'r' + _ruleTs, createdAt: _ruleTs, createdBy: user?.username || null, staffId: s.id, ruleScope: 'staff', ruleType,
             locationId: loc?.id || '', dayOfWeek: action.dayOfWeek || 'Mon',
             weekOfMonth: action.weekOfMonth || 'all', period: action.period || 'both',
             priority: action.priority || 'preferred', description: action.description || '',
@@ -2605,7 +2616,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       boxShadow:'0 32px 80px rgba(0,0,0,0.6)',
     };
     const wrap = <div style={{minHeight:'100vh',background:'linear-gradient(135deg,var(--bg-deep) 0%,var(--login-gradient-mid) 50%,var(--bg-deep) 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'"DM Sans",sans-serif'}}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" /></div>;
-    const logo = (<div style={{textAlign:'center',marginBottom:36}}><div style={{fontSize:40,marginBottom:8}}>📅</div><h1 style={{fontSize:28,fontWeight:700,color:'var(--text-primary)',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'var(--text-muted)',fontSize:15,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
+    const logo = (<div style={{textAlign:'center',marginBottom:36}}><img src="logo.png" alt="Schedule Helper" style={{width:96,height:96,objectFit:'contain',marginBottom:8}} /><h1 style={{fontSize:28,fontWeight:700,color:'var(--text-primary)',margin:0,letterSpacing:'-0.02em'}}>Schedule Helper</h1><p style={{color:'var(--text-muted)',fontSize:15,marginTop:6}}>AI-Powered Staff Scheduling</p></div>);
 
     // ── Reset password step (from URL token) ──
     if (loginForm.resetStep) return (
@@ -2715,22 +2726,26 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       {/* Top Bar */}
       <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
-          <span style={{fontSize:isMobile?20:24}}>📅</span>
+          <img src="logo.png" alt="logo" style={{width:isMobile?32:36,height:isMobile?32:36,objectFit:'contain',flexShrink:0}} />
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
             <span style={{fontSize:isMobile?16:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>Schedule Helper</span>
             {!isMobile && <span style={{fontSize:11,color:'var(--text-dim)',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>}
           </div>
           {isDev && <span style={{fontSize:11,fontWeight:700,padding:'3px 8px',borderRadius:20,background:'#92400e33',color:'#fbbf24',border:'1px solid #92400e',textTransform:'uppercase',letterSpacing:'0.05em'}}>{isMobile?'DEV':'Developer'}</span>}
           {!isDev && user && !isMobile && <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,
-            background:isAdmin?'#1e1e3555':'#1e2a1e55',
-            color:isAdmin?'#818cf8':'#6ee7b7',
-            border:`1px solid ${isAdmin?'#6366f155':'#065f4655'}`,
+            background:isAdmin?(theme==='light'?'#e0e0ff':'#1e1e3555'):(theme==='light'?'#d0f5e8':'#1e2a1e55'),
+            color:isAdmin?(theme==='light'?'#4338ca':'#818cf8'):(theme==='light'?'#065f46':'#6ee7b7'),
+            border:`1px solid ${isAdmin?(theme==='light'?'#6366f1':'#6366f155'):(theme==='light'?'#059669':'#065f4655')}`,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
             {isAdmin?'Admin':'Staff'}
           </span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
           {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
+          <button onClick={toggleTheme}
+            style={{background:'none',border:`1px solid var(--border-interactive)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',display:'flex',alignItems:'center',gap:5}}>
+            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+          </button>
           <div data-profile-menu style={{position:'relative'}}>
             <div onClick={()=>setShowProfileMenu(p=>!p)}
               style={{display:'flex',alignItems:'center',gap:6,padding:isMobile?'6px 10px':'7px 14px',background:showProfileMenu?'var(--border-subtle)':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
@@ -2782,7 +2797,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       {isMobile && (
         <div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:150,background:'var(--bg-surface)',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'stretch',height:58,WebkitOverflowScrolling:'touch',overflowX:'auto'}}>
           {[
-            {id:'schedule',icon:'📅',label:'Schedule'},
+            {id:'schedule',img:'logo.png',label:'Schedule'},
             ...(isAdmin ? [
               {id:'staff',icon:'👥',label:'Doctors'},
               ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
@@ -2799,7 +2814,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   borderTop:`2px solid ${active?'#6366f1':'transparent'}`,
                   background:active?'var(--bg-elevated)':'transparent',
                   color:active?'#818cf8':'var(--text-dim)',transition:'all 0.15s',padding:'4px 6px'}}>
-                <span style={{fontSize:19,lineHeight:1}}>{tab.icon}</span>
+                {tab.img ? <img src={tab.img} alt="" style={{width:22,height:22,objectFit:'contain'}} /> : <span style={{fontSize:19,lineHeight:1}}>{tab.icon}</span>}
                 <span style={{fontSize:9,fontWeight:active?700:500,letterSpacing:'0.02em',whiteSpace:'nowrap'}}>{tab.label}</span>
               </div>
             );
@@ -2810,25 +2825,41 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       <div style={{display:'flex',minHeight:'calc(100vh - 53px)'}}>
         {/* Sidebar — desktop only */}
         {!isMobile && (
-          <div style={{width:220,background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',padding:'20px 0',flexShrink:0}}>
-            {[
-              {id:'schedule',icon:'📅',label:'Schedule'},
-              ...(isAdmin ? [
-                {id:'staff',icon:'👥',label:`Doctors (${staff.length})`},
-                ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
-                {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
-                {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
-                {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
-                {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
-              ] : []),
-            ].map(tab => (
-              <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
-                style={{padding:'12px 24px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
-                  color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',
-                  borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',transition:'all 0.15s'}}>
-                <span>{tab.icon}</span>{tab.label}
-              </div>
-            ))}
+          <div style={{width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',userSelect:'none'}}>
+            <div style={{flex:1,padding:'20px 0'}}>
+              {[
+                {id:'schedule',img:'logo.png',label:'Schedule'},
+                ...(isAdmin ? [
+                  {id:'staff',icon:'👥',label:`Doctors (${staff.length})`},
+                  ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
+                  {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
+                  {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
+                  {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
+                  {id:'holidays',icon:'📆',label:`Holidays (${holidays.length})`},
+                ] : []),
+              ].map(tab => (
+                <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                  title={tab.label}
+                  style={{padding:sidebarCollapsed?'12px 0':'12px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
+                    color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',
+                    borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',
+                    transition:'color 0.15s,background 0.15s,padding 0.25s cubic-bezier(0.4,0,0.2,1)',whiteSpace:'nowrap'}}>
+                  <span style={{flexShrink:0,display:'flex',alignItems:'center',fontSize:sidebarCollapsed?20:18,lineHeight:1}}>
+                    {tab.img ? <img src={tab.img} alt="" style={{width:sidebarCollapsed?22:20,height:sidebarCollapsed?22:20,objectFit:'contain'}} /> : tab.icon}
+                  </span>
+                  <span style={{opacity:sidebarCollapsed?0:1,maxWidth:sidebarCollapsed?0:180,overflow:'hidden',transition:'opacity 0.15s,max-width 0.25s cubic-bezier(0.4,0,0.2,1)',display:'inline-block',whiteSpace:'nowrap'}}>
+                    {tab.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{borderTop:'1px solid var(--border-subtle)',padding:'10px',display:'flex',justifyContent:sidebarCollapsed?'center':'flex-end'}}>
+              <button onClick={toggleSidebar}
+                title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
+                style={{background:'var(--bg-active)',border:'1px solid var(--border-interactive)',borderRadius:8,padding:'6px 9px',cursor:'pointer',color:'var(--text-muted)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,fontFamily:'"DM Sans",sans-serif',transition:'background 0.15s'}}>
+                {sidebarCollapsed?'▶':'◀'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -2855,10 +2886,6 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                       </button>
                     </div>
                   )}
-                  <button onClick={toggleTheme}
-                    style={{background:'none',border:`1px solid var(--border-default)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',display:'flex',alignItems:'center',gap:5}}>
-                    {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
-                  </button>
                   {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate with AI'}
                   </Btn>}
@@ -3157,11 +3184,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                 })}
                 <div style={{marginLeft:8,display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
                   {finalPlanForMonth !== activePlan ? (
-                    <Btn variant="success" onClick={()=>setFinalPlan(activePlan)} style={{fontSize:12,padding:'5px 12px'}} disabled={!planHasData(activePlan)}>
+                    <Btn variant="success" onClick={()=>setPendingFinalAction({type:'set',plan:activePlan})} style={{fontSize:12,padding:'5px 12px'}} disabled={!planHasData(activePlan)}>
                       ✓ Set as Final
                     </Btn>
                   ) : (
-                    <Btn variant="ghost" onClick={clearFinalPlan} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>
+                    <Btn variant="ghost" onClick={()=>setPendingFinalAction({type:'unset'})} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>
                       Unset Final
                     </Btn>
                   )}
@@ -3202,7 +3229,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
 
               {(!isAdmin && !finalPlanForMonth) ? (
                 <div style={{borderRadius:14,border:'1px solid var(--border-subtle)',background:'var(--bg-surface)',display:'flex',alignItems:'center',justifyContent:'center',padding:'60px 24px',flexDirection:'column',gap:12}}>
-                  <div style={{fontSize:32,opacity:0.25}}>📅</div>
+                  <img src="logo.png" alt="" style={{width:48,height:48,objectFit:'contain',opacity:0.25}} />
                   <div style={{fontSize:15,color:'var(--text-dim)',fontWeight:600,textAlign:'center'}}>No schedule has been published for this month yet.</div>
                   <div style={{fontSize:13,color:'var(--text-faint)',textAlign:'center'}}>Check back later or ask your administrator.</div>
                 </div>
@@ -3326,14 +3353,14 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                             {(function(){
                               var holiday = getHolidayForDate(cellYear, cellMonth, day);
                               if (holiday && holiday.halfDay === 'am') return (
-                                <div style={{background:'#78350f33',border:'1px solid #f59e0b44',borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
-                                  <div style={{fontSize:fs.hol,fontWeight:700,color:'#f59e0b'}}>{'⚠️ '+holiday.name+' — AM Only'}</div>
+                                <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:`1px solid ${theme==='light'?'#f59e0b':'#f59e0b44'}`,borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
+                                  <div style={{fontSize:fs.hol,fontWeight:700,color:theme==='light'?'#92400e':'#f59e0b'}}>{'⚠️ '+holiday.name+' — AM Only'}</div>
                                 </div>
                               );
                               if (holiday) return (
-                                <div style={{background:'#7f1d1d44',border:'1px solid #ef444466',borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
-                                  <div style={{fontSize:fs.hol,fontWeight:800,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
-                                  <div style={{fontSize:fs.holSub,color:'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
+                                <div style={{background:theme==='light'?'#fee2e2':'#7f1d1d44',border:`1px solid ${theme==='light'?'#f87171':'#ef444466'}`,borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
+                                  <div style={{fontSize:fs.hol,fontWeight:800,color:theme==='light'?'#b91c1c':'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
+                                  <div style={{fontSize:fs.holSub,color:theme==='light'?'#7f1d1d':'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
                                 </div>
                               );
                               return null;
@@ -3759,10 +3786,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                             <span style={{fontSize:12,fontWeight:600,padding:'3px 10px',borderRadius:20,background:'var(--bg-surface)',color:roleColor,border:`1px solid ${roleColor}44`}}>{roleLabel}</span>
                             <div style={{display:'flex',gap:4}}>
                               {[{v:'staff',l:'Read Only'},{v:'admin',l:'Full Editing'}].map(opt=>(
-                                <span key={opt.v} onClick={()=>mu.userType!==opt.v&&changeManagedUserRole(mu.username,opt.v)}
+                                <span key={opt.v} onClick={()=>mu.userType!==opt.v&&setPendingRoleChange({username:mu.username,newType:opt.v})}
                                   style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:6,cursor:mu.userType===opt.v?'default':'pointer',
-                                    background:mu.userType===opt.v?'#1e1e3f':'var(--bg-surface)',
-                                    color:mu.userType===opt.v?'#818cf8':'var(--text-dim)',
+                                    background:mu.userType===opt.v?(theme==='light'?'#e0e0ff':'#1e1e3f'):'var(--bg-surface)',
+                                    color:mu.userType===opt.v?(theme==='light'?'#4f46e5':'#818cf8'):'var(--text-dim)',
                                     border:`1px solid ${mu.userType===opt.v?'#6366f1':'var(--border-default)'}`,
                                     transition:'all 0.15s'}}>
                                   {opt.l}
@@ -3937,7 +3964,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                             <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
                             {r.description && <span style={{fontSize:13,color:'var(--text-muted)',lineHeight:1.4}}>{r.description}</span>}
-                            {r.createdAt && <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto',flexShrink:0}}>Added {new Date(r.createdAt).toLocaleDateString()}</span>}
+                            {r.createdAt && <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto',flexShrink:0,display:'flex',alignItems:'center',gap:5}}>
+                              Added {new Date(r.createdAt).toLocaleDateString()}
+                              {r.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{r.createdBy}</span>}
+                            </span>}
                           </div>
                         </div>
                         {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
@@ -3971,6 +4001,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                           <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
                           <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
                           {v.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{v.reason}</div>}
+                          {v.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+                            Added {new Date(v.createdAt).toLocaleDateString()}
+                            {v.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{v.createdBy}</span>}
+                          </div>}
                         </div>
                         {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>}
                       </div>
@@ -4077,7 +4111,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           <div style={{display:'flex',gap:8}}>
             {[{v:'staff',l:'👁 Read Only',desc:'View final schedules only'},{v:'admin',l:'✏️ Full Editing',desc:'Edit schedules, staff & rules'}].map(opt=>(
               <div key={opt.v} onClick={()=>setManagerForm(p=>({...p,userType:opt.v}))}
-                style={{flex:1,padding:'10px 12px',borderRadius:8,cursor:'pointer',border:`2px solid ${managerForm.userType===opt.v?'#6366f1':'var(--border-default)'}`,background:managerForm.userType===opt.v?'#1e1e3f':'var(--bg-surface)',transition:'all 0.15s'}}>
+                style={{flex:1,padding:'10px 12px',borderRadius:8,cursor:'pointer',border:`2px solid ${managerForm.userType===opt.v?'#6366f1':'var(--border-default)'}`,background:managerForm.userType===opt.v?(theme==='light'?'#e0e0ff':'#1e1e3f'):'var(--bg-surface)',transition:'all 0.15s'}}>
                 <div style={{fontWeight:700,fontSize:13}}>{opt.l}</div>
                 <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{opt.desc}</div>
               </div>
@@ -4090,6 +4124,94 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           <Btn onClick={createManagedUser}>Create User</Btn>
         </div>
       </Modal>
+
+      {pendingFinalAction && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setPendingFinalAction(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            {pendingFinalAction.type === 'set' ? (<>
+              <div style={{fontSize:22,marginBottom:10}}>📢</div>
+              <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Publish Plan {pendingFinalAction.plan} as Final?</div>
+              <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
+                <b style={{color:'var(--text-primary)'}}>Plan {pendingFinalAction.plan}</b> for <b style={{color:'var(--text-primary)'}}>{MONTHS[currentMonth]} {currentYear}</b> will be published and made visible to all staff members.
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)'}}>
+                  <span style={{color:'#10b981',flexShrink:0,marginTop:1}}>✓</span>
+                  <span>Staff members will immediately be able to view the schedule when they log in.</span>
+                </div>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)'}}>
+                  <span style={{color:'#10b981',flexShrink:0,marginTop:1}}>✓</span>
+                  <span>Only this plan will be visible — Plans A, B, and C are never shown to staff; only the final one is.</span>
+                </div>
+                {finalPlanForMonth && finalPlanForMonth !== pendingFinalAction.plan && (
+                  <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)'}}>
+                    <span style={{color:'#f59e0b',flexShrink:0,marginTop:1}}>⚠</span>
+                    <span>Plan <b>{finalPlanForMonth}</b> is currently final and will be replaced.</span>
+                  </div>
+                )}
+              </div>
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <Btn variant="ghost" onClick={()=>setPendingFinalAction(null)}>Cancel</Btn>
+                <Btn variant="success" onClick={()=>{setFinalPlan(pendingFinalAction.plan);addHistoryEntry(`Plan ${pendingFinalAction.plan} set as final`);setPendingFinalAction(null);}}>
+                  ✓ Publish Plan {pendingFinalAction.plan}
+                </Btn>
+              </div>
+            </>) : (<>
+              <div style={{fontSize:22,marginBottom:10}}>🔒</div>
+              <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Remove Final Status?</div>
+              <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
+                Plan <b style={{color:'var(--text-primary)'}}>{finalPlanForMonth}</b> is currently published for <b style={{color:'var(--text-primary)'}}>{MONTHS[currentMonth]} {currentYear}</b>.
+              </div>
+              <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:`1px solid ${theme==='light'?'#f59e0b':'#f59e0b55'}`,borderRadius:8,padding:'12px 14px',marginBottom:16,display:'flex',flexDirection:'column',gap:6}}>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:theme==='light'?'#92400e':'#f59e0b'}}>
+                  <span style={{flexShrink:0,marginTop:1}}>⚠️</span>
+                  <span><b>Staff members will immediately lose access</b> to the schedule. They will see "No schedule has been published for this month yet."</span>
+                </div>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:theme==='light'?'#92400e':'#f59e0b'}}>
+                  <span style={{flexShrink:0,marginTop:1}}>⚠️</span>
+                  <span>Access will remain unavailable until you set a new final plan.</span>
+                </div>
+              </div>
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <Btn variant="ghost" onClick={()=>setPendingFinalAction(null)}>Cancel</Btn>
+                <Btn variant="danger" onClick={()=>{clearFinalPlan();addHistoryEntry(`Plan ${finalPlanForMonth} unset as final`);setPendingFinalAction(null);}}>
+                  Remove Final Status
+                </Btn>
+              </div>
+            </>)}
+          </div>
+        </div>
+      )}
+
+      {pendingRoleChange && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setPendingRoleChange(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:420,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>🔐</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Change Access Level?</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+              You are changing <b style={{color:'var(--text-primary)'}}>{pendingRoleChange.username}</b> to{' '}
+              {pendingRoleChange.newType === 'admin' ? (
+                <><b style={{color:'#818cf8'}}>Full Editing</b> — this user will be able to edit schedules, staff, locations, and rules.</>
+              ) : (
+                <><b style={{color:'#10b981'}}>Read Only</b> — this user will only be able to view the final published schedule.</>
+              )}
+            </div>
+            {pendingRoleChange.newType === 'admin' && (
+              <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:`1px solid ${theme==='light'?'#f59e0b':'#f59e0b44'}`,borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13,color:theme==='light'?'#92400e':'#f59e0b'}}>
+                ⚠️ Full Editing grants complete write access to all your data. Only grant this to trusted users.
+              </div>
+            )}
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" onClick={()=>setPendingRoleChange(null)}>Cancel</Btn>
+              <Btn variant={pendingRoleChange.newType==='admin'?'primary':'success'} onClick={()=>{changeManagedUserRole(pendingRoleChange.username,pendingRoleChange.newType);setPendingRoleChange(null);}}>
+                Confirm Change
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal open={showLocationModal} onClose={()=>{setShowLocationModal(false);setEditingLocation(null)}} title={editingLocation?'Edit Location':'Add Location'}>
         <Input label="Location Name" value={locationForm.name} onChange={v=>setLocationForm(p=>({...p,name:v}))} placeholder="e.g., Main Office" />
