@@ -653,6 +653,7 @@ window.ScheduleHelper = function StaffScheduler() {
     setSchedules(prev);
     setCanUndo(scheduleHistoryIndexRef.current > 0);
     setCanRedo(true);
+    setRegenDiffSummary(null);
   }
 
   function redoSchedule() {
@@ -662,6 +663,7 @@ window.ScheduleHelper = function StaffScheduler() {
     setSchedules(next);
     setCanUndo(true);
     setCanRedo(scheduleHistoryIndexRef.current < scheduleHistoryRef.current.length - 1);
+    setRegenDiffSummary(null);
   }
 
   function describeScheduleDiff(fromSchedules, toSchedules) {
@@ -707,6 +709,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [aiLog, setAiLog] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [conflictsReport, setConflictsReport] = useState(null); // {conflicts:[], month, year}
+  const [regenDiffSummary, setRegenDiffSummary] = useState(null); // {days:[{dk,wasEmpty,dayChanges}], totalChanges} | null
   const [rulesFilter, setRulesFilter] = useState('all');
   const [rulesSort, setRulesSort] = useState('newest');
   const [devLogs, setDevLogs] = useState([]);
@@ -1618,6 +1621,7 @@ window.ScheduleHelper = function StaffScheduler() {
       'Manual edit: ' + (s ? getLastName(s.name) : staffId) + ' · ' + DAYS_OF_WEEK[dow] + ' ' + dk +
       ' · ' + (period === 'both' ? 'AM+PM' : period.toUpperCase()) + ' → ' + l
     );
+    setRegenDiffSummary(null);
     setSchedules(prev => {
       pushScheduleHistory(prev);
       const sched = { ...prev };
@@ -1772,6 +1776,7 @@ window.ScheduleHelper = function StaffScheduler() {
   async function generateWithAI(userDecisions) {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
+    setRegenDiffSummary(null);
     setGenAmbiguities(null);
     setShowAmbiguityModal(false);
     addLog('info', 'Starting AI schedule generation (weekly batches W1-W4, streaming, full carry-forward)...');
@@ -2033,6 +2038,7 @@ window.ScheduleHelper = function StaffScheduler() {
   async function generatePartialDays(selectedDayKeys) {
     if (!selectedDayKeys || selectedDayKeys.length === 0) return;
     setGenerating(true);
+    setRegenDiffSummary(null);
     addLog('info', `Starting selective day regeneration: ${selectedDayKeys.length} day${selectedDayKeys.length > 1 ? 's' : ''}...`);
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -2191,6 +2197,32 @@ window.ScheduleHelper = function StaffScheduler() {
       const mergedForConflicts = { ...existingSchedule, ...newDayData };
       const pConflicts = detectRuleConflicts(mergedForConflicts);
 
+      // Compute change summary (diff against snapshot taken before API call)
+      const resolveDiffLoc = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
+      const diffDays = [];
+      let totalDiffChanges = 0;
+      for (const dk of Object.keys(newDayData).sort()) {
+        const oldDay = existingSchedule[dk] || {};
+        const newDay = newDayData[dk] || {};
+        const wasEmpty = Object.keys(oldDay).length === 0;
+        const allSids = new Set([...Object.keys(oldDay), ...Object.keys(newDay)]);
+        const dayChanges = [];
+        for (const sid of [...allSids]) {
+          const op = oldDay[sid] || {}; const np = newDay[sid] || {};
+          const oldAM = op.am || 'OFF', newAM = np.am || 'OFF';
+          const oldPM = op.pm || 'OFF', newPM = np.pm || 'OFF';
+          if (oldAM !== newAM || oldPM !== newPM) {
+            const member = staff.find(s => s.id === sid);
+            const parts = [];
+            if (oldAM !== newAM) parts.push({ period: 'AM', from: resolveDiffLoc(oldAM), to: resolveDiffLoc(newAM) });
+            if (oldPM !== newPM) parts.push({ period: 'PM', from: resolveDiffLoc(oldPM), to: resolveDiffLoc(newPM) });
+            dayChanges.push({ staffName: member?.name || sid, staffColor: member?.color || '#666', parts });
+          }
+        }
+        if (dayChanges.length > 0) { diffDays.push({ dk, wasEmpty, dayChanges }); totalDiffChanges += dayChanges.length; }
+      }
+      setRegenDiffSummary({ days: diffDays, totalChanges: totalDiffChanges, noChanges: diffDays.length === 0 });
+
       // Merge into existing schedule
       setSchedules(prev => {
         pushScheduleHistory(prev);
@@ -2261,6 +2293,32 @@ window.ScheduleHelper = function StaffScheduler() {
 
         const requiredRules = staffRules.filter(r => r.priority === 'required');
 
+        // Compute reason for OFF assignments on this date (used below)
+        const holiday = getHolidayForDate(y, m - 1, d);
+        const vacEntry = vacations.find(v => v.staffId === staffId && dk >= v.startDate && dk <= v.endDate);
+        const mlEntry = medicalLeaves.find(ml => ml.staffId === staffId && dk >= ml.startDate && dk <= ml.endDate);
+
+        const getConflictReason = (actualId, otherRules, period) => {
+          if (actualId === 'OFF') {
+            if (holiday) {
+              const closure = holiday.halfDay === 'am' ? 'half-day closure (AM only)' : 'full-day closure';
+              return `Scheduled as OFF — ${holiday.name} is a company holiday (${closure})`;
+            }
+            if (vacEntry) return `Scheduled as OFF — provider is on vacation (${vacEntry.startDate} to ${vacEntry.endDate})`;
+            if (mlEntry) return `Scheduled as OFF — provider is on medical leave${mlEntry.reason ? ' (' + mlEntry.reason + ')' : ''}`;
+            return 'Scheduled as OFF — no override reason detected (AI decision)';
+          }
+          // Actual is a different location — check if another required rule explains it
+          const conflicting = otherRules.find(r => r.id !== rule.id && r.priority === 'required' &&
+            (r.period === period || r.period === 'both') && r.locationId === actualId);
+          if (conflicting) {
+            const cLoc = locations.find(l => l.id === conflicting.locationId)?.name || conflicting.locationId;
+            return `Another required rule assigns ${cLoc} — rules may conflict`;
+          }
+          const actualLocName = locations.find(l => l.id === actualId)?.name || actualId;
+          return `AI assigned ${actualLocName} instead`;
+        };
+
         for (const rule of requiredRules) {
           const loc = locations.find(l => l.id === rule.locationId);
           const locName = loc?.name || rule.locationId;
@@ -2269,18 +2327,20 @@ window.ScheduleHelper = function StaffScheduler() {
           if (period === 'am' || period === 'both') {
             if (periods.am !== rule.locationId) {
               const actualLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
+              const reason = getConflictReason(periods.am, requiredRules, 'am');
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} AM (required) but is at ${actualLoc}`,
-                ruleId: rule.id, current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
+                reason, ruleId: rule.id, current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
                 fix: { date: dk, staffId, period: 'am', locationId: rule.locationId } });
             }
           }
           if (period === 'pm' || period === 'both') {
             if (periods.pm !== rule.locationId) {
               const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
+              const reason = getConflictReason(periods.pm, requiredRules, 'pm');
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} PM (required) but is at ${actualLoc}`,
-                ruleId: rule.id, current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
+                reason, ruleId: rule.id, current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
                 fix: { date: dk, staffId, period: 'pm', locationId: rule.locationId } });
             }
           }
@@ -3409,7 +3469,51 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 <div style={{padding:'12px 18px',background:generating?'#6366f122':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#f59e0b22':'#10b98122'),border:`1px solid ${generating?'#6366f155':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#f59e0b55':'#10b98155')}`,borderRadius:10,marginBottom:conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?8:16,fontSize:14,color:generating?'#818cf8':(conflictsReport&&conflictsReport.conflicts&&conflictsReport.conflicts.length?'#d97706':'#059669'),display:'flex',alignItems:'center',gap:10}}>
                   {generating && <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>}
                   <span style={{flex:1}}>{aiLog}</span>
-                  {!generating && <span onClick={()=>{setAiLog('');setConflictsReport(null)}} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                  {!generating && <span onClick={()=>{setAiLog('');setConflictsReport(null);setRegenDiffSummary(null);}} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                </div>
+              )}
+
+              {/* Regen Change Summary */}
+              {regenDiffSummary && !generating && (
+                <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:10,marginBottom:16,overflow:'hidden'}}>
+                  <div style={{padding:'10px 16px',background:'var(--bg-surface)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:15}}>🔄</span>
+                      <span style={{fontSize:14,fontWeight:700,color:'var(--text-primary)'}}>
+                        {regenDiffSummary.noChanges
+                          ? 'No changes from previous plan'
+                          : `${regenDiffSummary.totalChanges} assignment${regenDiffSummary.totalChanges!==1?'s':''} changed across ${regenDiffSummary.days.length} day${regenDiffSummary.days.length!==1?'s':''}`}
+                      </span>
+                    </div>
+                    <span onClick={()=>setRegenDiffSummary(null)} style={{cursor:'pointer',opacity:0.5,fontSize:13,flexShrink:0}}>✕</span>
+                  </div>
+                  {!regenDiffSummary.noChanges && (
+                    <div style={{maxHeight:300,overflowY:'auto',padding:'6px 0'}}>
+                      {regenDiffSummary.days.map(({dk,wasEmpty,dayChanges})=>{
+                        const [y,mo,d]=dk.split('-').map(Number);
+                        const dt=new Date(y,mo-1,d);
+                        const label=dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+                        return (
+                          <div key={dk} style={{padding:'6px 16px',borderBottom:'1px solid var(--border-subtle)'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                              <span style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.04em'}}>{label}</span>
+                              {wasEmpty && <span style={{fontSize:10,background:'#6366f122',color:'#818cf8',border:'1px solid #6366f133',borderRadius:4,padding:'1px 5px',fontWeight:600}}>NEW</span>}
+                            </div>
+                            {dayChanges.map((ch,ci)=>(
+                              <div key={ci} style={{display:'flex',alignItems:'baseline',gap:8,fontSize:12,padding:'1px 0 1px 8px'}}>
+                                <span style={{color:staffDisplayColor(ch.staffColor,theme),fontWeight:600,whiteSpace:'nowrap',flexShrink:0,minWidth:90}}>{getLastName(ch.staffName)}</span>
+                                <span style={{color:'var(--text-muted)'}}>
+                                  {ch.parts.map((p,pi)=>(
+                                    <span key={pi}>{pi>0?' · ':''}{p.period}: <span style={{color:'var(--text-secondary)',textDecoration:'line-through'}}>{p.from}</span> → <span style={{color:'var(--text-primary)',fontWeight:600}}>{p.to}</span></span>
+                                  ))}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -3450,6 +3554,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>
                             {c.date} ({c.day}) — Current: {c.current} → Suggested: {c.suggested}
                           </div>
+                          {c.reason && (
+                            <div style={{fontSize:11,color:theme==='light'?'#b45309':'#d97706',marginTop:3,fontStyle:'italic',display:'flex',alignItems:'center',gap:4}}>
+                              <span style={{opacity:0.7}}>ℹ️</span>
+                              <span>{c.reason}</span>
+                            </div>
+                          )}
                         </div>
                         {c.fix && (
                           <Btn variant="success" onClick={()=>{
@@ -3696,27 +3806,25 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
                         return (
                           <div key={cellYear+'-'+cellMonth+'-'+day}
-                            style={{minHeight:cellMinH,padding:isMobile?'5px 4px':(isWk?'6px 6px':'4px 4px'),borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)',background:wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)'),cursor:wkend?'default':'pointer',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
-                            onClick={function(){if(!wkend && isAdmin)setEditCell({day:day,dk:dk})}}
-                            onMouseEnter={function(e){if(!wkend && isAdmin)e.currentTarget.style.background='var(--bg-hover)'}}
-                            onMouseLeave={function(e){if(!wkend && isAdmin)e.currentTarget.style.background=wkend?'var(--cell-weekend)':'var(--bg-surface)'}}>
+                            style={{minHeight:cellMinH,padding:isMobile?'5px 4px':(isWk?'6px 6px':'4px 4px'),borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)',background:wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)'),cursor:isAdmin?'pointer':'default',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
+                            onClick={function(){if(isAdmin)setEditCell({day:day,dk:dk})}}
+                            onMouseEnter={function(e){if(isAdmin)e.currentTarget.style.background='var(--bg-hover)'}}
+                            onMouseLeave={function(e){if(isAdmin)e.currentTarget.style.background=wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)');}}>
                             {(()=>{
-                              const hasNote = !wkend && !!getNotes()[dk];
+                              const hasNote = !!getNotes()[dk];
                               return (
                                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
                                   <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'var(--text-faint)':'var(--text-primary)'}}>{day}</span>
                                   <div style={{display:'flex',alignItems:'center',gap:4}}>
-                                    {!wkend && (
-                                      <span
-                                        title={hasNote ? 'View/edit note' : 'Add note'}
-                                        onClick={e=>{e.stopPropagation();const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
-                                        style={{fontSize:isWk?13:11,cursor:'pointer',lineHeight:1,
-                                          opacity:hasNote?0.9:0.2,
-                                          filter:hasNote?'drop-shadow(0 0 3px #f59e0b88)':'none',
-                                          transition:'opacity 0.15s'}}
-                                        onMouseEnter={e=>e.currentTarget.style.opacity='0.9'}
-                                        onMouseLeave={e=>e.currentTarget.style.opacity=hasNote?'0.9':'0.2'}>📝</span>
-                                    )}
+                                    <span
+                                      title={hasNote ? 'View/edit note' : 'Add note'}
+                                      onClick={e=>{e.stopPropagation();const r=e.currentTarget.getBoundingClientRect();setFloatingNote({dk,x:r.left,y:r.bottom+6});}}
+                                      style={{fontSize:isWk?13:11,cursor:'pointer',lineHeight:1,
+                                        opacity:hasNote?0.9:0.2,
+                                        filter:hasNote?'drop-shadow(0 0 3px #f59e0b88)':'none',
+                                        transition:'opacity 0.15s'}}
+                                      onMouseEnter={e=>e.currentTarget.style.opacity='0.9'}
+                                      onMouseLeave={e=>e.currentTarget.style.opacity=hasNote?'0.9':'0.2'}>📝</span>
                                     {!wkend&&<span style={{fontSize:fs.wk,color:'var(--text-dim)',fontWeight:600}}>W{getWeekOfMonth(day)}</span>}
                                   </div>
                                 </div>
@@ -4116,12 +4224,16 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                             ) : (
                               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                                 {sv.map(v => (
-                                  <div key={v.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #f59e0b',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                                    <div>
+                                  <div key={v.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #f59e0b',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                                    <div style={{flex:1,minWidth:0}}>
                                       <div style={{fontSize:14,color:'var(--text-secondary)',fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
                                       {v.reason&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:2}}>{v.reason}</div>}
+                                      {v.editedAt&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,fontStyle:'italic'}}>Edited {new Date(v.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}{v.editedBy&&' by '+v.editedBy}</div>}
                                     </div>
-                                    {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                                    {isAdmin && <div style={{display:'flex',gap:6,marginLeft:8,flexShrink:0}}>
+                                      <span onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{cursor:'pointer',fontSize:13}} title="Edit">✏️</span>
+                                      <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}} title="Delete">🗑️</span>
+                                    </div>}
                                   </div>
                                 ))}
                               </div>
@@ -4139,12 +4251,16 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                             ) : (
                               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                                 {sml.map(ml => (
-                                  <div key={ml.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #8b5cf6',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                                    <div>
+                                  <div key={ml.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #8b5cf6',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                                    <div style={{flex:1,minWidth:0}}>
                                       <div style={{fontSize:14,color:'var(--text-secondary)',fontFamily:'"Space Mono",monospace'}}>{ml.startDate} → {ml.endDate}</div>
                                       {ml.reason&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:2}}>{ml.reason}</div>}
+                                      {ml.editedAt&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,fontStyle:'italic'}}>Edited {new Date(ml.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}{ml.editedBy&&' by '+ml.editedBy}</div>}
                                     </div>
-                                    {isAdmin && <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                                    {isAdmin && <div style={{display:'flex',gap:6,marginLeft:8,flexShrink:0}}>
+                                      <span onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{cursor:'pointer',fontSize:13}} title="Edit">✏️</span>
+                                      <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:13}} title="Delete">🗑️</span>
+                                    </div>}
                                   </div>
                                 ))}
                               </div>
@@ -4586,7 +4702,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
       {/* ====== MODALS ====== */}
 
-      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
+      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length]});setEditingStaff(null);}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
         <Input label="Full Name" value={staffForm.name} onChange={v=>setStaffForm(p=>({...p,name:v}))} placeholder="e.g., Jane Smith MD" />
         <Input label="Role / Title" value={staffForm.role} onChange={v=>setStaffForm(p=>({...p,role:v}))} placeholder="e.g., Ophthalmologist" />
         <div style={{marginBottom:16}}>
@@ -4596,7 +4712,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           </div>
         </div>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length]});setEditingStaff(null);}}>Cancel</Btn>
           <Btn onClick={addStaff}>{editingStaff?'Save':'Add Staff'}</Btn>
         </div>
       </Modal>
@@ -4826,14 +4942,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       const isSel=partialRegenDays.has(dk);
                       const isHol=!!getHolidayForDate(currentYear,currentMonth,day);
                       return(
-                        <div key={day} onClick={isWkend?undefined:()=>{setPartialRegenDays(prev=>{const n=new Set(prev);if(n.has(dk))n.delete(dk);else n.add(dk);return n;});}}
-                          style={{textAlign:'center',padding:'6px 2px',borderRadius:6,fontSize:13,fontWeight:isSel?700:500,cursor:isWkend?'default':'pointer',
-                            background:isSel?'#6366f1':isWkend?'transparent':'var(--bg-surface)',
-                            color:isSel?'#fff':isWkend?'var(--text-dim)':isHol?'#f59e0b':'var(--text-primary)',
-                            border:isSel?'1px solid #818cf8':isHol&&!isWkend?'1px solid #f59e0b44':'1px solid transparent',
-                            opacity:isWkend?0.35:1,transition:'all 0.1s',position:'relative'}}>
+                        <div key={day} onClick={()=>{setPartialRegenDays(prev=>{const n=new Set(prev);if(n.has(dk))n.delete(dk);else n.add(dk);return n;});}}
+                          style={{textAlign:'center',padding:'6px 2px',borderRadius:6,fontSize:13,fontWeight:isSel?700:500,cursor:'pointer',
+                            background:isSel?'#6366f1':isWkend?'var(--bg-elevated)':'var(--bg-surface)',
+                            color:isSel?'#fff':isWkend?'var(--text-muted)':isHol?'#f59e0b':'var(--text-primary)',
+                            border:isSel?'1px solid #818cf8':isHol?'1px solid #f59e0b44':isWkend?'1px solid var(--border-subtle)':'1px solid transparent',
+                            opacity:isWkend?0.65:1,transition:'all 0.1s',position:'relative'}}>
                           {day}
-                          {isHol&&!isWkend&&<div style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:3,height:3,borderRadius:'50%',background:isSel?'#fff':'#f59e0b'}}/>}
+                          {isWkend&&!isSel&&<div style={{position:'absolute',top:2,right:3,fontSize:7,color:'var(--text-dim)',fontWeight:700,lineHeight:1}}>{dow===0?'Su':'Sa'}</div>}
+                          {isHol&&<div style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:3,height:3,borderRadius:'50%',background:isSel?'#fff':'#f59e0b'}}/>}
                         </div>
                       );
                     })}
