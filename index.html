@@ -670,16 +670,25 @@ window.ScheduleHelper = function StaffScheduler() {
     const allDays   = new Set([...Object.keys(fromSched), ...Object.keys(toSched)]);
     const changedDays = [];
     let totalChanges = 0;
+    const resolveLoc = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
     for (const dk of [...allDays].sort()) {
       const fromDay = fromSched[dk] || {};
       const toDay   = toSched[dk]   || {};
       const allSids = new Set([...Object.keys(fromDay), ...Object.keys(toDay)]);
-      let n = 0;
+      const changes = [];
       for (const sid of allSids) {
         const fp = fromDay[sid] || {}; const tp = toDay[sid] || {};
-        if ((fp.am||'OFF') !== (tp.am||'OFF') || (fp.pm||'OFF') !== (tp.pm||'OFF')) n++;
+        const fromAM = fp.am || 'OFF'; const toAM = tp.am || 'OFF';
+        const fromPM = fp.pm || 'OFF'; const toPM = tp.pm || 'OFF';
+        if (fromAM !== toAM || fromPM !== toPM) {
+          const staffMember = staff.find(s => s.id === sid);
+          const staffName = staffMember ? staffMember.name : sid;
+          changes.push({ sid, staffName, fromAM, toAM, fromPM, toPM,
+            fromAMName: resolveLoc(fromAM), toAMName: resolveLoc(toAM),
+            fromPMName: resolveLoc(fromPM), toPMName: resolveLoc(toPM) });
+        }
       }
-      if (n > 0) { changedDays.push({dk, count:n}); totalChanges += n; }
+      if (changes.length > 0) { changedDays.push({dk, count: changes.length, changes}); totalChanges += changes.length; }
     }
     const allKeys = new Set([...Object.keys(fromSchedules), ...Object.keys(toSchedules)]);
     allKeys.delete(scheduleKey);
@@ -733,6 +742,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [genAmbiguities, setGenAmbiguities] = useState(null); // [{question, options, id}]
   const [genAmbiguityAnswers, setGenAmbiguityAnswers] = useState({}); // {id: answer}
   const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
+  const [showAmbiguityModal, setShowAmbiguityModal] = useState(false);
   const [showPdfMenu, setShowPdfMenu] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
@@ -842,6 +852,19 @@ window.ScheduleHelper = function StaffScheduler() {
     return React.createElement('span',{style:{fontSize:11,fontWeight:700,color:colors[rt]||'#6b7280',background:(colors[rt]||'#6b7280')+'22',padding:'1px 6px',borderRadius:4,marginLeft:6}}, (RULE_TYPE_BADGES[rt]||'') + ' ' + rt);
   }
 
+  function staffDisplayColor(color, th) {
+    if (th !== 'light') return color;
+    // Darken colors that are too light to read on white backgrounds in light mode
+    const hex = color.replace('#', '');
+    if (hex.length !== 6) return color;
+    const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
+    const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+    if (lum < 0.35) return color; // Already dark enough
+    const factor = 0.5;
+    const dr = Math.round(r*255*factor), dg = Math.round(g*255*factor), db = Math.round(b*255*factor);
+    return '#' + [dr,dg,db].map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+
   function getLastName(fullName) {
     const parts = fullName.split(' ');
     const suffixes = ['MD', 'OD', 'DO', 'NP', 'PA', 'RN', 'Jr', 'Sr', 'II', 'III'];
@@ -890,6 +913,10 @@ window.ScheduleHelper = function StaffScheduler() {
   const [editingStaff, setEditingStaff] = useState(null);
   const [editingRule, setEditingRule] = useState(null);
   const [editingLocation, setEditingLocation] = useState(null);
+  const [editingVacation, setEditingVacation] = useState(null);
+  const [editingMedicalLeave, setEditingMedicalLeave] = useState(null);
+  const [collapsedVacYears, setCollapsedVacYears] = useState(new Set());
+  const [collapsedMedYears, setCollapsedMedYears] = useState(new Set());
 
   const [staffForm, setStaffForm] = useState({ name:'', role:'', color:defaultColors[0] });
   const [locationForm, setLocationForm] = useState({ name:'', address:'' });
@@ -898,7 +925,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [medicalLeaveForm, setMedicalLeaveForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
   const [showHolidayModal, setShowHolidayModal] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState(null);
-  const [holidayForm, setHolidayForm] = useState({ name:'', month:0, day:1, halfDay:'closed', note:'' });
+  const [holidayForm, setHolidayForm] = useState({ name:'', month:0, day:1, halfDay:'closed', note:'', aiNote:'' });
   const [pendingRoleChange, setPendingRoleChange] = useState(null); // {username, newType}
   const [pendingFinalAction, setPendingFinalAction] = useState(null); // {type:'set',plan:'A'|'B'|'C'} | {type:'unset'}
   const [pendingGenerate, setPendingGenerate] = useState(false);
@@ -1518,7 +1545,12 @@ window.ScheduleHelper = function StaffScheduler() {
   function addVacation() {
     if (!vacationForm.staffId || !vacationForm.startDate || !vacationForm.endDate) return;
     const now = Date.now();
-    setVacations(prev => [...prev, { id: 'v' + now, createdAt: now, createdBy: user?.username || null, ...vacationForm }]);
+    if (editingVacation) {
+      setVacations(prev => prev.map(v => v.id === editingVacation.id ? { ...v, ...vacationForm, editedAt: now, editedBy: user?.username || null } : v));
+      setEditingVacation(null);
+    } else {
+      setVacations(prev => [...prev, { id: 'v' + now, createdAt: now, createdBy: user?.username || null, ...vacationForm }]);
+    }
     setVacationForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowVacationModal(false);
   }
   function removeVacation(id) { setVacations(prev => prev.filter(v => v.id !== id)); }
@@ -1527,7 +1559,12 @@ window.ScheduleHelper = function StaffScheduler() {
   function addMedicalLeave() {
     if (!medicalLeaveForm.staffId || !medicalLeaveForm.startDate || !medicalLeaveForm.endDate) return;
     const now = Date.now();
-    setMedicalLeaves(prev => [...prev, { id: 'ml' + now, createdAt: now, createdBy: user?.username || null, ...medicalLeaveForm }]);
+    if (editingMedicalLeave) {
+      setMedicalLeaves(prev => prev.map(ml => ml.id === editingMedicalLeave.id ? { ...ml, ...medicalLeaveForm, editedAt: now, editedBy: user?.username || null } : ml));
+      setEditingMedicalLeave(null);
+    } else {
+      setMedicalLeaves(prev => [...prev, { id: 'ml' + now, createdAt: now, createdBy: user?.username || null, ...medicalLeaveForm }]);
+    }
     setMedicalLeaveForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowMedicalLeaveModal(false);
   }
   function removeMedicalLeave(id) { setMedicalLeaves(prev => prev.filter(ml => ml.id !== id)); }
@@ -1536,12 +1573,17 @@ window.ScheduleHelper = function StaffScheduler() {
   function addHoliday() {
     if (!holidayForm.name) return;
     if (editingHoliday) {
-      setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? { ...editingHoliday, name:holidayForm.name, month:holidayForm.month, day:holidayForm.day, halfDay:holidayForm.halfDay, note:holidayForm.note } : h));
+      if (editingHoliday.type !== 'fixed') {
+        // Floating holiday: preserve all date-computing fields, only update editable ones
+        setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? { ...editingHoliday, name:holidayForm.name, halfDay:holidayForm.halfDay, note:holidayForm.note, aiNote:holidayForm.aiNote } : h));
+      } else {
+        setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? { ...editingHoliday, name:holidayForm.name, month:holidayForm.month, day:holidayForm.day, halfDay:holidayForm.halfDay, note:holidayForm.note, aiNote:holidayForm.aiNote } : h));
+      }
       setEditingHoliday(null);
     } else {
       setHolidays(prev => [...prev, { id: 'h' + Date.now(), type: 'fixed', ...holidayForm }]);
     }
-    setHolidayForm({ name:'', month:0, day:1, halfDay:'closed', note:'' }); setShowHolidayModal(false);
+    setHolidayForm({ name:'', month:0, day:1, halfDay:'closed', note:'', aiNote:'' }); setShowHolidayModal(false);
   }
   function removeHoliday(id) { setHolidays(prev => prev.filter(h => h.id !== id)); }
 
@@ -1731,6 +1773,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setGenAmbiguities(null);
+    setShowAmbiguityModal(false);
     addLog('info', 'Starting AI schedule generation (weekly batches W1-W4, streaming, full carry-forward)...');
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -1774,7 +1817,7 @@ window.ScheduleHelper = function StaffScheduler() {
         const dt = getHolidayDate(h, currentYear);
         if (!dt || dt.getMonth() !== currentMonth) return;
         const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
-        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
+        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)') + (h.aiNote ? ' — ' + h.aiNote : ''));
       });
       return hols.length > 0 ? hols.join('\n') : 'None this month.';
     })();
@@ -1967,6 +2010,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (criticals.length > 0 && !userDecisions) {
       setGenAmbiguities(criticals);
       setGenPendingContext({ allAssignments, allAmbiguities, totalDays, holidayEdits });
+      setShowAmbiguityModal(true);
       setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
       setGenerating(false);
       return;
@@ -2009,7 +2053,7 @@ window.ScheduleHelper = function StaffScheduler() {
         const dt = getHolidayDate(h, currentYear);
         if (!dt || dt.getMonth() !== currentMonth) return;
         const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
-        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
+        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)') + (h.aiNote ? ' — ' + h.aiNote : ''));
       });
       return hols.length > 0 ? hols.join('\n') : 'None this month.';
     })();
@@ -2490,7 +2534,7 @@ ${vacContext}
 Medical Leave:
 ${mlContext}
 
-Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : '') + (dt ? ' ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : ''); }).join(', ')}
+Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : '') + (dt ? ' ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : '') + (h.aiNote ? ' [Note: ' + h.aiNote + ']' : ''); }).join(', ')}
 
 Active rules: ${rules.length}
 Rules summary:
@@ -3136,8 +3180,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   ...(isTopLevelAdmin ? [{id:'managers',icon:'🔐',label:'Managers'}] : []),
                   {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
                   {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
-                  {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
-                  {id:'medleave',icon:'🏥',label:`Medical Leave (${medicalLeaves.length})`},
+                  {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.filter(v=>(v.startDate||'').startsWith(String(new Date().getFullYear()))).length})`},
+                  {id:'medleave',icon:'🏥',label:`Medical Leave (${medicalLeaves.filter(ml=>(ml.startDate||'').startsWith(String(new Date().getFullYear()))).length})`},
                   {id:'holidays',icon:'🎉',label:`Holidays (${holidays.length})`},
                 ] : []),
               ].map(tab => (
@@ -3190,7 +3234,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   {isAdmin && <Btn variant="success" onClick={()=>{if(staff.length===0||locations.length===0){alert('Please add staff members and locations first.');return;}setPendingGenerate(true);}} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate Plan'}
                   </Btn>}
-                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="secondary" onClick={()=>{setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
                     🗓 Regenerate Days
                   </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
@@ -3330,9 +3374,9 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       {chatMessages.map((msg, i) => (
                         <div key={i} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',marginBottom:8}}>
                           <div style={{maxWidth:'80%',padding:'8px 14px',borderRadius:12,fontSize:14,lineHeight:1.5,whiteSpace:'pre-wrap',
-                            background:msg.role==='user'?'#6366f133':'var(--bg-elevated)',
-                            color:msg.role==='user'?'#c7d2fe':'var(--text-primary)',
-                            border:`1px solid ${msg.role==='user'?'#6366f144':'var(--border-default)'}`,
+                            background:msg.role==='user'?(theme==='light'?'#6366f1':'#6366f133'):'var(--bg-elevated)',
+                            color:msg.role==='user'?(theme==='light'?'#fff':'#c7d2fe'):'var(--text-primary)',
+                            border:`1px solid ${msg.role==='user'?(theme==='light'?'#4f46e5':'#6366f144'):'var(--border-default)'}`,
                             borderBottomRightRadius:msg.role==='user'?4:12,
                             borderBottomLeftRadius:msg.role==='user'?12:4}}>
                             {msg.content}
@@ -3366,6 +3410,22 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   {generating && <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>}
                   <span style={{flex:1}}>{aiLog}</span>
                   {!generating && <span onClick={()=>{setAiLog('');setConflictsReport(null)}} style={{cursor:'pointer',opacity:0.6}}>✕</span>}
+                </div>
+              )}
+
+              {/* Critical Ambiguity Banner — visible when modal was dismissed without resolving */}
+              {genAmbiguities && genAmbiguities.length > 0 && !generating && !showAmbiguityModal && (
+                <div onClick={()=>setShowAmbiguityModal(true)}
+                  style={{padding:'12px 18px',background:theme==='light'?'#fffbeb':'#78350f33',border:`1px solid ${theme==='light'?'#f59e0b':'#f59e0b55'}`,borderRadius:10,marginBottom:16,cursor:'pointer',display:'flex',alignItems:'center',gap:10,transition:'opacity 0.15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.opacity='0.8'} onMouseLeave={e=>e.currentTarget.style.opacity='1'}>
+                  <span style={{fontSize:18}}>⚠️</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>
+                      {genAmbiguities.length} critical ambiguit{genAmbiguities.length>1?'ies':'y'} still need{genAmbiguities.length===1?'s':''} your input
+                    </div>
+                    <div style={{fontSize:12,color:theme==='light'?'#b45309':'#d97706',marginTop:2}}>Click to open the resolution dialog and finalize your schedule.</div>
+                  </div>
+                  <span style={{fontSize:13,fontWeight:600,color:theme==='light'?'#92400e':'#fbbf24',background:theme==='light'?'#fef3c7':'#78350f55',padding:'4px 12px',borderRadius:6,border:`1px solid ${theme==='light'?'#f59e0b44':'#f59e0b33'}`,whiteSpace:'nowrap'}}>Resolve →</span>
                 </div>
               )}
 
@@ -3623,8 +3683,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                               <div style={{display:'flex',flexWrap:'wrap',gap:isWk?'2px 8px':'1px 6px',flex:1,minWidth:0}}>
                                 {g.staff.map(function(s){return(
                                   <div key={s.id} style={{display:'flex',alignItems:'center',gap:2}}>
-                                    <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'var(--text-muted)':s.color,flexShrink:0}} />
-                                    <span style={{fontSize:fs.name,color:isOff?'var(--text-muted)':s.color,fontWeight:600,whiteSpace:'nowrap'}}>
+                                    <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'var(--text-muted)':staffDisplayColor(s.color,theme),flexShrink:0}} />
+                                    <span style={{fontSize:fs.name,color:isOff?'var(--text-muted)':staffDisplayColor(s.color,theme),fontWeight:600,whiteSpace:'nowrap'}}>
                                       {getLastName(s.name)}
                                     </span>
                                   </div>
@@ -3843,9 +3903,10 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:14}}>
                 {staff.map(s=>{
+                  const thisYr = String(new Date().getFullYear());
                   const sr=rules.filter(r=>r.staffId===s.id);
-                  const sv=vacations.filter(v=>v.staffId===s.id);
-                  const sml=medicalLeaves.filter(ml=>ml.staffId===s.id);
+                  const sv=vacations.filter(v=>v.staffId===s.id && (v.startDate||'').startsWith(thisYr));
+                  const sml=medicalLeaves.filter(ml=>ml.staffId===s.id && (ml.startDate||'').startsWith(thisYr));
                   const isExpanded = expandedStaffMember === s.id;
                   return(
                     <div key={s.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${s.color}`,overflow:'hidden'}}>
@@ -4334,27 +4395,58 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               </div>
               {vacations.length===0?(
                 <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}><div style={{fontSize:48,marginBottom:16}}>🏖️</div><p>No vacations scheduled.</p></div>
-              ):(
-                <div style={{display:'flex',flexDirection:'column',gap:12}}>
-                  {vacations.map(v=>{
-                    const s=staff.find(x=>x.id===v.staffId);
-                    return(
-                      <div key={v.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${s?.color||'#666'}`}}>
-                        <div>
-                          <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
-                          <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
-                          {v.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{v.reason}</div>}
-                          {v.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
-                            Added {new Date(v.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
-                            {v.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{v.createdBy}</span>}
-                          </div>}
-                        </div>
-                        {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>}
+              ):(()=>{
+                const thisYear = new Date().getFullYear();
+                const byYear = {};
+                vacations.forEach(v => { const yr = (v.startDate||'').slice(0,4)||'?'; if(!byYear[yr]) byYear[yr]=[]; byYear[yr].push(v); });
+                const years = Object.keys(byYear).sort((a,b)=>b-a);
+                return years.map(yr => {
+                  const isCurrentYear = String(yr) === String(thisYear);
+                  // Set tracks explicit toggles; current year defaults expanded, prior years default collapsed
+                  const isInSet = collapsedVacYears.has(yr);
+                  const isCollapsed = isCurrentYear ? isInSet : !isInSet;
+                  const count = byYear[yr].length;
+                  return (
+                    <div key={yr} style={{marginBottom:16}}>
+                      <div onClick={()=>setCollapsedVacYears(prev=>{const n=new Set(prev);if(n.has(yr))n.delete(yr);else n.add(yr);return n;})}
+                        style={{display:'flex',alignItems:'center',gap:10,cursor:'pointer',padding:'8px 14px',background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:10,marginBottom:isCollapsed?0:10,userSelect:'none'}}>
+                        <span style={{fontSize:16,lineHeight:1,transition:'transform 0.2s',transform:isCollapsed?'rotate(-90deg)':'rotate(0deg)',display:'inline-block'}}>▾</span>
+                        <span style={{fontSize:15,fontWeight:700,color:'var(--text-primary)'}}>{yr}</span>
+                        {isCurrentYear && <span style={{fontSize:11,background:'#6366f122',color:'#6366f1',border:'1px solid #6366f144',borderRadius:6,padding:'1px 7px',fontWeight:600}}>Current Year</span>}
+                        <span style={{marginLeft:'auto',fontSize:12,color:'var(--text-muted)'}}>{count} entr{count!==1?'ies':'y'}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      {!isCollapsed && (
+                        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                          {byYear[yr].map(v=>{
+                            const s=staff.find(x=>x.id===v.staffId);
+                            return(
+                              <div key={v.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'flex-start',borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
+                                  <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
+                                  {v.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{v.reason}</div>}
+                                  {v.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+                                    Added {new Date(v.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+                                    {v.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{v.createdBy}</span>}
+                                  </div>}
+                                  {v.editedAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',gap:5}}>
+                                    <span style={{color:'#f59e0b',fontWeight:600}}>Edited</span> {new Date(v.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+                                    {v.editedBy && <span style={{color:'#f59e0b',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{v.editedBy}</span>}
+                                  </div>}
+                                </div>
+                                {isAdmin && <div style={{display:'flex',gap:8,alignItems:'center',marginLeft:12,flexShrink:0}}>
+                                  <span onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{cursor:'pointer',fontSize:14}} title="Edit">✏️</span>
+                                  <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:14}} title="Delete">🗑️</span>
+                                </div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
 
@@ -4367,27 +4459,57 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               </div>
               {medicalLeaves.length===0?(
                 <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}><div style={{fontSize:48,marginBottom:16}}>🏥</div><p>No medical leaves recorded.</p></div>
-              ):(
-                <div style={{display:'flex',flexDirection:'column',gap:12}}>
-                  {medicalLeaves.map(ml=>{
-                    const s=staff.find(x=>x.id===ml.staffId);
-                    return(
-                      <div key={ml.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${s?.color||'#666'}`}}>
-                        <div>
-                          <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
-                          <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{ml.startDate} → {ml.endDate}</div>
-                          {ml.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{ml.reason}</div>}
-                          {ml.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
-                            Added {new Date(ml.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
-                            {ml.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{ml.createdBy}</span>}
-                          </div>}
-                        </div>
-                        {isAdmin && <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer'}}>🗑️</span>}
+              ):(()=>{
+                const thisYear = new Date().getFullYear();
+                const byYear = {};
+                medicalLeaves.forEach(ml => { const yr = (ml.startDate||'').slice(0,4)||'?'; if(!byYear[yr]) byYear[yr]=[]; byYear[yr].push(ml); });
+                const years = Object.keys(byYear).sort((a,b)=>b-a);
+                return years.map(yr => {
+                  const isCurrentYear = String(yr) === String(thisYear);
+                  const isInSet = collapsedMedYears.has(yr);
+                  const isCollapsed = isCurrentYear ? isInSet : !isInSet;
+                  const count = byYear[yr].length;
+                  return (
+                    <div key={yr} style={{marginBottom:16}}>
+                      <div onClick={()=>setCollapsedMedYears(prev=>{const n=new Set(prev);if(n.has(yr))n.delete(yr);else n.add(yr);return n;})}
+                        style={{display:'flex',alignItems:'center',gap:10,cursor:'pointer',padding:'8px 14px',background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:10,marginBottom:isCollapsed?0:10,userSelect:'none'}}>
+                        <span style={{fontSize:16,lineHeight:1,transition:'transform 0.2s',transform:isCollapsed?'rotate(-90deg)':'rotate(0deg)',display:'inline-block'}}>▾</span>
+                        <span style={{fontSize:15,fontWeight:700,color:'var(--text-primary)'}}>{yr}</span>
+                        {isCurrentYear && <span style={{fontSize:11,background:'#6366f122',color:'#6366f1',border:'1px solid #6366f144',borderRadius:6,padding:'1px 7px',fontWeight:600}}>Current Year</span>}
+                        <span style={{marginLeft:'auto',fontSize:12,color:'var(--text-muted)'}}>{count} entr{count!==1?'ies':'y'}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      {!isCollapsed && (
+                        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                          {byYear[yr].map(ml=>{
+                            const s=staff.find(x=>x.id===ml.staffId);
+                            return(
+                              <div key={ml.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'flex-start',borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
+                                  <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{ml.startDate} → {ml.endDate}</div>
+                                  {ml.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{ml.reason}</div>}
+                                  {ml.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+                                    Added {new Date(ml.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+                                    {ml.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{ml.createdBy}</span>}
+                                  </div>}
+                                  {ml.editedAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',gap:5}}>
+                                    <span style={{color:'#f59e0b',fontWeight:600}}>Edited</span> {new Date(ml.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+                                    {ml.editedBy && <span style={{color:'#f59e0b',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{ml.editedBy}</span>}
+                                  </div>}
+                                </div>
+                                {isAdmin && <div style={{display:'flex',gap:8,alignItems:'center',marginLeft:12,flexShrink:0}}>
+                                  <span onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{cursor:'pointer',fontSize:14}} title="Edit">✏️</span>
+                                  <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:14}} title="Delete">🗑️</span>
+                                </div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
 
@@ -4427,7 +4549,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         <div style={{display:'flex',gap:8,flexShrink:0}}>
                           <span onClick={()=>{
                             setEditingHoliday(h);
-                            setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||''});
+                            setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||'', aiNote:h.aiNote||''});
                             setShowHolidayModal(true);
                           }} style={{cursor:'pointer',fontSize:15}}>✏️</span>
                           {isAdmin && <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
@@ -4464,7 +4586,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
       {/* ====== MODALS ====== */}
 
-      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setEditingStaff(null)}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
+      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
         <Input label="Full Name" value={staffForm.name} onChange={v=>setStaffForm(p=>({...p,name:v}))} placeholder="e.g., Jane Smith MD" />
         <Input label="Role / Title" value={staffForm.role} onChange={v=>setStaffForm(p=>({...p,role:v}))} placeholder="e.g., Ophthalmologist" />
         <div style={{marginBottom:16}}>
@@ -4474,7 +4596,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           </div>
         </div>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setEditingStaff(null)}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});}}>Cancel</Btn>
           <Btn onClick={addStaff}>{editingStaff?'Save':'Add Staff'}</Btn>
         </div>
       </Modal>
@@ -4577,20 +4699,31 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   <b style={{color:'var(--text-primary)'}}>Plan {activePlan}</b> — <b style={{color:'var(--text-primary)'}}>{MONTHS[currentMonth]} {currentYear}</b>
                 </div>
                 {totalChanges > 0 ? (
-                  <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'10px 14px',marginBottom:16,maxHeight:200,overflowY:'auto'}}>
-                    {changedDays.slice(0,6).map(({dk,count})=>{
+                  <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'10px 14px',marginBottom:16,maxHeight:260,overflowY:'auto'}}>
+                    {changedDays.slice(0,5).map(({dk, count, changes})=>{
                       const [y,mo,d] = dk.split('-').map(Number);
                       const dt = new Date(y,mo-1,d);
                       const label = dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' (' + DAYS_OF_WEEK[dt.getDay()] + ')';
                       return (
-                        <div key={dk} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--border-subtle)',fontSize:13}}>
-                          <span style={{color:'var(--text-primary)',fontWeight:500}}>{label}</span>
-                          <span style={{color:'var(--text-muted)',fontSize:12}}>{count} provider{count!==1?'s':''} reassigned</span>
+                        <div key={dk} style={{padding:'5px 0',borderBottom:'1px solid var(--border-subtle)'}}>
+                          <div style={{color:'var(--text-secondary)',fontWeight:600,fontSize:12,marginBottom:3,textTransform:'uppercase',letterSpacing:'0.03em'}}>{label}</div>
+                          {changes.slice(0,5).map(ch => {
+                            const parts = [];
+                            if (ch.fromAM !== ch.toAM) parts.push('AM: ' + ch.fromAMName + ' → ' + ch.toAMName);
+                            if (ch.fromPM !== ch.toPM) parts.push('PM: ' + ch.fromPMName + ' → ' + ch.toPMName);
+                            return (
+                              <div key={ch.sid} style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',fontSize:12,padding:'1px 0 1px 8px',gap:8}}>
+                                <span style={{color:'var(--text-primary)',fontWeight:500,whiteSpace:'nowrap',flexShrink:0}}>{ch.staffName}</span>
+                                <span style={{color:'var(--text-muted)',textAlign:'right'}}>{parts.join(' · ')}</span>
+                              </div>
+                            );
+                          })}
+                          {changes.length > 5 && <div style={{fontSize:11,color:'var(--text-muted)',paddingLeft:8}}>+ {changes.length-5} more provider{changes.length-5!==1?'s':''}</div>}
                         </div>
                       );
                     })}
-                    {changedDays.length > 6 && (
-                      <div style={{fontSize:12,color:'var(--text-muted)',paddingTop:6}}>+ {changedDays.length - 6} more day{changedDays.length-6!==1?'s':''}</div>
+                    {changedDays.length > 5 && (
+                      <div style={{fontSize:12,color:'var(--text-muted)',paddingTop:6}}>+ {changedDays.length - 5} more day{changedDays.length-5!==1?'s':''}</div>
                     )}
                   </div>
                 ) : (
@@ -4755,16 +4888,16 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
       )}
 
-      <Modal open={showLocationModal} onClose={()=>{setShowLocationModal(false);setEditingLocation(null)}} title={editingLocation?'Edit Location':'Add Location'}>
+      <Modal open={showLocationModal} onClose={()=>{setShowLocationModal(false);setEditingLocation(null);setLocationForm({name:'',address:''});}} title={editingLocation?'Edit Location':'Add Location'}>
         <Input label="Location Name" value={locationForm.name} onChange={v=>setLocationForm(p=>({...p,name:v}))} placeholder="e.g., Main Office" />
         <Input label="Description (optional)" value={locationForm.address} onChange={v=>setLocationForm(p=>({...p,address:v}))} placeholder="e.g., Surgery Center" />
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowLocationModal(false);setEditingLocation(null)}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowLocationModal(false);setEditingLocation(null);setLocationForm({name:'',address:''});}}>Cancel</Btn>
           <Btn onClick={addLocation}>{editingLocation?'Save':'Add Location'}</Btn>
         </div>
       </Modal>
 
-      <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null)}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
+      <Modal open={showRuleModal} onClose={()=>{setShowRuleModal(false);setEditingRule(null);resetRuleForm();}} title={editingRule?'Edit Rule':'Add Scheduling Rule'} wide>
         {/* Rule Scope Toggle: Staff Rule vs Location Rule */}
         <div style={{display:'flex',gap:8,marginBottom:16}}>
           {[{v:'staff',l:'👤 Staff Rule',c:'#6366f1'},{v:'location',l:'📍 Location Rule',c:'#10b981'}].map(s=>(
@@ -4868,13 +5001,13 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         )}
 
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowRuleModal(false);setEditingRule(null)}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowRuleModal(false);setEditingRule(null);resetRuleForm();}}>Cancel</Btn>
           <Btn onClick={addRule}>{editingRule?'Save':'Add Rule'}</Btn>
         </div>
       </Modal>
 
       {/* Ambiguity Resolution Modal */}
-      <Modal open={!!genAmbiguities && genAmbiguities.length > 0} onClose={()=>{setGenAmbiguities(null);setGenPendingContext(null)}} title="⚠️ Critical Scheduling Decisions Needed" wide>
+      <Modal open={!!genAmbiguities && genAmbiguities.length > 0 && showAmbiguityModal} onClose={()=>setShowAmbiguityModal(false)} title="⚠️ Critical Scheduling Decisions Needed" wide>
         <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
@@ -4897,7 +5030,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           </div>
         ))}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
-          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({})}}>Cancel (keep current schedule)</Btn>
+          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
           <Btn variant="success" onClick={()=>{
             const decisions = {};
             if (genAmbiguities) genAmbiguities.forEach((amb, ai) => {
@@ -4907,12 +5040,13 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             setGenAmbiguities(null);
             setGenPendingContext(null);
             setGenAmbiguityAnswers({});
+            setShowAmbiguityModal(false);
             generateWithAI(decisions);
           }}>Re-generate with My Decisions</Btn>
         </div>
       </Modal>
 
-      <Modal open={showVacationModal} onClose={()=>setShowVacationModal(false)} title="Add Vacation">
+      <Modal open={showVacationModal} onClose={()=>{setShowVacationModal(false);setEditingVacation(null);setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});}} title={editingVacation?'Edit Vacation':'Add Vacation'}>
         <Select label="Staff Member" value={vacationForm.staffId} onChange={v=>setVacationForm(p=>({...p,staffId:v}))}
           options={staff.map(s=>({value:s.id,label:s.name}))} />
         <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
@@ -4921,12 +5055,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
         <Input label="Reason (optional)" value={vacationForm.reason} onChange={v=>setVacationForm(p=>({...p,reason:v}))} placeholder="e.g., Conference, family vacation" />
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>setShowVacationModal(false)}>Cancel</Btn>
-          <Btn onClick={addVacation}>Add Vacation</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowVacationModal(false);setEditingVacation(null);setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});}}>Cancel</Btn>
+          <Btn onClick={addVacation}>{editingVacation?'Save Changes':'Add Vacation'}</Btn>
         </div>
       </Modal>
 
-      <Modal open={showMedicalLeaveModal} onClose={()=>setShowMedicalLeaveModal(false)} title="Add Medical Leave">
+      <Modal open={showMedicalLeaveModal} onClose={()=>{setShowMedicalLeaveModal(false);setEditingMedicalLeave(null);setMedicalLeaveForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});}} title={editingMedicalLeave?'Edit Medical Leave':'Add Medical Leave'}>
         <Select label="Staff Member" value={medicalLeaveForm.staffId} onChange={v=>setMedicalLeaveForm(p=>({...p,staffId:v}))}
           options={staff.map(s=>({value:s.id,label:s.name}))} />
         <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
@@ -4935,25 +5069,41 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
         <Input label="Reason (optional)" value={medicalLeaveForm.reason} onChange={v=>setMedicalLeaveForm(p=>({...p,reason:v}))} placeholder="e.g., Surgery recovery, illness" />
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>setShowMedicalLeaveModal(false)}>Cancel</Btn>
-          <Btn onClick={addMedicalLeave}>Add Medical Leave</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowMedicalLeaveModal(false);setEditingMedicalLeave(null);setMedicalLeaveForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});}}>Cancel</Btn>
+          <Btn onClick={addMedicalLeave}>{editingMedicalLeave?'Save Changes':'Add Medical Leave'}</Btn>
         </div>
       </Modal>
 
-      <Modal open={showHolidayModal} onClose={()=>{setShowHolidayModal(false);setEditingHoliday(null)}} title={editingHoliday?'Edit Holiday':'Add Holiday'}>
+      <Modal open={showHolidayModal} onClose={()=>{setShowHolidayModal(false);setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,halfDay:'closed',note:'',aiNote:''});}} title={editingHoliday?'Edit Holiday':'Add Holiday'}>
         <Input label="Holiday Name" value={holidayForm.name} onChange={v=>setHolidayForm(p=>({...p,name:v}))} placeholder="e.g., Veterans Day" />
-        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:16}}>
-          <Select label="Month" value={holidayForm.month} onChange={v=>setHolidayForm(p=>({...p,month:parseInt(v)}))}
-            options={MONTHS.map((m,i)=>({value:i,label:m}))} />
-          <Select label="Day" value={holidayForm.day} onChange={v=>setHolidayForm(p=>({...p,day:parseInt(v)}))}
-            options={Array.from({length:31},(_,i)=>({value:i+1,label:String(i+1)}))} />
-          <Select label="Closure Type" value={holidayForm.halfDay||'closed'} onChange={v=>setHolidayForm(p=>({...p,halfDay:v}))}
-            options={[{value:'closed',label:'Full Day Closed'},{value:'am',label:'AM Only (close at noon)'}]} />
-        </div>
-        <Input label="Note (optional)" value={holidayForm.note} onChange={v=>setHolidayForm(p=>({...p,note:v}))} placeholder="e.g., Office open AM only" />
-        <p style={{fontSize:12,color:'var(--text-dim)',marginTop:4}}>Note: For floating holidays (e.g., 3rd Monday), edit the saved holiday definition directly.</p>
-        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowHolidayModal(false);setEditingHoliday(null)}}>Cancel</Btn>
+        {editingHoliday && editingHoliday.type !== 'fixed' ? (
+          <div style={{marginTop:8,marginBottom:4}}>
+            <div style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:6}}>Date</div>
+            <div style={{padding:'10px 14px',background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:8,fontSize:14,color:'var(--text-secondary)',display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:16}}>📅</span>
+              <div>
+                <div style={{fontWeight:600,color:'var(--text-primary)'}}>{(()=>{const dt=getHolidayDate(editingHoliday,currentYear);return dt?dt.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'Date varies';})()}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Floating holiday — date is computed automatically each year and cannot be changed here.</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginTop:4}}>
+            <Select label="Month" value={holidayForm.month} onChange={v=>setHolidayForm(p=>({...p,month:parseInt(v)}))}
+              options={MONTHS.map((m,i)=>({value:i,label:m}))} />
+            <Select label="Day" value={holidayForm.day} onChange={v=>setHolidayForm(p=>({...p,day:parseInt(v)}))}
+              options={Array.from({length:31},(_,i)=>({value:i+1,label:String(i+1)}))} />
+          </div>
+        )}
+        <Select label="Closure Type" value={holidayForm.halfDay||'closed'} onChange={v=>setHolidayForm(p=>({...p,halfDay:v}))}
+          options={[{value:'closed',label:'Full Day Closed'},{value:'am',label:'AM Only (close at noon)'}]} style={{marginTop:4}} />
+        <Input label="Display Note (optional)" value={holidayForm.note} onChange={v=>setHolidayForm(p=>({...p,note:v}))} placeholder="e.g., Office open AM only" />
+        <Textarea label="AI Scheduling Instructions (optional)" value={holidayForm.aiNote} onChange={v=>setHolidayForm(p=>({...p,aiNote:v}))}
+          placeholder="e.g., On this day, assign all staff to their nearest location. Dr. Smith should cover Stockton if present."
+          rows={3} />
+        <p style={{fontSize:11,color:'var(--text-dim)',marginTop:2}}>These instructions are sent to the AI when generating schedules for months that include this holiday.</p>
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
+          <Btn variant="ghost" onClick={()=>{setShowHolidayModal(false);setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,halfDay:'closed',note:'',aiNote:''});}}>Cancel</Btn>
           <Btn onClick={addHoliday}>{editingHoliday?'Save':'Add Holiday'}</Btn>
         </div>
       </Modal>
