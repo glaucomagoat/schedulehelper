@@ -624,6 +624,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [locations, setLocations] = useState([]);
   const [rules, setRules] = useState([]);
   const [vacations, setVacations] = useState([]);
+  const [medicalLeaves, setMedicalLeaves] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [schedules, setSchedules] = useState({});
   const [dayNotes, setDayNotes] = useState({});        // { [scheduleKey]: { [dk]: "text" } }
@@ -632,6 +633,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const scheduleHistoryIndexRef = useRef(-1);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [pendingUndoRedo, setPendingUndoRedo] = useState(null); // {type:'undo'|'redo', summary}
 
   function pushScheduleHistory(prevSchedules) {
     // Trim any redo history beyond current index
@@ -660,6 +662,32 @@ window.ScheduleHelper = function StaffScheduler() {
     setSchedules(next);
     setCanUndo(true);
     setCanRedo(scheduleHistoryIndexRef.current < scheduleHistoryRef.current.length - 1);
+  }
+
+  function describeScheduleDiff(fromSchedules, toSchedules) {
+    const fromSched = fromSchedules[scheduleKey] || {};
+    const toSched   = toSchedules[scheduleKey]   || {};
+    const allDays   = new Set([...Object.keys(fromSched), ...Object.keys(toSched)]);
+    const changedDays = [];
+    let totalChanges = 0;
+    for (const dk of [...allDays].sort()) {
+      const fromDay = fromSched[dk] || {};
+      const toDay   = toSched[dk]   || {};
+      const allSids = new Set([...Object.keys(fromDay), ...Object.keys(toDay)]);
+      let n = 0;
+      for (const sid of allSids) {
+        const fp = fromDay[sid] || {}; const tp = toDay[sid] || {};
+        if ((fp.am||'OFF') !== (tp.am||'OFF') || (fp.pm||'OFF') !== (tp.pm||'OFF')) n++;
+      }
+      if (n > 0) { changedDays.push({dk, count:n}); totalChanges += n; }
+    }
+    const allKeys = new Set([...Object.keys(fromSchedules), ...Object.keys(toSchedules)]);
+    allKeys.delete(scheduleKey);
+    let otherPlanChanges = 0;
+    for (const k of allKeys) {
+      if (JSON.stringify(fromSchedules[k]||{}) !== JSON.stringify(toSchedules[k]||{})) otherPlanChanges++;
+    }
+    return { changedDays, totalChanges, otherPlanChanges };
   }
 
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
@@ -858,6 +886,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showRuleModal, setShowRuleModal] = useState(false);
   const [showVacationModal, setShowVacationModal] = useState(false);
+  const [showMedicalLeaveModal, setShowMedicalLeaveModal] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   const [editingRule, setEditingRule] = useState(null);
   const [editingLocation, setEditingLocation] = useState(null);
@@ -866,11 +895,15 @@ window.ScheduleHelper = function StaffScheduler() {
   const [locationForm, setLocationForm] = useState({ name:'', address:'' });
   const [ruleForm, setRuleForm] = useState({ staffId:'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'' });
   const [vacationForm, setVacationForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
+  const [medicalLeaveForm, setMedicalLeaveForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
   const [showHolidayModal, setShowHolidayModal] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState(null);
   const [holidayForm, setHolidayForm] = useState({ name:'', month:0, day:1, halfDay:'closed', note:'' });
   const [pendingRoleChange, setPendingRoleChange] = useState(null); // {username, newType}
   const [pendingFinalAction, setPendingFinalAction] = useState(null); // {type:'set',plan:'A'|'B'|'C'} | {type:'unset'}
+  const [pendingGenerate, setPendingGenerate] = useState(false);
+  const [showPartialRegenModal, setShowPartialRegenModal] = useState(false);
+  const [partialRegenDays, setPartialRegenDays] = useState(new Set());
 
   const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan}`;
   const monthKey = `${currentYear}-${currentMonth}`;
@@ -1033,6 +1066,7 @@ window.ScheduleHelper = function StaffScheduler() {
       }
 
       const v = await d('vacations'); if (v) setVacations(v);
+      const ml = await d('medicalLeaves'); if (ml) setMedicalLeaves(ml);
       const h = await d('holidays'); if (h) setHolidays(h); else setHolidays(PRESET_HOLIDAYS);
       const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
       const dn = await d('dayNotes'); if (dn) setDayNotes(dn);
@@ -1052,6 +1086,7 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('locations', locations); }, [locations]);
   useEffect(() => { if (user) saveData('rules', rules); }, [rules]);
   useEffect(() => { if (user) saveData('vacations', vacations); }, [vacations]);
+  useEffect(() => { if (user) saveData('medicalLeaves', medicalLeaves); }, [medicalLeaves]);
   useEffect(() => { if (user) saveData('planHistory', planHistory); }, [planHistory]);
   useEffect(() => { if (user) saveData('holidays', holidays); }, [holidays]);
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
@@ -1430,7 +1465,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function resetDevData() {
     if (!confirm('Reset all data to presets? This will clear schedules, vacations, and restore default staff, locations & rules.')) return;
-    setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS); setVacations([]); setSchedules({});
+    setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS); setVacations([]); setMedicalLeaves([]); setSchedules({});
     await window.storage.set(`${user.username}:staff`, JSON.stringify(PRESET_STAFF));
     await window.storage.set(`${user.username}:locations`, JSON.stringify(PRESET_LOCATIONS));
     await window.storage.set(`${user.username}:rules`, JSON.stringify(PRESET_RULES));
@@ -1450,7 +1485,7 @@ window.ScheduleHelper = function StaffScheduler() {
     localStorage.removeItem('sessionToken');
     try { await window.storage.delete('session'); } catch(e) {} // clean up any old cloud session
     setUser(null); setIsDev(false); setChatMessages([]);
-    setStaff([]); setLocations([]); setRules([]); setVacations([]); setHolidays([]); setSchedules({});
+    setStaff([]); setLocations([]); setRules([]); setVacations([]); setMedicalLeaves([]); setHolidays([]); setSchedules({});
   }
 
   function addStaff() {
@@ -1459,7 +1494,7 @@ window.ScheduleHelper = function StaffScheduler() {
     else { setStaff(prev => [...prev, { id: 's' + Date.now(), ...staffForm }]); }
     setStaffForm({ name:'', role:'', color:defaultColors[staff.length%defaultColors.length] }); setShowStaffModal(false);
   }
-  function removeStaff(id) { if (!confirm('Remove this staff member and all their rules/vacations?')) return; setStaff(p=>p.filter(s=>s.id!==id)); setRules(p=>p.filter(r=>r.staffId!==id)); setVacations(p=>p.filter(v=>v.staffId!==id)); }
+  function removeStaff(id) { if (!confirm('Remove this staff member and all their rules, vacations, and medical leaves?')) return; setStaff(p=>p.filter(s=>s.id!==id)); setRules(p=>p.filter(r=>r.staffId!==id)); setVacations(p=>p.filter(v=>v.staffId!==id)); setMedicalLeaves(p=>p.filter(ml=>ml.staffId!==id)); }
   function addLocation() {
     if (!locationForm.name) return;
     if (editingLocation) { setLocations(prev => prev.map(l => l.id === editingLocation.id ? { ...l, ...locationForm } : l)); setEditingLocation(null); }
@@ -1470,8 +1505,8 @@ window.ScheduleHelper = function StaffScheduler() {
   function addRule() {
     const isLocationRule = ruleForm.ruleScope === 'location';
     if (!isLocationRule && !ruleForm.staffId) return;
-    // Standard/conditional/exception rules need locationId; negative/rotation/complex may not
-    if (ruleForm.ruleType === 'standard' && !ruleForm.locationId) return;
+    // Standard/conditional/exception/rotation rules need locationId; negative/complex may not
+    if (['standard','conditional','exception','rotation'].includes(ruleForm.ruleType) && !ruleForm.locationId) return;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
     else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, createdBy: user?.username || null, ...ruleForm }]); }
     resetRuleForm(); setShowRuleModal(false);
@@ -1488,6 +1523,15 @@ window.ScheduleHelper = function StaffScheduler() {
   }
   function removeVacation(id) { setVacations(prev => prev.filter(v => v.id !== id)); }
   function isOnVacation(staffId, dateStr) { return vacations.some(v => v.staffId === staffId && dateStr >= v.startDate && dateStr <= v.endDate); }
+
+  function addMedicalLeave() {
+    if (!medicalLeaveForm.staffId || !medicalLeaveForm.startDate || !medicalLeaveForm.endDate) return;
+    const now = Date.now();
+    setMedicalLeaves(prev => [...prev, { id: 'ml' + now, createdAt: now, createdBy: user?.username || null, ...medicalLeaveForm }]);
+    setMedicalLeaveForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowMedicalLeaveModal(false);
+  }
+  function removeMedicalLeave(id) { setMedicalLeaves(prev => prev.filter(ml => ml.id !== id)); }
+  function isOnMedicalLeave(staffId, dateStr) { return medicalLeaves.some(ml => ml.staffId === staffId && dateStr >= ml.startDate && dateStr <= ml.endDate); }
 
   function addHoliday() {
     if (!holidayForm.name) return;
@@ -1650,9 +1694,9 @@ window.ScheduleHelper = function StaffScheduler() {
       summary += `  ${dk} (${DAYS_OF_WEEK[dow]}):\n`;
       for (const [sid, periods] of Object.entries(ds)) {
         const s = staff.find(x => x.id === sid);
-        if (!s) continue;
-        const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
-        const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
+        if (!s || !periods || typeof periods !== 'object') continue;
+        const amLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am || '—');
+        const pmLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm || '—');
         if (amLoc === pmLoc) summary += `    ${s.name}: ${amLoc}\n`;
         else summary += `    ${s.name}: AM=${amLoc}, PM=${pmLoc}\n`;
       }
@@ -1721,6 +1765,9 @@ window.ScheduleHelper = function StaffScheduler() {
     const vacationLines = vacations.length > 0
       ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
       : 'None.';
+    const medicalLeaveLines = medicalLeaves.length > 0
+      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
+      : 'None.';
     const holidayLines = (()=>{
       const hols = [];
       holidays.forEach(h => {
@@ -1737,10 +1784,13 @@ window.ScheduleHelper = function StaffScheduler() {
       'MONTH: ' + MONTHS[currentMonth] + ' ' + currentYear + ' (' + daysInMonth + ' days)\n' +
       'The 1st falls on ' + firstDayName + '.\n\n' +
       'STAFF MEMBERS:\n' + staffLines + '\n\n' +
-      'LOCATIONS:\n' + locationLines + '\n\n' +
+      'LOCATIONS:\n' + locationLines + '\n' +
+      'VALID LOCATION IDs (exhaustive list): ' + locations.map(function(l){return l.id;}).join(', ') + ', OFF\n' +
+      'CRITICAL: You MUST only assign location IDs from the list above. NEVER invent, guess, or approximate a location ID. If no rule applies, assign "OFF". Any other ID is invalid.\n\n' +
       prevMonthContext + '\n\n' +
       'SCHEDULING RULES (by provider):\n' + rulesSummary + '\n\n' +
       'VACATION / OUT OF OFFICE:\n' + vacationLines + '\n\n' +
+      'MEDICAL LEAVE:\n' + medicalLeaveLines + '\n\n' +
       'COMPANY HOLIDAYS:\n' + holidayLines + '\n' +
       decisionsBlock + '\n' +
       'SCHEDULING INSTRUCTIONS:\n' +
@@ -1751,9 +1801,10 @@ window.ScheduleHelper = function StaffScheduler() {
       '- For CONDITIONAL rules: evaluate the condition and apply accordingly.\n' +
       '- For EXCEPTION rules: apply the base rule UNLESS the exception condition is met.\n' +
       '- For NEGATIVE CONSTRAINT rules: ensure the constraint is satisfied (e.g., "no more than 2 Stockton Thursdays").\n' +
-      '- No rule or "OFF" \u2192 mark OFF. Vacation \u2192 OFF both AM/PM.\n' +
+      '- No rule or "OFF" \u2192 mark OFF. Vacation \u2192 OFF both AM/PM. Medical Leave \u2192 OFF both AM/PM.\n' +
       '- Holidays CLOSED \u2192 OFF both. Half-day \u2192 schedule AM, OFF PM.\n' +
       '- 5th occurrence of a weekday \u2192 use W4 rules.\n' +
+      '- LOCATION IDs: Only use IDs from the VALID LOCATION IDs list. Do NOT infer, guess, or construct IDs. The list is the only source of truth.\n' +
       '- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.';
 
     addLog('info', `System prompt: ${systemPrompt.length} chars | ${allWeekdays.length} weekdays | ${batches.length} weekly batches`);
@@ -1810,7 +1861,7 @@ window.ScheduleHelper = function StaffScheduler() {
         '    { "id": "unique_id", "severity": "critical|minor", "question": "≤12 words" }\n' +
         '  ]\n' +
         '}\n' +
-        'Use exact IDs. Include every listed day and every staff member.\n' +
+        'Use ONLY the exact staff IDs and location IDs provided in the system prompt. Never invent or approximate IDs. Include every listed day and every staff member.\n' +
         'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly.\n' +
         'For MINOR ambiguities: auto-resolve silently. Do NOT output auto_resolved.';
 
@@ -1886,6 +1937,27 @@ window.ScheduleHelper = function StaffScheduler() {
     }
     if (holidayEdits > 0) addLog('info', `Holiday enforcement: ${holidayEdits} corrections`);
 
+    // Post-process: strip any hallucinated/invalid location IDs — replace with OFF
+    const validLocIds = new Set(locations.map(function(l){ return l.id; }));
+    validLocIds.add('OFF');
+    let invalidIdEdits = 0;
+    const invalidIdsFound = new Set();
+    for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
+      for (const sid of Object.keys(dayAssignments)) {
+        if (dayAssignments[sid].am && !validLocIds.has(dayAssignments[sid].am)) {
+          invalidIdsFound.add(dayAssignments[sid].am);
+          dayAssignments[sid].am = 'OFF';
+          invalidIdEdits++;
+        }
+        if (dayAssignments[sid].pm && !validLocIds.has(dayAssignments[sid].pm)) {
+          invalidIdsFound.add(dayAssignments[sid].pm);
+          dayAssignments[sid].pm = 'OFF';
+          invalidIdEdits++;
+        }
+      }
+    }
+    if (invalidIdEdits > 0) addLog('warn', `Invalid location IDs replaced with OFF: ${[...invalidIdsFound].join(', ')} (${invalidIdEdits} slots corrected)`);
+
     setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [scheduleKey]: allAssignments }; });
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
     addHistoryEntry('AI generated schedule · ' + totalDays + ' days · ' + batches.length + ' batches');
@@ -1914,6 +1986,194 @@ window.ScheduleHelper = function StaffScheduler() {
     setGenerating(false);
   }
 
+  async function generatePartialDays(selectedDayKeys) {
+    if (!selectedDayKeys || selectedDayKeys.length === 0) return;
+    setGenerating(true);
+    addLog('info', `Starting selective day regeneration: ${selectedDayKeys.length} day${selectedDayKeys.length > 1 ? 's' : ''}...`);
+
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const rulesSummary = buildRulesSummary();
+    const prevMonthContext = getPreviousMonthContext();
+
+    const staffLines = staff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
+    const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
+    const vacationLines = vacations.length > 0
+      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
+      : 'None.';
+    const medicalLeaveLines = medicalLeaves.length > 0
+      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
+      : 'None.';
+    const holidayLinesP = (()=>{
+      const hols = [];
+      holidays.forEach(h => {
+        const dt = getHolidayDate(h, currentYear);
+        if (!dt || dt.getMonth() !== currentMonth) return;
+        const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        hols.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
+      });
+      return hols.length > 0 ? hols.join('\n') : 'None this month.';
+    })();
+    const firstDayName = DAYS_OF_WEEK[new Date(currentYear, currentMonth, 1).getDay()];
+
+    const partialSystemPrompt = 'You are an expert staff scheduling assistant for a multi-location ophthalmology/optometry practice.\n\n' +
+      'MONTH: ' + MONTHS[currentMonth] + ' ' + currentYear + ' (' + daysInMonth + ' days)\n' +
+      'The 1st falls on ' + firstDayName + '.\n\n' +
+      'STAFF MEMBERS:\n' + staffLines + '\n\n' +
+      'LOCATIONS:\n' + locationLines + '\n' +
+      'VALID LOCATION IDs (exhaustive list): ' + locations.map(function(l){return l.id;}).join(', ') + ', OFF\n' +
+      'CRITICAL: You MUST only assign location IDs from the list above. NEVER invent, guess, or approximate a location ID. If no rule applies, assign "OFF". Any other ID is invalid.\n\n' +
+      prevMonthContext + '\n\n' +
+      'SCHEDULING RULES (by provider):\n' + rulesSummary + '\n\n' +
+      'VACATION / OUT OF OFFICE:\n' + vacationLines + '\n\n' +
+      'MEDICAL LEAVE:\n' + medicalLeaveLines + '\n\n' +
+      'COMPANY HOLIDAYS:\n' + holidayLinesP + '\n\n' +
+      'SCHEDULING INSTRUCTIONS:\n' +
+      '- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4.\n' +
+      '- Follow REQUIRED rules strictly. PREFERRED when possible.\n' +
+      '- Cross-provider dependencies: pay attention to rotations and conditional rules.\n' +
+      '- For ROTATION rules: check the PREVIOUS MONTH CONTEXT and EXISTING SCHEDULE below to determine whose turn it is.\n' +
+      '- For CONDITIONAL rules: evaluate the condition and apply accordingly.\n' +
+      '- For EXCEPTION rules: apply the base rule UNLESS the exception condition is met.\n' +
+      '- For NEGATIVE CONSTRAINT rules: count occurrences across the ENTIRE month (including existing days).\n' +
+      '- No rule or "OFF" \u2192 mark OFF. Vacation \u2192 OFF both AM/PM. Medical Leave \u2192 OFF both AM/PM.\n' +
+      '- Holidays CLOSED \u2192 OFF both. Half-day \u2192 schedule AM, OFF PM.\n' +
+      '- 5th occurrence of a weekday \u2192 use W4 rules.\n' +
+      '- LOCATION IDs: Only use IDs from the VALID LOCATION IDs list. Do NOT infer, guess, or construct IDs. The list is the only source of truth.\n' +
+      '- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.';
+
+    const existingSchedule = getSchedule();
+    const selectedSet = new Set(selectedDayKeys);
+    const existingNonSelectedDays = Object.keys(existingSchedule).filter(dk => !selectedSet.has(dk)).sort();
+    let partialPriorBlock = '';
+    if (existingNonSelectedDays.length > 0) {
+      partialPriorBlock = 'EXISTING SCHEDULE (days NOT being regenerated — use for constraint counting and rotation tracking):\n';
+      existingNonSelectedDays.forEach(function(dk) {
+        const dayData = existingSchedule[dk];
+        const d = parseInt(dk.split('-')[2]);
+        const dow = new Date(currentYear, currentMonth, d).getDay();
+        const entries = Object.entries(dayData).map(function(e) {
+          return e[0] + '=' + (e[1].am||'OFF') + '/' + (e[1].pm||'OFF');
+        }).join(' ');
+        partialPriorBlock += '  ' + dk + '(' + DAYS_OF_WEEK[dow] + '): ' + entries + '\n';
+      });
+      partialPriorBlock += 'Use this for: (1) monthly constraint counting, (2) conditional/rotation context.\n\n';
+    }
+
+    const daysList = selectedDayKeys.slice().sort().map(dk => {
+      const parts = dk.split('-').map(Number);
+      const d = parts[2];
+      const dt = new Date(currentYear, currentMonth, d);
+      const wk = Math.floor((d - 1) / 7) + 1;
+      return dk + ' (' + DAYS_OF_WEEK[dt.getDay()] + ', W' + wk + ')';
+    }).join(', ');
+
+    const partialBatchPrompt = partialPriorBlock +
+      'TASK: Regenerate schedule for ONLY these selected days: ' + daysList + '\n\n' +
+      'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
+      '{\n  "assignments": {\n    "YYYY-MM-DD": {\n      "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }\n    }\n  }\n}\n' +
+      'Use ONLY the exact staff IDs and location IDs from the system prompt. Never invent or approximate IDs. Include every selected day and every staff member.';
+
+    addLog('request', `Partial regen: ${selectedDayKeys.length} day${selectedDayKeys.length>1?'s':''} | ${partialBatchPrompt.length} chars`);
+    setAiLog('⏳ Regenerating ' + selectedDayKeys.length + ' selected day' + (selectedDayKeys.length > 1 ? 's' : '') + '...');
+
+    try {
+      const partialResult = await streamClaudeAPI({
+        model: "claude-sonnet-4-6",
+        max_tokens: 8192,
+        system: partialSystemPrompt,
+        messages: [{ role: "user", content: partialBatchPrompt }]
+      }, function(charsReceived) {
+        setAiLog('⏳ Regenerating selected days... (' + charsReceived + ' chars received)');
+      });
+
+      addLog('response', `Partial regen: HTTP ${partialResult.status}`, { ok: partialResult.ok });
+
+      if (!partialResult.ok) {
+        addLog('error', `Partial regen error ${partialResult.status}`, { errorText: (partialResult.errorText||'').substring(0, 500) });
+        setAiLog(`⚠️ API error on partial regen (${partialResult.status}). Check developer logs.`);
+        setGenerating(false);
+        return;
+      }
+
+      const partialText = partialResult.text;
+      const partialClean = partialText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let partialParsed;
+      try {
+        partialParsed = JSON.parse(partialClean);
+      } catch(e) {
+        const pm = partialClean.match(/\{[\s\S]*\}/);
+        if (pm) partialParsed = JSON.parse(pm[0]);
+        else throw e;
+      }
+
+      const newDayData = partialParsed.assignments || partialParsed;
+
+      // Post-process: enforce holidays
+      let pHolidayEdits = 0;
+      for (const [dk, dayAssignments] of Object.entries(newDayData)) {
+        const parts = dk.split('-').map(Number);
+        const holiday = getHolidayForDate(parts[0], parts[1] - 1, parts[2]);
+        if (!holiday) continue;
+        for (const sid of Object.keys(dayAssignments)) {
+          if (holiday.halfDay === 'am') {
+            if (dayAssignments[sid].pm !== 'OFF') { dayAssignments[sid].pm = 'OFF'; pHolidayEdits++; }
+          } else {
+            if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+              dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; pHolidayEdits++;
+            }
+          }
+        }
+      }
+      if (pHolidayEdits > 0) addLog('info', `Holiday enforcement: ${pHolidayEdits} corrections`);
+
+      // Post-process: strip invalid location IDs
+      const pValidLocIds = new Set(locations.map(function(l){ return l.id; }));
+      pValidLocIds.add('OFF');
+      let pInvalidEdits = 0;
+      const pInvalidIds = new Set();
+      for (const [dk, dayAssignments] of Object.entries(newDayData)) {
+        for (const sid of Object.keys(dayAssignments)) {
+          if (dayAssignments[sid].am && !pValidLocIds.has(dayAssignments[sid].am)) {
+            pInvalidIds.add(dayAssignments[sid].am); dayAssignments[sid].am = 'OFF'; pInvalidEdits++;
+          }
+          if (dayAssignments[sid].pm && !pValidLocIds.has(dayAssignments[sid].pm)) {
+            pInvalidIds.add(dayAssignments[sid].pm); dayAssignments[sid].pm = 'OFF'; pInvalidEdits++;
+          }
+        }
+      }
+      if (pInvalidEdits > 0) addLog('warn', `Invalid location IDs replaced with OFF: ${[...pInvalidIds].join(', ')} (${pInvalidEdits} slots corrected)`);
+
+      // Detect conflicts on full merged schedule
+      const mergedForConflicts = { ...existingSchedule, ...newDayData };
+      const pConflicts = detectRuleConflicts(mergedForConflicts);
+
+      // Merge into existing schedule
+      setSchedules(prev => {
+        pushScheduleHistory(prev);
+        const merged = { ...(prev[scheduleKey] || {}), ...newDayData };
+        return { ...prev, [scheduleKey]: merged };
+      });
+
+      const daysGenerated = Object.keys(newDayData).length;
+      addLog('success', `Partial regen complete: ${daysGenerated} day${daysGenerated !== 1 ? 's' : ''} regenerated`);
+      addHistoryEntry(`AI regenerated ${daysGenerated} day${daysGenerated !== 1 ? 's' : ''}: ` + Object.keys(newDayData).sort().join(', '));
+
+      if (pConflicts.length > 0) {
+        setConflictsReport({ conflicts: pConflicts, month: currentMonth, year: currentYear });
+        setAiLog('⚠️ Regenerated ' + daysGenerated + ' day' + (daysGenerated>1?'s':'') + ' with ' + pConflicts.length + ' conflict' + (pConflicts.length>1?'s':'') + ' needing review.' + (pHolidayEdits > 0 ? ' ' + pHolidayEdits + ' holiday corrections.' : ''));
+      } else {
+        setConflictsReport(null);
+        setAiLog('✅ Regenerated ' + daysGenerated + ' day' + (daysGenerated>1?'s':'') + ' for ' + MONTHS[currentMonth] + ' ' + currentYear + ' — no conflicts detected.' + (pHolidayEdits > 0 ? ' ' + pHolidayEdits + ' holiday corrections.' : ''));
+      }
+
+    } catch (err) {
+      addLog('error', `Partial regen failed: ${err.message}`);
+      setAiLog(`⚠️ Partial regen failed: ${err.message}`);
+    }
+
+    setGenerating(false);
+  }
+
   // Detect scheduling rule violations
   function detectRuleConflicts(assignments) {
     const conflicts = [];
@@ -1934,7 +2194,19 @@ window.ScheduleHelper = function StaffScheduler() {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
             conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'vacation',
               message: `${getLastName(s.name)} is on vacation but scheduled`,
-              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM' });
+              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM',
+              fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
+          }
+          continue;
+        }
+
+        // Check if on medical leave
+        if (isOnMedicalLeave(staffId, dk)) {
+          if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
+            conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'medical_leave',
+              message: `${getLastName(s.name)} is on medical leave but scheduled`,
+              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM',
+              fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
           }
           continue;
         }
@@ -1980,7 +2252,8 @@ window.ScheduleHelper = function StaffScheduler() {
       const sched = { ...(prev[scheduleKey] || {}) };
       if (!sched[fix.date]) sched[fix.date] = {};
       if (!sched[fix.date][fix.staffId]) sched[fix.date][fix.staffId] = { am: 'OFF', pm: 'OFF' };
-      sched[fix.date][fix.staffId][fix.period] = fix.locationId;
+      if (fix.period === 'both') { sched[fix.date][fix.staffId].am = fix.locationId; sched[fix.date][fix.staffId].pm = fix.locationId; }
+      else { sched[fix.date][fix.staffId][fix.period] = fix.locationId; }
       return { ...prev, [scheduleKey]: sched };
     });
   }
@@ -2007,6 +2280,23 @@ window.ScheduleHelper = function StaffScheduler() {
           setVacations(prev => prev.filter(v => v.id !== matching[0].id));
           return `✅ Removed vacation for ${s.name}: ${matching[0].startDate} to ${matching[0].endDate}`;
         }
+        case 'add_medical_leave': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
+          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          if (!action.startDate || !action.endDate) return '❌ Missing start or end date.';
+          const _mlTs = Date.now();
+          const ml = { id: 'ml' + _mlTs, createdAt: _mlTs, createdBy: user?.username || null, staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Medical Leave' };
+          setMedicalLeaves(prev => [...prev, ml]);
+          return `✅ Added medical leave for ${s.name}: ${action.startDate} to ${action.endDate}${action.reason ? ' (' + action.reason + ')' : ''}`;
+        }
+        case 'remove_medical_leave': {
+          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
+          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const matching = medicalLeaves.filter(ml => ml.staffId === s.id && (!action.startDate || ml.startDate === action.startDate));
+          if (matching.length === 0) return `❌ No matching medical leave found for ${s.name}.`;
+          setMedicalLeaves(prev => prev.filter(ml => ml.id !== matching[0].id));
+          return `✅ Removed medical leave for ${s.name}: ${matching[0].startDate} to ${matching[0].endDate}`;
+        }
         case 'add_staff': {
           if (!action.name) return '❌ Missing staff name.';
           const newStaff = { id: 's' + Date.now(), name: action.name, role: action.role || 'MD', color: defaultColors[staff.length % defaultColors.length] };
@@ -2019,7 +2309,8 @@ window.ScheduleHelper = function StaffScheduler() {
           setStaff(p => p.filter(x => x.id !== s.id));
           setRules(p => p.filter(r => r.staffId !== s.id));
           setVacations(p => p.filter(v => v.staffId !== s.id));
-          return `✅ Removed ${s.name} and all their rules/vacations.`;
+          setMedicalLeaves(p => p.filter(ml => ml.staffId !== s.id));
+          return `✅ Removed ${s.name} and all their rules, vacations, and medical leaves.`;
         }
         case 'add_location': {
           if (!action.name) return '❌ Missing location name.';
@@ -2178,6 +2469,10 @@ window.ScheduleHelper = function StaffScheduler() {
       const s = staff.find(x => x.id === v.staffId);
       return `- ${s?.name||'?'}: ${v.startDate} to ${v.endDate} (${v.reason||'Vacation'}) [id:${v.id}]`;
     }).join('\n') : 'None';
+    const mlContext = medicalLeaves.length > 0 ? medicalLeaves.map(ml => {
+      const s = staff.find(x => x.id === ml.staffId);
+      return `- ${s?.name||'?'}: ${ml.startDate} to ${ml.endDate} (${ml.reason||'Medical Leave'}) [id:${ml.id}]`;
+    }).join('\n') : 'None';
 
     const sharedContext = `Current context:
 - Month: ${MONTHS[currentMonth]} ${currentYear}, Plan ${activePlan}
@@ -2191,6 +2486,9 @@ ${locContext}
 
 Vacations:
 ${vacContext}
+
+Medical Leave:
+${mlContext}
 
 Holidays: ${holidays.map(h => { const dt = getHolidayDate(h, currentYear); return h.name + (h.halfDay === 'am' ? ' (AM only)' : '') + (dt ? ' ' + dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : ''); }).join(', ')}
 
@@ -2212,6 +2510,8 @@ ACTIONS: When the user asks you to make a change, include a JSON action block in
 Available actions:
 - add_vacation: {"type":"add_vacation", "staffName":"Last Name", "startDate":"YYYY-MM-DD", "endDate":"YYYY-MM-DD", "reason":"optional"}
 - remove_vacation: {"type":"remove_vacation", "staffName":"Last Name", "startDate":"YYYY-MM-DD"}
+- add_medical_leave: {"type":"add_medical_leave", "staffName":"Last Name", "startDate":"YYYY-MM-DD", "endDate":"YYYY-MM-DD", "reason":"optional"}
+- remove_medical_leave: {"type":"remove_medical_leave", "staffName":"Last Name", "startDate":"YYYY-MM-DD"}
 - add_staff: {"type":"add_staff", "name":"Full Name", "role":"MD|OD"}
 - remove_staff: {"type":"remove_staff", "staffName":"Last Name"}
 - add_location: {"type":"add_location", "name":"Location Name", "address":"optional"}
@@ -2804,6 +3104,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
               {id:'locations',icon:'🏢',label:'Locations'},
               {id:'rules',icon:'⚙️',label:'Rules'},
               {id:'vacations',icon:'🏖️',label:'Vacation'},
+              {id:'medleave',icon:'🏥',label:'Medical Leave'},
               {id:'holidays',icon:'🎉',label:'Holidays'},
             ] : []),
           ].map(tab => {
@@ -2836,6 +3137,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {id:'locations',icon:'🏢',label:`Locations (${locations.length})`},
                   {id:'rules',icon:'⚙️',label:`Rules (${rules.length})`},
                   {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.length})`},
+                  {id:'medleave',icon:'🏥',label:`Medical Leave (${medicalLeaves.length})`},
                   {id:'holidays',icon:'🎉',label:`Holidays (${holidays.length})`},
                 ] : []),
               ].map(tab => (
@@ -2885,8 +3187,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       </button>
                     </div>
                   )}
-                  {isAdmin && <Btn variant="success" onClick={generateWithAI} disabled={generating}>
-                    {generating ? '⏳ Generating...' : '✨ Generate with AI'}
+                  {isAdmin && <Btn variant="success" onClick={()=>{if(staff.length===0||locations.length===0){alert('Please add staff members and locations first.');return;}setPendingGenerate(true);}} disabled={generating}>
+                    {generating ? '⏳ Generating...' : '✨ Generate Plan'}
+                  </Btn>}
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="secondary" onClick={()=>{setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
+                    🗓 Regenerate Days
                   </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
                     <Btn variant="secondary" onClick={()=>setShowPdfMenu(p=>!p)}>📄 Export PDF ▾</Btn>
@@ -3066,9 +3371,9 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
               {/* Conflicts Report */}
               {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (
-                <div style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:10,marginBottom:16,overflow:'hidden'}}>
-                  <div style={{padding:'10px 16px',background:'#78350f33',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                    <span style={{fontSize:14,fontWeight:700,color:'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
+                <div style={{background:'var(--bg-elevated)',border:`1px solid ${theme==='light'?'#d97706':'#92400e'}`,borderRadius:10,marginBottom:16,overflow:'hidden'}}>
+                  <div style={{padding:'10px 16px',background:theme==='light'?'#fef3c7':'#78350f33',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
                     <div style={{display:'flex',gap:8}}>
                       <Btn variant="success" onClick={()=>{
                         conflictsReport.conflicts.forEach(c => { if (c.fix) applyConflictFix(c.fix); });
@@ -3079,9 +3384,9 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   </div>
                   <div style={{maxHeight:250,overflowY:'auto',padding:'8px 12px'}}>
                     {conflictsReport.conflicts.map((c, ci) => (
-                      <div key={ci} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:ci%2===0?'#1e1530':'transparent',borderRadius:6,marginBottom:2}}>
+                      <div key={ci} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:ci%2===0?(theme==='light'?'transparent':'#1e1530'):'transparent',borderRadius:6,marginBottom:2}}>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:600,color:'#fbbf24'}}>{c.message}</div>
+                          <div style={{fontSize:13,fontWeight:600,color:theme==='light'?'#92400e':'#fbbf24'}}>{c.message}</div>
                           <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>
                             {c.date} ({c.day}) — Current: {c.current} → Suggested: {c.suggested}
                           </div>
@@ -3138,12 +3443,20 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const mon = new Date(today); mon.setDate(today.getDate() + diff);
                   setCurrentWeekStart(mon);
                 }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:12}}>Today</Btn>
-                {isAdmin && <Btn variant="ghost" onClick={undoSchedule} disabled={!canUndo}
-                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:14,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default'}}
-                  title="Undo">↩</Btn>}
-                {isAdmin && <Btn variant="ghost" onClick={redoSchedule} disabled={!canRedo}
-                  style={{padding:isMobile?'8px 10px':'8px 12px',fontSize:14,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default'}}
-                  title="Redo">↪</Btn>}
+                {isAdmin && <Btn variant="ghost" onClick={()=>{
+                  if(!canUndo) return;
+                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current - 1];
+                  setPendingUndoRedo({type:'undo', summary: describeScheduleDiff(schedules, target)});
+                }} disabled={!canUndo}
+                  style={{padding:isMobile?'8px 10px':'8px 14px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default',display:'flex',alignItems:'center',gap:5}}
+                  title="Undo">↩{!isMobile && <span>Undo</span>}</Btn>}
+                {isAdmin && <Btn variant="ghost" onClick={()=>{
+                  if(!canRedo) return;
+                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current + 1];
+                  setPendingUndoRedo({type:'redo', summary: describeScheduleDiff(schedules, target)});
+                }} disabled={!canRedo}
+                  style={{padding:isMobile?'8px 10px':'8px 14px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default',display:'flex',alignItems:'center',gap:5}}
+                  title="Redo">↪{!isMobile && <span>Redo</span>}</Btn>}
                 {!isMobile && <div style={{marginLeft:'auto',display:'flex',gap:2,background:'var(--bg-elevated)',borderRadius:8,padding:2,border:'1px solid var(--border-subtle)'}}>
                   {[{v:'month',label:'Month'},{v:'week',label:'Week'}].map(({v,label})=>(
                     <div key={v} onClick={()=>{
@@ -3532,6 +3845,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 {staff.map(s=>{
                   const sr=rules.filter(r=>r.staffId===s.id);
                   const sv=vacations.filter(v=>v.staffId===s.id);
+                  const sml=medicalLeaves.filter(ml=>ml.staffId===s.id);
                   const isExpanded = expandedStaffMember === s.id;
                   return(
                     <div key={s.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${s.color}`,overflow:'hidden'}}>
@@ -3545,6 +3859,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           <div style={{display:'flex',gap:8}}>
                             <Chip color={s.color}>{sr.length} rule{sr.length!==1?'s':''}</Chip>
                             <Chip color="#f59e0b">{sv.length} vacation{sv.length!==1?'s':''}</Chip>
+                            {sml.length>0&&<Chip color="#8b5cf6">{sml.length} med. leave{sml.length!==1?'s':''}</Chip>}
                           </div>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -3751,6 +4066,30 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                               </div>
                             )}
                           </div>
+                          {/* Medical Leave section */}
+                          {(()=>{ return (
+                          <div style={{padding:'16px 24px',borderTop:'1px solid var(--border-default)'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                              <span style={{fontSize:14,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Medical Leave ({sml.length})</span>
+                              {isAdmin && <Btn variant="ghost" onClick={()=>{setMedicalLeaveForm({staffId:s.id,startDate:'',endDate:'',reason:''});setShowMedicalLeaveModal(true)}} style={{fontSize:12,padding:'4px 12px'}}>+ Add</Btn>}
+                            </div>
+                            {sml.length===0 ? (
+                              <div style={{fontSize:13,color:'var(--text-dim)',fontStyle:'italic',padding:'8px 0'}}>No medical leave recorded.</div>
+                            ) : (
+                              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                                {sml.map(ml => (
+                                  <div key={ml.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:'3px solid #8b5cf6',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <div>
+                                      <div style={{fontSize:14,color:'var(--text-secondary)',fontFamily:'"Space Mono",monospace'}}>{ml.startDate} → {ml.endDate}</div>
+                                      {ml.reason&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:2}}>{ml.reason}</div>}
+                                    </div>
+                                    {isAdmin && <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          ); })()}
                         </div>
                       )}
                     </div>
@@ -3969,7 +4308,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                             <Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}
                             {r.description && <span style={{fontSize:13,color:'var(--text-muted)',lineHeight:1.4}}>{r.description}</span>}
                             {r.createdAt && <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto',flexShrink:0,display:'flex',alignItems:'center',gap:5}}>
-                              Added {new Date(r.createdAt).toLocaleDateString()}
+                              Added {new Date(r.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
                               {r.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{r.createdBy}</span>}
                             </span>}
                           </div>
@@ -4006,11 +4345,44 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{v.startDate} → {v.endDate}</div>
                           {v.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{v.reason}</div>}
                           {v.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
-                            Added {new Date(v.createdAt).toLocaleDateString()}
+                            Added {new Date(v.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
                             {v.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{v.createdBy}</span>}
                           </div>}
                         </div>
                         {isAdmin && <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer'}}>🗑️</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== MEDICAL LEAVE TAB ===== */}
+          {activeTab === 'medleave' && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+                <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Medical Leave</h2>
+                {isAdmin && <Btn onClick={()=>{setMedicalLeaveForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});setShowMedicalLeaveModal(true)}} disabled={staff.length===0}>+ Add Medical Leave</Btn>}
+              </div>
+              {medicalLeaves.length===0?(
+                <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}><div style={{fontSize:48,marginBottom:16}}>🏥</div><p>No medical leaves recorded.</p></div>
+              ):(
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {medicalLeaves.map(ml=>{
+                    const s=staff.find(x=>x.id===ml.staffId);
+                    return(
+                      <div key={ml.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:18,display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`3px solid ${s?.color||'#666'}`}}>
+                        <div>
+                          <div style={{fontSize:15,fontWeight:600,color:s?.color||'var(--text-primary)'}}>{s?.name||'?'}</div>
+                          <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4,fontFamily:'"Space Mono",monospace'}}>{ml.startDate} → {ml.endDate}</div>
+                          {ml.reason&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{ml.reason}</div>}
+                          {ml.createdAt && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,display:'flex',alignItems:'center',gap:5}}>
+                            Added {new Date(ml.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+                            {ml.createdBy && <span style={{color:'#6366f1',fontWeight:600,fontFamily:'"Space Mono",monospace'}}>{ml.createdBy}</span>}
+                          </div>}
+                        </div>
+                        {isAdmin && <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer'}}>🗑️</span>}
                       </div>
                     );
                   })}
@@ -4184,6 +4556,172 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 </Btn>
               </div>
             </>)}
+          </div>
+        </div>
+      )}
+
+      {pendingUndoRedo && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setPendingUndoRedo(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:460,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>{pendingUndoRedo.type==='undo'?'↩':'↪'}</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>
+              {pendingUndoRedo.type==='undo'?'Undo Last Change?':'Redo Change?'}
+            </div>
+            {(()=>{
+              const {changedDays, totalChanges, otherPlanChanges} = pendingUndoRedo.summary;
+              const isUndo = pendingUndoRedo.type === 'undo';
+              return (<>
+                <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
+                  {isUndo ? 'This will revert' : 'This will reapply'} changes to{' '}
+                  <b style={{color:'var(--text-primary)'}}>Plan {activePlan}</b> — <b style={{color:'var(--text-primary)'}}>{MONTHS[currentMonth]} {currentYear}</b>
+                </div>
+                {totalChanges > 0 ? (
+                  <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'10px 14px',marginBottom:16,maxHeight:200,overflowY:'auto'}}>
+                    {changedDays.slice(0,6).map(({dk,count})=>{
+                      const [y,mo,d] = dk.split('-').map(Number);
+                      const dt = new Date(y,mo-1,d);
+                      const label = dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' (' + DAYS_OF_WEEK[dt.getDay()] + ')';
+                      return (
+                        <div key={dk} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--border-subtle)',fontSize:13}}>
+                          <span style={{color:'var(--text-primary)',fontWeight:500}}>{label}</span>
+                          <span style={{color:'var(--text-muted)',fontSize:12}}>{count} provider{count!==1?'s':''} reassigned</span>
+                        </div>
+                      );
+                    })}
+                    {changedDays.length > 6 && (
+                      <div style={{fontSize:12,color:'var(--text-muted)',paddingTop:6}}>+ {changedDays.length - 6} more day{changedDays.length-6!==1?'s':''}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:16,fontStyle:'italic'}}>
+                    No assignment changes in the current plan view.
+                    {otherPlanChanges > 0 && ' Changes affect a different plan or month.'}
+                  </div>
+                )}
+                <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:20}}>
+                  <b style={{color:'var(--text-primary)'}}>{totalChanges} assignment{totalChanges!==1?'s':''}</b> across <b style={{color:'var(--text-primary)'}}>{changedDays.length} day{changedDays.length!==1?'s':''}</b> will be {isUndo?'reverted':'reapplied'}.
+                  {otherPlanChanges > 0 && <span style={{color:'#f59e0b'}}> Also affects {otherPlanChanges} other plan/month.</span>}
+                </div>
+              </>);
+            })()}
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" onClick={()=>setPendingUndoRedo(null)}>Cancel</Btn>
+              <Btn variant="secondary" onClick={()=>{
+                if(pendingUndoRedo.type==='undo') undoSchedule(); else redoSchedule();
+                setPendingUndoRedo(null);
+              }}>{pendingUndoRedo.type==='undo'?'↩ Undo':'↪ Redo'}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingGenerate && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setPendingGenerate(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>✨</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Generate Plan {activePlan}?</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
+              The AI will automatically populate <b style={{color:'var(--text-primary)'}}>Plan {activePlan}</b> for <b style={{color:'var(--text-primary)'}}>{MONTHS[currentMonth]} {currentYear}</b> based on your scheduling rules, staff assignments, and vacation entries.
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:20}}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)'}}>
+                <span style={{color:'#10b981',flexShrink:0,marginTop:1}}>✓</span>
+                <span>Scheduling rules and constraints will be applied automatically.</span>
+              </div>
+              <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)'}}>
+                <span style={{color:'#10b981',flexShrink:0,marginTop:1}}>✓</span>
+                <span>Vacation and holiday blocks will be respected.</span>
+              </div>
+              {Object.keys(getSchedule()).length > 0 && (
+                <div style={{display:'flex',alignItems:'flex-start',gap:8,fontSize:13,color:'var(--text-secondary)',marginTop:4,padding:'10px 12px',background:theme==='light'?'#fff7ed':'#78350f33',border:`1px solid ${theme==='light'?'#fed7aa':'#f59e0b44'}`,borderRadius:8}}>
+                  <span style={{color:'#f59e0b',flexShrink:0,marginTop:1}}>⚠</span>
+                  <span><b style={{color:theme==='light'?'#92400e':'#fbbf24'}}>Plan {activePlan} already has a schedule.</b> Generating a new plan will override all existing assignments.</span>
+                </div>
+              )}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" onClick={()=>setPendingGenerate(false)}>Cancel</Btn>
+              <Btn variant="success" onClick={()=>{setPendingGenerate(false);generateWithAI();}}>✨ Generate Plan {activePlan}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPartialRegenModal && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setShowPartialRegenModal(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:24,maxWidth:460,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)',maxHeight:'90vh',overflowY:'auto'}}>
+            <div style={{fontSize:20,marginBottom:8}}>🗓</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:4}}>Regenerate Selected Days</div>
+            <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.5}}>
+              Select weekdays to regenerate. Only those days will be replaced — all other assignments stay intact.
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <button onClick={()=>{
+                const dim=new Date(currentYear,currentMonth+1,0).getDate();
+                const allWd=[];
+                for(let d=1;d<=dim;d++){const dow=new Date(currentYear,currentMonth,d).getDay();if(dow>=1&&dow<=5)allWd.push(dateKey(currentYear,currentMonth,d));}
+                setPartialRegenDays(new Set(allWd));
+              }} style={{fontSize:12,padding:'4px 12px',borderRadius:6,cursor:'pointer',background:'#6366f122',border:'1px solid #6366f144',color:'#818cf8',fontWeight:600,fontFamily:'"DM Sans",sans-serif'}}>
+                Select All Weekdays
+              </button>
+              <button onClick={()=>setPartialRegenDays(new Set())} style={{fontSize:12,padding:'4px 12px',borderRadius:6,cursor:'pointer',background:'var(--bg-surface)',border:'1px solid var(--border-default)',color:'var(--text-muted)',fontWeight:600,fontFamily:'"DM Sans",sans-serif'}}>
+                Clear
+              </button>
+            </div>
+            {(()=>{
+              const dim=new Date(currentYear,currentMonth+1,0).getDate();
+              const firstDow=new Date(currentYear,currentMonth,1).getDay();
+              const cells=[];
+              for(let i=0;i<firstDow;i++)cells.push(null);
+              for(let d=1;d<=dim;d++)cells.push(d);
+              return(
+                <div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:4}}>
+                    {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=>(
+                      <div key={d} style={{textAlign:'center',fontSize:11,fontWeight:700,color:'var(--text-muted)',padding:'2px 0'}}>{d}</div>
+                    ))}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3}}>
+                    {cells.map((day,idx)=>{
+                      if(!day)return <div key={'ep'+idx}/>;
+                      const dow=new Date(currentYear,currentMonth,day).getDay();
+                      const isWkend=dow===0||dow===6;
+                      const dk=dateKey(currentYear,currentMonth,day);
+                      const isSel=partialRegenDays.has(dk);
+                      const isHol=!!getHolidayForDate(currentYear,currentMonth,day);
+                      return(
+                        <div key={day} onClick={isWkend?undefined:()=>{setPartialRegenDays(prev=>{const n=new Set(prev);if(n.has(dk))n.delete(dk);else n.add(dk);return n;});}}
+                          style={{textAlign:'center',padding:'6px 2px',borderRadius:6,fontSize:13,fontWeight:isSel?700:500,cursor:isWkend?'default':'pointer',
+                            background:isSel?'#6366f1':isWkend?'transparent':'var(--bg-surface)',
+                            color:isSel?'#fff':isWkend?'var(--text-dim)':isHol?'#f59e0b':'var(--text-primary)',
+                            border:isSel?'1px solid #818cf8':isHol&&!isWkend?'1px solid #f59e0b44':'1px solid transparent',
+                            opacity:isWkend?0.35:1,transition:'all 0.1s',position:'relative'}}>
+                          {day}
+                          {isHol&&!isWkend&&<div style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:3,height:3,borderRadius:'50%',background:isSel?'#fff':'#f59e0b'}}/>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+            {partialRegenDays.size > 0 && (
+              <div style={{marginTop:12,padding:'8px 12px',background:theme==='light'?'#eff6ff':'#1e1b4b55',borderRadius:8,fontSize:13,color:theme==='light'?'#3730a3':'#a5b4fc',border:`1px solid ${theme==='light'?'#c7d2fe':'#6366f133'}`}}>
+                <b>{partialRegenDays.size} day{partialRegenDays.size!==1?'s':''} selected:</b>{' '}
+                {[...partialRegenDays].sort().map(dk=>{const[y,m,d]=dk.split('-').map(Number);return new Date(y,m-1,d).toLocaleDateString('en-US',{month:'short',day:'numeric'});}).join(', ')}
+              </div>
+            )}
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+              <Btn variant="ghost" onClick={()=>setShowPartialRegenModal(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={()=>{setShowPartialRegenModal(false);generatePartialDays([...partialRegenDays]);}}
+                disabled={partialRegenDays.size===0}
+                style={{opacity:partialRegenDays.size===0?0.45:1,cursor:partialRegenDays.size===0?'default':'pointer'}}>
+                🗓 Regenerate {partialRegenDays.size>0?partialRegenDays.size+' Day'+(partialRegenDays.size!==1?'s':''):'Days'}
+              </Btn>
+            </div>
           </div>
         </div>
       )}
@@ -4388,6 +4926,20 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
       </Modal>
 
+      <Modal open={showMedicalLeaveModal} onClose={()=>setShowMedicalLeaveModal(false)} title="Add Medical Leave">
+        <Select label="Staff Member" value={medicalLeaveForm.staffId} onChange={v=>setMedicalLeaveForm(p=>({...p,staffId:v}))}
+          options={staff.map(s=>({value:s.id,label:s.name}))} />
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16}}>
+          <Input label="Start Date" value={medicalLeaveForm.startDate} onChange={v=>setMedicalLeaveForm(p=>({...p,startDate:v}))} type="date" />
+          <Input label="End Date" value={medicalLeaveForm.endDate} onChange={v=>setMedicalLeaveForm(p=>({...p,endDate:v}))} type="date" />
+        </div>
+        <Input label="Reason (optional)" value={medicalLeaveForm.reason} onChange={v=>setMedicalLeaveForm(p=>({...p,reason:v}))} placeholder="e.g., Surgery recovery, illness" />
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>setShowMedicalLeaveModal(false)}>Cancel</Btn>
+          <Btn onClick={addMedicalLeave}>Add Medical Leave</Btn>
+        </div>
+      </Modal>
+
       <Modal open={showHolidayModal} onClose={()=>{setShowHolidayModal(false);setEditingHoliday(null)}} title={editingHoliday?'Edit Holiday':'Add Holiday'}>
         <Input label="Holiday Name" value={holidayForm.name} onChange={v=>setHolidayForm(p=>({...p,name:v}))} placeholder="e.g., Veterans Day" />
         <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:16}}>
@@ -4413,11 +4965,13 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             <div style={{maxHeight:'60vh',overflow:'auto'}}>
               {staff.map(s=>{
                 const onVac=isOnVacation(s.id,editCell.dk);
+                const onML=isOnMedicalLeave(s.id,editCell.dk);
                 return(
                   <div key={s.id} style={{padding:12,background:'var(--bg-surface)',borderRadius:10,marginBottom:8,borderLeft:`3px solid ${s.color}`}}>
                     <div style={{fontSize:15,fontWeight:600,color:s.color,marginBottom:8}}>
                       {s.name}<span style={{fontSize:12,color:'var(--text-muted)',fontWeight:400,marginLeft:8}}>{s.role}</span>
                       {onVac&&<span style={{fontSize:12,color:'#f59e0b',marginLeft:8}}>⚠️ Vacation</span>}
+                      {onML&&<span style={{fontSize:12,color:'#8b5cf6',marginLeft:8}}>🏥 Medical Leave</span>}
                     </div>
                     <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10}}>
                       {['am','pm'].map(period=>(
