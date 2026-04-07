@@ -1925,7 +1925,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
       const daysList = batchDays.map(d => {
         const dt = new Date(currentYear, currentMonth, d);
-        const wk = Math.floor((d - 1) / 7) + 1; // 1-5, no cap
+        const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4); // cap at W4 per system prompt
         return `${dateKey(currentYear, currentMonth, d)} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk})`;
       }).join(', ');
 
@@ -2172,7 +2172,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const parts = dk.split('-').map(Number);
       const d = parts[2];
       const dt = new Date(currentYear, currentMonth, d);
-      const wk = Math.floor((d - 1) / 7) + 1;
+      const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4);
       return dk + ' (' + DAYS_OF_WEEK[dt.getDay()] + ', W' + wk + ')';
     }).join(', ');
 
@@ -2320,7 +2320,8 @@ window.ScheduleHelper = function StaffScheduler() {
       const dow = dt.getDay();
       if (dow === 0 || dow === 6) continue;
       const dayName = DAYS_OF_WEEK[dow];
-      const wk = Math.floor((d - 1) / 7) + 1; // 1-5, no cap
+      const rawWk = Math.floor((d - 1) / 7) + 1;
+      const wk = rawWk; // 1-5; W5 falls back to W4 rules below
 
       for (const [staffId, periods] of Object.entries(dayAssignments)) {
         const s = staff.find(x => x.id === staffId);
@@ -2349,8 +2350,10 @@ window.ScheduleHelper = function StaffScheduler() {
         }
 
         // Find applicable rules for this staff/day
+        // 5th occurrence of a weekday (days 29-31) falls back to W4 rules
+        const weekStr = String(wk);
         const staffRules = rules.filter(r => r.staffId === staffId && r.dayOfWeek === dayName &&
-          (r.weekOfMonth === 'all' || r.weekOfMonth.split(',').includes(String(wk))));
+          (r.weekOfMonth === 'all' || r.weekOfMonth.split(',').includes(weekStr) || (wk === 5 && r.weekOfMonth.split(',').includes('4'))));
 
         const requiredRules = staffRules.filter(r => r.priority === 'required');
 
@@ -2886,6 +2889,14 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
             results.push(`❌ Failed to parse action: ${e.message}`);
           }
         }
+      }
+
+      // If any schedule-modifying actions were executed, force a fresh top-level
+      // schedules reference to guarantee React re-renders the calendar cells.
+      // This works around edge cases where React 18 batching + large component trees
+      // can skip diffing deeply-nested objects after setSchedules.
+      if (results.length > 0 && results.some(r => r.startsWith('✅'))) {
+        setSchedules(prev => ({ ...prev }));
       }
 
       // Remove action blocks from displayed text and append results
@@ -3923,6 +3934,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       </span>
                     </div>
                   )}
+                  {/* Refresh — reload current plan from cloud storage */}
+                  <Btn variant="ghost" onClick={async ()=>{
+                    const source = user.adminUsername || user.username;
+                    try { await loadUserData(source); } catch(e) {}
+                  }} title="Refresh schedule from cloud" style={{fontSize:12,padding:'5px 10px',marginLeft:'auto'}}>↻ Refresh</Btn>
                 </div>
               </div>}
 
@@ -3967,7 +3983,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         const {day, month: cellMonth, year: cellYear, isCurrentMonth: isCurMonth} = cell;
                         const dk=dateKey(cellYear,cellMonth,day);
                         const wkend=isWeekend(cellYear,cellMonth,day);
-                        const schedule = getSchedule();
+                        // Use the cell's own month/year for schedule lookup — handles week view spanning two months
+                        const cellScheduleKey = (cellYear === currentYear && cellMonth === currentMonth)
+                          ? scheduleKey
+                          : `schedule-${cellYear}-${cellMonth}-${activePlan || 'A'}`;
+                        const schedule = schedules[cellScheduleKey] || {};
                         const ds=schedule[dk]||{};
                         const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
                         const cellMinH = isMobile ? 130 : (isWeekView ? 200 : 100);
@@ -4381,7 +4401,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                       <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr auto',gap:8,alignItems:'flex-end'}}>
                                         <div>
                                           <input value={sf.newPassword||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,newPassword:e.target.value,pwMsg:''}}))}
-                                            type="password" placeholder="New password (min 4 chars)"
+                                            type="password" placeholder="New password (min 6 chars)"
                                             style={{width:'100%',padding:'7px 10px',background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:14,fontFamily:'"DM Sans",sans-serif'}} />
                                         </div>
                                         <Btn onClick={()=>changeStaffPassword(s)} disabled={sf.changingPw} style={{fontSize:13,padding:'7px 16px',whiteSpace:'nowrap'}}>
@@ -4411,7 +4431,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                       <div>
                                         <label style={{display:'block',fontSize:11,color:'var(--text-muted)',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>Password</label>
                                         <input value={sf.password||''} onChange={e=>setStaffAccountForm(p=>({...p,[s.id]:{...sf,password:e.target.value,msg:''}}))} type="password"
-                                          placeholder="Min 4 characters"
+                                          placeholder="Min 6 characters"
                                           style={{width:'100%',padding:'7px 10px',background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:14,fontFamily:'"DM Sans",sans-serif'}} />
                                       </div>
                                     </div>
@@ -4936,7 +4956,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
       <Modal open={showManagerModal} onClose={()=>setShowManagerModal(false)} title="Add Managed User">
         <Input label="Username" value={managerForm.username} onChange={v=>setManagerForm(p=>({...p,username:v,msg:''}))} placeholder="e.g., drsmith_view" />
-        <Input label="Password" value={managerForm.password} onChange={v=>setManagerForm(p=>({...p,password:v,msg:''}))} placeholder="Min 4 characters" type="password" />
+        <Input label="Password" value={managerForm.password} onChange={v=>setManagerForm(p=>({...p,password:v,msg:''}))} placeholder="Min 6 characters" type="password" />
         <div style={{marginBottom:16}}>
           <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Access Level</label>
           <div style={{display:'flex',gap:8}}>
