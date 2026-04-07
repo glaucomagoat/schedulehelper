@@ -73,15 +73,26 @@ window.storage=(function(){
   function isExpired(token){
     try{var p=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));return Date.now()>p.exp;}catch(e){return true;}
   }
+  function handleSessionExpired(){
+    localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+    // Dispatch a custom event so the React layer can clear state and show login
+    window.dispatchEvent(new Event('session-expired'));
+  }
   async function call(body){
     var token=localStorage.getItem('sessionToken')||'';
     // Skip expiry check for public actions that don't need a token
     var publicActions=['login','register','dev-auth','forgot-password','reset-password'];
     if(token&&!publicActions.includes(body.action)&&isExpired(token)){
+      handleSessionExpired();
       throw new Error('SESSION_EXPIRED');
     }
     var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-session-token':token},body:JSON.stringify(body)});
     var d=await r.json();
+    // Server returned 401 (token expired/invalid) — also trigger logout
+    if(r.status===401&&!publicActions.includes(body.action)){
+      handleSessionExpired();
+      throw new Error('SESSION_EXPIRED');
+    }
     if(!r.ok)throw new Error(d.error||'Storage error');
     return d;
   }
@@ -314,7 +325,14 @@ const PRESET_HOLIDAYS = [
 
 // Compute the actual date for a holiday in a given year
 function getHolidayDate(h, year) {
-  if (h.type === 'fixed') return new Date(year, h.month, h.day);
+  if (h.type === 'fixed') {
+    const dt = new Date(year, h.month, h.day);
+    const dow = dt.getDay();
+    // Federal observed-date convention: Sat → preceding Fri, Sun → following Mon
+    if (dow === 6) dt.setDate(dt.getDate() - 1);
+    if (dow === 0) dt.setDate(dt.getDate() + 1);
+    return dt;
+  }
   if (h.type === 'nth') {
     // nth weekday of month (e.g., 3rd Monday of Feb)
     let count = 0;
@@ -650,18 +668,22 @@ window.ScheduleHelper = function StaffScheduler() {
     scheduleHistoryRef.current = scheduleHistoryRef.current.slice(0, scheduleHistoryIndexRef.current + 1);
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(prevSchedules)));
     // Cap at 50 entries
-    if (scheduleHistoryRef.current.length > 50) scheduleHistoryRef.current.shift();
+    if (scheduleHistoryRef.current.length > 50) {
+      scheduleHistoryRef.current.shift();
+      if (scheduleHistoryIndexRef.current > 0) scheduleHistoryIndexRef.current--;
+    }
     scheduleHistoryIndexRef.current = scheduleHistoryRef.current.length - 1;
-    setCanUndo(scheduleHistoryIndexRef.current > 0);
+    setCanUndo(scheduleHistoryRef.current.length > 0);
     setCanRedo(false);
   }
 
   function undoSchedule() {
-    if (scheduleHistoryIndexRef.current <= 0) return;
-    scheduleHistoryIndexRef.current -= 1;
+    if (scheduleHistoryIndexRef.current < 0) return;
+    // Restore the snapshot at current index, then step back
     const prev = JSON.parse(JSON.stringify(scheduleHistoryRef.current[scheduleHistoryIndexRef.current]));
+    scheduleHistoryIndexRef.current -= 1;
     setSchedules(prev);
-    setCanUndo(scheduleHistoryIndexRef.current > 0);
+    setCanUndo(scheduleHistoryIndexRef.current >= 0);
     setCanRedo(true);
     setRegenDiffSummary(null);
   }
@@ -990,7 +1012,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const data = schedules[fromKey];
     if (!data) return;
     addHistoryEntry('Copied from Plan ' + fromPlan + ' → Plan ' + toPlan, toKey);
-    setSchedules(prev => ({ ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }));
+    setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }; });
   }
 
   useEffect(() => {
@@ -1074,6 +1096,13 @@ window.ScheduleHelper = function StaffScheduler() {
     })();
   }, []);
 
+  // Global session-expired handler — fired by the storage wrapper when token is expired or 401
+  useEffect(() => {
+    const handler = () => { setUser(null); setIsDev(false); };
+    window.addEventListener('session-expired', handler);
+    return () => window.removeEventListener('session-expired', handler);
+  }, []);
+
   async function loadUserData(username) {
     try {
       const d = async k => { try { const r = await window.storage.get(`${username}:${k}`); return r ? JSON.parse(r.value) : null; } catch(e) { return null; } };
@@ -1126,12 +1155,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (uType === 'staff' && !user.isDev) return;
     try {
       await window.storage.set(`${user.adminUsername || user.username}:${key}`, JSON.stringify(data));
-    } catch(e) {
-      if (e.message === 'SESSION_EXPIRED') {
-        localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
-        setUser(null); setIsDev(false);
-      }
-    }
+    } catch(e) { /* SESSION_EXPIRED handled globally by storage wrapper */ }
   }
 
   useEffect(() => { if (user) saveData('staff', staff); }, [staff]);
@@ -1303,7 +1327,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const form = staffAccountForm[staffMember.id] || {};
     const { username, password } = form;
     if (!username || username.length < 2) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Username must be at least 2 characters.'}})); return; }
-    if (!password || password.length < 4) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Password must be at least 4 characters.'}})); return; }
+    if (!password || password.length < 6) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Password must be at least 6 characters.'}})); return; }
     setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:true,msg:''}}));
     try {
       // Check if username taken
@@ -1357,8 +1381,8 @@ window.ScheduleHelper = function StaffScheduler() {
   async function changeStaffPassword(staffMember) {
     const form = staffAccountForm[staffMember.id] || {};
     const { newPassword } = form;
-    if (!newPassword || newPassword.length < 4) {
-      setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,pwMsg:'❌ Password must be at least 4 characters.'}}));
+    if (!newPassword || newPassword.length < 6) {
+      setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,pwMsg:'❌ Password must be at least 6 characters.'}}));
       return;
     }
     setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:true,pwMsg:''}}));
@@ -1399,7 +1423,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const username = (managerForm.username || '').trim();
     if (!username || username.length < 2) { setManagerForm(p=>({...p,msg:'❌ Username must be at least 2 characters.'})); return; }
     if (!/^[a-zA-Z0-9_.-]+$/.test(username)) { setManagerForm(p=>({...p,msg:'❌ Username may only contain letters, numbers, underscores, dots, and hyphens.'})); return; }
-    if (!password || password.length < 4) { setManagerForm(p=>({...p,msg:'❌ Password must be at least 4 characters.'})); return; }
+    if (!password || password.length < 6) { setManagerForm(p=>({...p,msg:'❌ Password must be at least 6 characters.'})); return; }
     setManagerForm(p=>({...p,msg:'Saving…'}));
     try {
       const adminUsername = user.username;
@@ -1447,8 +1471,8 @@ window.ScheduleHelper = function StaffScheduler() {
   async function changeManagedUserPassword(username) {
     const form = managerPwForms[username] || {};
     const newPassword = form.newPassword || '';
-    if (!newPassword || newPassword.length < 4) {
-      setManagerPwForms(p=>({...p,[username]:{...form,msg:'❌ Password must be at least 4 characters.'}}));
+    if (!newPassword || newPassword.length < 6) {
+      setManagerPwForms(p=>({...p,[username]:{...form,msg:'❌ Password must be at least 6 characters.'}}));
       return;
     }
     setManagerPwForms(p=>({...p,[username]:{...form,saving:true,msg:''}}));
@@ -1668,7 +1692,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function clearSchedule() {
     addHistoryEntry('Schedule cleared for ' + MONTHS[currentMonth] + ' ' + currentYear + ' Plan ' + activePlan);
-    setSchedules(prev => { const s = { ...prev }; delete s[scheduleKey]; return s; });
+    setSchedules(prev => { pushScheduleHistory(prev); const s = { ...prev }; delete s[scheduleKey]; return s; });
     setConfirmClearPlan(false);
   }
 
@@ -2343,6 +2367,26 @@ window.ScheduleHelper = function StaffScheduler() {
             }
             if (vacEntry) return `Scheduled as OFF — provider is on vacation (${vacEntry.startDate} to ${vacEntry.endDate})`;
             if (mlEntry) return `Scheduled as OFF — provider is on medical leave${mlEntry.reason ? ' (' + mlEntry.reason + ')' : ''}`;
+            // Check if a nearby holiday with an aiNote explains this OFF (e.g. observed date shift)
+            const conflictDate = new Date(y, m - 1, d);
+            for (const h of holidays) {
+              if (!h.aiNote) continue;
+              const hd = getHolidayDate(h, y);
+              if (!hd) continue;
+              const diffDays = Math.abs(Math.round((conflictDate - hd) / 86400000));
+              if (diffDays <= 3) {
+                return `Scheduled as OFF — likely due to ${h.name} observance (${h.aiNote})`;
+              }
+            }
+            // Check if a conditional/exception/complex rule for this staff+day explains the AI's decision
+            const explanatoryRule = staffRules.find(r =>
+              r.priority !== 'required' &&
+              ['conditional', 'exception', 'complex'].includes(r.ruleType || 'standard')
+            );
+            if (explanatoryRule) {
+              const ruleText = explanatoryRule.conditionText || explanatoryRule.exceptionText || explanatoryRule.description || '';
+              if (ruleText) return `Scheduled as OFF — AI applied rule: ${ruleText}`;
+            }
             return 'Scheduled as OFF — no override reason detected (AI decision)';
           }
           // Actual is a different location — check if another required rule explains it
@@ -2351,6 +2395,16 @@ window.ScheduleHelper = function StaffScheduler() {
           if (conflicting) {
             const cLoc = locations.find(l => l.id === conflicting.locationId)?.name || conflicting.locationId;
             return `Another required rule assigns ${cLoc} — rules may conflict`;
+          }
+          // Check if a non-required rule explains the different location
+          const explanatoryLocRule = staffRules.find(r =>
+            r.id !== currentRule.id &&
+            ['conditional', 'exception', 'complex'].includes(r.ruleType || 'standard') &&
+            (r.locationId === actualId || !r.locationId)
+          );
+          if (explanatoryLocRule) {
+            const ruleText = explanatoryLocRule.conditionText || explanatoryLocRule.exceptionText || explanatoryLocRule.description || '';
+            if (ruleText) return `AI applied rule: ${ruleText}`;
           }
           const actualLocName = locations.find(l => l.id === actualId)?.name || actualId;
           return `AI assigned ${actualLocName} instead`;
@@ -2403,6 +2457,25 @@ window.ScheduleHelper = function StaffScheduler() {
         }
       };
     });
+  }
+
+  function applyAllConflictFixes(fixes) {
+    if (!fixes || fixes.length === 0) return;
+    setSchedules(prev => {
+      pushScheduleHistory(prev);
+      const sched = { ...(prev[scheduleKey] || {}) };
+      for (const fix of fixes) {
+        if (!fix) continue;
+        const prevDay = sched[fix.date] || {};
+        const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
+        const newStaff = { ...prevStaff };
+        if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
+        else { newStaff[fix.period] = fix.locationId; }
+        sched[fix.date] = { ...prevDay, [fix.staffId]: newStaff };
+      }
+      return { ...prev, [scheduleKey]: sched };
+    });
+    addHistoryEntry('Fixed all ' + fixes.length + ' rule conflicts');
   }
 
   // AI Agent Chat
@@ -3684,7 +3757,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     <span style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
                     <div style={{display:'flex',gap:8}}>
                       <Btn variant="success" onClick={()=>{
-                        conflictsReport.conflicts.forEach(c => { if (c.fix) applyConflictFix(c.fix); });
+                        applyAllConflictFixes(conflictsReport.conflicts.map(c => c.fix).filter(Boolean));
                         setConflictsReport(null); setAiLog('✅ All conflicts resolved — rules applied.');
                       }} style={{fontSize:12,padding:'4px 12px'}}>Fix All</Btn>
                       <Btn variant="ghost" onClick={()=>setConflictsReport(null)} style={{fontSize:12,padding:'4px 10px'}}>Dismiss</Btn>
@@ -3759,7 +3832,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:12}}>Today</Btn>
                 {isAdmin && <Btn variant="ghost" onClick={()=>{
                   if(!canUndo) return;
-                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current - 1];
+                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current];
                   setPendingUndoRedo({type:'undo', summary: describeScheduleDiff(schedules, target)});
                 }} disabled={!canUndo}
                   style={{padding:isMobile?'8px 10px':'8px 14px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default',display:'flex',alignItems:'center',gap:5}}
@@ -4781,7 +4854,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Company Holidays</h2>
                   <p style={{color:'var(--text-muted)',fontSize:14,marginTop:4}}>Office-wide closures that apply to all locations and staff</p>
                 </div>
-                {isAdmin && <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,note:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>}
+                {isAdmin && <Btn onClick={()=>{setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,halfDay:'closed',note:'',aiNote:''});setShowHolidayModal(true)}}>+ Add Holiday</Btn>}
               </div>
               {holidays.length===0?(
                 <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}><div style={{fontSize:48,marginBottom:16}}>📆</div><p>No holidays defined.</p></div>

@@ -231,7 +231,7 @@ export default async (req) => {
       const record = {
         username,
         email,
-        userType: userType || 'admin',
+        userType: ['admin', 'staff'].includes(userType) ? userType : 'admin',
         created:  Date.now(),
         password: await hashPassword(password),
       };
