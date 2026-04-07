@@ -752,6 +752,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [providersCollapsed, setProvidersCollapsed] = useState(false);
   const [locationsCollapsed, setLocationsCollapsed] = useState(false);
   const [confirmClearPlan, setConfirmClearPlan] = useState(false);
+  const [planRefreshing, setPlanRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const [expandedLocation, setExpandedLocation] = useState(null);
   const [expandedStaffMember, setExpandedStaffMember] = useState(null);
   const [calendarView, setCalendarView] = useState('month'); // 'month' | 'week'
@@ -3935,10 +3937,27 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     </div>
                   )}
                   {/* Refresh — reload current plan from cloud storage */}
-                  <Btn variant="ghost" onClick={async ()=>{
-                    const source = user.adminUsername || user.username;
-                    try { await loadUserData(source); } catch(e) {}
-                  }} title="Refresh schedule from cloud" style={{fontSize:12,padding:'5px 10px',marginLeft:'auto'}}>↻ Refresh</Btn>
+                  <div style={{marginLeft:'auto',display:'flex',flexDirection:'column',alignItems:'flex-end',gap:2}}>
+                    <button onClick={async ()=>{
+                      if (planRefreshing) return;
+                      setPlanRefreshing(true);
+                      const source = user.adminUsername || user.username;
+                      try { await loadUserData(source); setLastRefreshed(new Date()); } catch(e) {}
+                      setPlanRefreshing(false);
+                    }} disabled={planRefreshing} title="Refresh schedule from cloud"
+                      style={{fontSize:12,fontWeight:600,padding:'5px 14px',borderRadius:8,cursor:planRefreshing?'default':'pointer',
+                        background:planRefreshing?'var(--bg-elevated)':'#0ea5e915',color:planRefreshing?'var(--text-dim)':'#0ea5e9',
+                        border:'1px solid '+(planRefreshing?'var(--border-default)':'#0ea5e944'),
+                        transition:'all 0.2s',display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{display:'inline-block',animation:planRefreshing?'spin 0.8s linear infinite':'none',fontSize:14,lineHeight:1}}>↻</span>
+                      {planRefreshing ? 'Refreshing…' : 'Refresh'}
+                    </button>
+                    {lastRefreshed && !planRefreshing && (
+                      <span style={{fontSize:10,color:'var(--text-dim)',whiteSpace:'nowrap'}}>
+                        Last: {lastRefreshed.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>}
 
@@ -4044,7 +4063,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         return (
                           <div key={cellYear+'-'+cellMonth+'-'+day}
                             style={{minHeight:cellMinH,padding:isMobile?'5px 4px':(isWk?'6px 6px':'4px 4px'),borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)',background:wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)'),cursor:isAdmin?'pointer':'default',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
-                            onClick={function(){if(isAdmin)setEditCell({day:day,dk:dk})}}
+                            onClick={function(){if(isAdmin)setEditCell({day:day,dk:dk,cellMonth:cellMonth,cellYear:cellYear})}}
                             onMouseEnter={function(e){if(isAdmin)e.currentTarget.style.background='var(--bg-hover)'}}
                             onMouseLeave={function(e){if(isAdmin)e.currentTarget.style.background=wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)');}}>
                             {(()=>{
@@ -5462,8 +5481,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
       </Modal>
 
-      <Modal open={!!editCell} onClose={()=>setEditCell(null)} title={editCell?`${MONTHS[currentMonth]} ${editCell.day}, ${currentYear} — Week ${getWeekOfMonth(editCell.day)}`:''} wide>
-        {editCell&&(
+      <Modal open={!!editCell} onClose={()=>setEditCell(null)} title={editCell?`${MONTHS[editCell.cellMonth != null ? editCell.cellMonth : currentMonth]} ${editCell.day}, ${editCell.cellYear || currentYear} — Week ${getWeekOfMonth(editCell.day)}`:''} wide>
+        {editCell&&(()=>{
+          // Use the cell's own month/year for schedule lookup — handles cross-month week view cells
+          const ecMonth = editCell.cellMonth != null ? editCell.cellMonth : currentMonth;
+          const ecYear = editCell.cellYear != null ? editCell.cellYear : currentYear;
+          const ecKey = (ecYear === currentYear && ecMonth === currentMonth) ? scheduleKey : `schedule-${ecYear}-${ecMonth}-${activePlan || 'A'}`;
+          const ecSchedule = schedules[ecKey] || {};
+          const ecNotes = dayNotes[ecKey] || {};
+          return (
           <div>
             <p style={{fontSize:14,color:'var(--text-muted)',marginBottom:16}}>Assign each provider to a location for AM and PM.</p>
             <div style={{maxHeight:'60vh',overflow:'auto'}}>
@@ -5481,7 +5507,19 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       {['am','pm'].map(period=>(
                         <div key={period}>
                           <label style={{display:'block',fontSize:11,color:'var(--text-muted)',marginBottom:3,textTransform:'uppercase',fontWeight:700}}>{period}</label>
-                          <select value={schedule[editCell.dk]?.[s.id]?.[period]||''} onChange={e=>setDayAssignment(editCell.day,s.id,period,e.target.value)}
+                          <select value={ecSchedule[editCell.dk]?.[s.id]?.[period]||''} onChange={e=>{
+                            // Write to the cell's own schedule key, not necessarily the viewed month
+                            const dk = editCell.dk;
+                            const locId = e.target.value;
+                            setSchedules(prev => {
+                              pushScheduleHistory(prev);
+                              const prevDay = prev[ecKey]?.[dk] || {};
+                              const prevStaff = prevDay[s.id] || {};
+                              const newStaff = { ...prevStaff };
+                              newStaff[period] = locId;
+                              return { ...prev, [ecKey]: { ...(prev[ecKey] || {}), [dk]: { ...prevDay, [s.id]: newStaff } } };
+                            });
+                          }}
                             style={{width:'100%',padding:'7px 10px',background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:14,fontFamily:'"DM Sans",sans-serif'}}>
                             <option value="">— Unassigned —</option>
                             {locations.map(l=><option key={l.id} value={l.id}>{l.name}{l.address?` (${l.address})`:''}</option>)}
@@ -5497,8 +5535,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             <div style={{marginTop:16,borderTop:'1px solid var(--border-default)',paddingTop:14}}>
               <label style={{display:'block',fontSize:12,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>📝 Day Notes</label>
               <textarea
-                value={getNotes()[editCell.dk]||''}
-                onChange={e=>setNote(editCell.dk,e.target.value)}
+                value={ecNotes[editCell.dk]||''}
+                onChange={e=>{
+                  const text = e.target.value;
+                  setDayNotes(prev => {
+                    const updated = { ...prev, [ecKey]: { ...(prev[ecKey] || {}), [editCell.dk]: text } };
+                    if (!text) { delete updated[ecKey][editCell.dk]; if (Object.keys(updated[ecKey]).length === 0) delete updated[ecKey]; }
+                    return updated;
+                  });
+                }}
                 placeholder="Add notes for this day (e.g. coverage changes, reminders)…"
                 rows={3}
                 style={{width:'100%',background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:14,fontFamily:'"DM Sans",sans-serif',padding:'10px 12px',resize:'vertical',lineHeight:1.5}}
@@ -5506,7 +5551,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             </div>
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}><Btn onClick={()=>setEditCell(null)}>Done</Btn></div>
           </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Profile Modals */}
