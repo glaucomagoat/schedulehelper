@@ -15,14 +15,19 @@ const ADMIN_USERNAME = "cve"; // The admin whose finalized schedule is exposed
 function getCorsHeaders(req) {
   const allowed = (process.env.PARTNER_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean);
   const origin = req.headers.get("origin") || "";
-  const allowedOrigin = allowed.includes(origin) ? origin : "null";
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
+  // Only set Allow-Origin when the origin is explicitly in the allowlist.
+  // Returning "null" would permit file:// and sandboxed iframe origins, so we
+  // omit the header entirely when there's no match — browsers will block it.
+  const headers = {
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     "Content-Type": "application/json",
     "Vary": "Origin",
   };
+  if (origin && allowed.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
 }
 
 function json(data, status, req) {
@@ -63,6 +68,9 @@ export default async function handler(req) {
     }
     year = parseInt(parts[1], 10);
     month1indexed = parseInt(parts[2], 10);
+    if (year < 1900 || year > 2200) {
+      return json({ error: "Invalid year — must be between 1900 and 2200" }, 400, req);
+    }
     if (month1indexed < 1 || month1indexed > 12) {
       return json({ error: "Invalid month — must be 01-12" }, 400, req);
     }
@@ -156,9 +164,10 @@ export default async function handler(req) {
       for (const [staffId, periods] of Object.entries(dayAssignments)) {
         const staffName = staffById[staffId];
         if (!staffName) continue; // skip unknown staff IDs
+        if (!periods || typeof periods !== 'object') continue; // skip malformed entries
 
-        const amName = periods.am === "OFF" ? "OFF" : (locationById[periods.am] || periods.am);
-        const pmName = periods.pm === "OFF" ? "OFF" : (locationById[periods.pm] || periods.pm);
+        const amName = periods.am === "OFF" ? "OFF" : (locationById[periods.am] || periods.am || "OFF");
+        const pmName = periods.pm === "OFF" ? "OFF" : (locationById[periods.pm] || periods.pm || "OFF");
 
         dayData[staffName] = { am: amName, pm: pmName };
       }
@@ -173,7 +182,13 @@ export default async function handler(req) {
     const planHistory = await d("planHistory");
     const historyForPlan = planHistory?.[scheduleKey] || [];
     const lastEntry = historyForPlan[historyForPlan.length - 1];
-    const lastUpdated = lastEntry?.ts ? new Date(lastEntry.ts).toISOString() : null;
+    let lastUpdated = null;
+    if (lastEntry?.ts) {
+      try {
+        const d = new Date(lastEntry.ts);
+        if (!isNaN(d.getTime())) lastUpdated = d.toISOString();
+      } catch(e) { /* leave lastUpdated as null */ }
+    }
 
     // ── Return response ───────────────────────────────────────────────────────
     return json({

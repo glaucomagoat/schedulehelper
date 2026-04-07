@@ -19,6 +19,9 @@ const MAX_TOKENS_LIMIT = 16384;
 // from switching to a more expensive model.
 const PINNED_MODEL = 'claude-sonnet-4-6';
 
+// NOTE: exp in JWT tokens is milliseconds (Date.now() + ms), not JWT standard seconds.
+// This is consistent with storage-proxy.mjs — do not change.
+
 // ── JWT verification (same algorithm as storage-proxy.mjs) ───────────────────
 
 function fromB64url(str) {
@@ -38,6 +41,7 @@ async function verifyToken(token, secret) {
   const valid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(data));
   if (!valid) throw new Error('Invalid token signature');
   const payload = JSON.parse(fromB64url(body));
+  // exp is milliseconds (Date.now()-based)
   if (Date.now() > payload.exp) throw new Error('Token expired');
   return payload;
 }
@@ -74,10 +78,19 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: JSON_HEADERS });
   }
 
+  // Validate messages field
+  if (!body.messages || !Array.isArray(body.messages)) {
+    return new Response(JSON.stringify({ error: 'messages must be a non-empty array' }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Safely parse max_tokens — coerce to number and clamp
+  const rawMaxTokens = parseInt(body.max_tokens, 10);
+  const maxTokens = Math.min(isNaN(rawMaxTokens) ? 4096 : rawMaxTokens, MAX_TOKENS_LIMIT);
+
   const anthropicPayload = {
     model:      PINNED_MODEL,   // always server-side; ignore body.model
-    max_tokens: Math.min(body.max_tokens || 4096, MAX_TOKENS_LIMIT),
-    messages:   body.messages   || [],
+    max_tokens: maxTokens,
+    messages:   body.messages,
   };
 
   if (body.system) anthropicPayload.system = body.system;
@@ -91,15 +104,26 @@ export default async function handler(req) {
   }
 
   try {
-    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(anthropicPayload),
-    });
+    // Add a timeout to avoid hanging indefinitely on upstream failures.
+    // Edge functions have a platform-level timeout, but this gives cleaner errors.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min
+
+    let upstream;
+    try {
+      upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type':      'application/json',
+          'x-api-key':         ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(anthropicPayload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (body.stream) {
       // Deno/Edge runtime supports direct body streaming natively —
@@ -119,6 +143,9 @@ export default async function handler(req) {
     return new Response(responseText, { status: upstream.status, headers: JSON_HEADERS });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'Upstream request failed', detail: err.message }), { status: 502, headers: JSON_HEADERS });
+    const isTimeout = err.name === 'AbortError';
+    const status = isTimeout ? 504 : 502;
+    const message = isTimeout ? 'Upstream request timed out' : 'Upstream request failed';
+    return new Response(JSON.stringify({ error: message, detail: err.message }), { status, headers: JSON_HEADERS });
   }
 }

@@ -68,8 +68,18 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 <script>
 window.storage=(function(){
   var API='/.netlify/functions/storage-proxy';
+  // Check token expiry client-side before making API calls.
+  // Returns true if expired (or unparseable). exp is stored in milliseconds.
+  function isExpired(token){
+    try{var p=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));return Date.now()>p.exp;}catch(e){return true;}
+  }
   async function call(body){
     var token=localStorage.getItem('sessionToken')||'';
+    // Skip expiry check for public actions that don't need a token
+    var publicActions=['login','register','dev-auth','forgot-password','reset-password'];
+    if(token&&!publicActions.includes(body.action)&&isExpired(token)){
+      throw new Error('SESSION_EXPIRED');
+    }
     var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-session-token':token},body:JSON.stringify(body)});
     var d=await r.json();
     if(!r.ok)throw new Error(d.error||'Storage error');
@@ -353,7 +363,7 @@ function isWeekend(year, month, day) {
 
 // Get which week-of-month (1-5) a given day falls on
 function getWeekOfMonth(day) {
-  return Math.ceil(day / 7);
+  return Math.max(1, Math.ceil(day / 7));
 }
 
 function useIsMobile() {
@@ -901,7 +911,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function addLog(type, message, data) {
     const entry = { time: new Date().toLocaleTimeString(), type, message, data: data ? JSON.stringify(data).substring(0, 2000) : null };
-    setDevLogs(prev => [...prev, entry]);
+    setDevLogs(prev => [...prev.slice(-199), entry]); // cap at 200 entries
   }
 
   useEffect(() => {
@@ -935,7 +945,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showPartialRegenModal, setShowPartialRegenModal] = useState(false);
   const [partialRegenDays, setPartialRegenDays] = useState(new Set());
 
-  const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan}`;
+  const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan || 'A'}`;
   const monthKey = `${currentYear}-${currentMonth}`;
 
   const finalPlanForMonth = finalPlans[monthKey] || null;
@@ -1006,7 +1016,11 @@ window.ScheduleHelper = function StaffScheduler() {
       // Clean up any stale cloud session key from before this fix
       try { await window.storage.delete('session'); } catch(e) {}
       if (sessRaw) {
-          const u = JSON.parse(sessRaw);
+          let u;
+          try { u = JSON.parse(sessRaw); } catch(e) {
+            localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+            setLoading(false); return;
+          }
           // Re-read user record to get latest userType (may have been updated)
           let fullU = { ...u };
           try {
@@ -1023,9 +1037,10 @@ window.ScheduleHelper = function StaffScheduler() {
               const staffData = await window.storage.get(`${u.username}:staff`);
               const locData = await window.storage.get(`${u.username}:locations`);
               const rulesData = await window.storage.get(`${u.username}:rules`);
-              const staffOk = staffData && JSON.parse(staffData.value).length > 0;
-              const locsOk = locData && JSON.parse(locData.value).length > 0;
-              const rulesOk = rulesData && JSON.parse(rulesData.value).length > 0;
+              let staffOk = false, locsOk = false, rulesOk = false;
+              try { const sd = staffData && JSON.parse(staffData.value); staffOk = Array.isArray(sd) && sd.length > 0; } catch(e) {}
+              try { const ld = locData && JSON.parse(locData.value); locsOk = Array.isArray(ld) && ld.length > 0; } catch(e) {}
+              try { const rd = rulesData && JSON.parse(rulesData.value); rulesOk = Array.isArray(rd) && rd.length > 0; } catch(e) {}
               hasCompleteData = staffOk && locsOk && rulesOk;
             } catch(e) {}
 
@@ -1035,9 +1050,9 @@ window.ScheduleHelper = function StaffScheduler() {
               let existingSchedules = {};
               try {
                 const vacData = await window.storage.get(`${u.username}:vacations`);
-                if (vacData) existingVacations = JSON.parse(vacData.value);
+                if (vacData) { try { existingVacations = JSON.parse(vacData.value) || []; } catch(e) {} }
                 const schedData = await window.storage.get(`${u.username}:schedules`);
-                if (schedData) existingSchedules = JSON.parse(schedData.value);
+                if (schedData) { try { existingSchedules = JSON.parse(schedData.value) || {}; } catch(e) {} }
               } catch(e) {}
               setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
               setVacations(existingVacations); setSchedules(existingSchedules);
@@ -1054,7 +1069,7 @@ window.ScheduleHelper = function StaffScheduler() {
             await loadUserData(sourceUser);
           }
         }
-      } catch(e) {}
+      } catch(e) { console.error('Initialization error:', e); }
       setLoading(false);
     })();
   }, []);
@@ -1109,7 +1124,14 @@ window.ScheduleHelper = function StaffScheduler() {
     // Staff users are read-only — never write schedule data back
     const uType = user.userType || 'admin';
     if (uType === 'staff' && !user.isDev) return;
-    try { await window.storage.set(`${user.adminUsername || user.username}:${key}`, JSON.stringify(data)); } catch(e) {}
+    try {
+      await window.storage.set(`${user.adminUsername || user.username}:${key}`, JSON.stringify(data));
+    } catch(e) {
+      if (e.message === 'SESSION_EXPIRED') {
+        localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+        setUser(null); setIsDev(false);
+      }
+    }
   }
 
   useEffect(() => { if (user) saveData('staff', staff); }, [staff]);
@@ -1253,7 +1275,7 @@ window.ScheduleHelper = function StaffScheduler() {
       if (!userData) { setProfileMsg('Account not found.'); return; }
       const parsed = JSON.parse(userData.value);
       const curH = await hashPassword(currentPassword);
-      if (parsed.password !== curH && parsed.password !== currentPassword) { setProfileMsg('Current password is incorrect.'); return; }
+      if (parsed.password !== curH) { setProfileMsg('Current password is incorrect.'); return; }
       parsed.password = await hashPassword(newPassword);
       await window.storage.set(`user:${user.username}`, JSON.stringify(parsed));
       setProfileMsg('✅ Password changed successfully!');
@@ -1463,9 +1485,10 @@ window.ScheduleHelper = function StaffScheduler() {
       const locData = await window.storage.get(`${devUsername}:locations`);
       const rulesData = await window.storage.get(`${devUsername}:rules`);
 
-      const staffOk = staffData && JSON.parse(staffData.value).length > 0;
-      const locsOk = locData && JSON.parse(locData.value).length > 0;
-      const rulesOk = rulesData && JSON.parse(rulesData.value).length > 0;
+      let staffOk = false, locsOk = false, rulesOk = false;
+      try { const sd = staffData && JSON.parse(staffData.value); staffOk = Array.isArray(sd) && sd.length > 0; } catch(e) {}
+      try { const ld = locData && JSON.parse(locData.value); locsOk = Array.isArray(ld) && ld.length > 0; } catch(e) {}
+      try { const rd = rulesData && JSON.parse(rulesData.value); rulesOk = Array.isArray(rd) && rd.length > 0; } catch(e) {}
 
       hasCompleteData = staffOk && locsOk && rulesOk;
     } catch(e) {}
@@ -1476,9 +1499,9 @@ window.ScheduleHelper = function StaffScheduler() {
       let existingSchedules = {};
       try {
         const vacData = await window.storage.get(`${devUsername}:vacations`);
-        if (vacData) existingVacations = JSON.parse(vacData.value);
+        if (vacData) { try { existingVacations = JSON.parse(vacData.value) || []; } catch(e) {} }
         const schedData = await window.storage.get(`${devUsername}:schedules`);
-        if (schedData) existingSchedules = JSON.parse(schedData.value);
+        if (schedData) { try { existingSchedules = JSON.parse(schedData.value) || {}; } catch(e) {} }
       } catch(e) {}
 
       setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
@@ -1607,7 +1630,11 @@ window.ScheduleHelper = function StaffScheduler() {
   function setNote(dk, text) {
     setDayNotes(prev => {
       const updated = { ...prev, [scheduleKey]: { ...(prev[scheduleKey] || {}), [dk]: text } };
-      if (!text) delete updated[scheduleKey][dk];
+      if (!text) {
+        delete updated[scheduleKey][dk];
+        // Clean up empty schedule key to avoid accumulating empty objects
+        if (Object.keys(updated[scheduleKey]).length === 0) delete updated[scheduleKey];
+      }
       return updated;
     });
   }
@@ -1624,12 +1651,18 @@ window.ScheduleHelper = function StaffScheduler() {
     setRegenDiffSummary(null);
     setSchedules(prev => {
       pushScheduleHistory(prev);
-      const sched = { ...prev };
-      if (!sched[scheduleKey]) sched[scheduleKey] = {};
-      if (!sched[scheduleKey][dk]) sched[scheduleKey][dk] = {};
-      if (!sched[scheduleKey][dk][staffId]) sched[scheduleKey][dk][staffId] = {};
-      sched[scheduleKey][dk][staffId][period] = locationId;
-      return { ...sched };
+      const prevDay = prev[scheduleKey]?.[dk] || {};
+      const prevStaff = prevDay[staffId] || {};
+      const newStaff = { ...prevStaff };
+      if (period === 'am' || period === 'both') newStaff.am = locationId;
+      if (period === 'pm' || period === 'both') newStaff.pm = locationId;
+      return {
+        ...prev,
+        [scheduleKey]: {
+          ...(prev[scheduleKey] || {}),
+          [dk]: { ...prevDay, [staffId]: newStaff }
+        }
+      };
     });
   }
 
@@ -1774,7 +1807,7 @@ window.ScheduleHelper = function StaffScheduler() {
   }
 
   async function generateWithAI(userDecisions) {
-    if (staff.length === 0 || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
+    if (!Array.isArray(staff) || staff.length === 0 || !Array.isArray(locations) || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
     setRegenDiffSummary(null);
     setGenAmbiguities(null);
@@ -1970,7 +2003,9 @@ window.ScheduleHelper = function StaffScheduler() {
     // Post-process: enforce holidays
     let holidayEdits = 0;
     for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
-      const [y, m, d] = dk.split('-').map(Number);
+      const parts = dk.split('-').map(Number);
+      const [y, m, d] = parts;
+      if (isNaN(y) || isNaN(m) || isNaN(d)) continue;
       const holiday = getHolidayForDate(y, m - 1, d);
       if (!holiday) continue;
       for (const sid of Object.keys(dayAssignments)) {
@@ -2036,7 +2071,7 @@ window.ScheduleHelper = function StaffScheduler() {
   }
 
   async function generatePartialDays(selectedDayKeys) {
-    if (!selectedDayKeys || selectedDayKeys.length === 0) return;
+    if (!Array.isArray(selectedDayKeys) || selectedDayKeys.length === 0) return;
     setGenerating(true);
     setRegenDiffSummary(null);
     addLog('info', `Starting selective day regeneration: ${selectedDayKeys.length} day${selectedDayKeys.length > 1 ? 's' : ''}...`);
@@ -2254,7 +2289,9 @@ window.ScheduleHelper = function StaffScheduler() {
   function detectRuleConflicts(assignments) {
     const conflicts = [];
     for (const [dk, dayAssignments] of Object.entries(assignments)) {
-      const [y, m, d] = dk.split('-').map(Number);
+      const parts = dk.split('-').map(Number);
+      const [y, m, d] = parts;
+      if (isNaN(y) || isNaN(m) || isNaN(d)) continue;
       const dt = new Date(y, m - 1, d);
       const dow = dt.getDay();
       if (dow === 0 || dow === 6) continue;
@@ -2298,7 +2335,7 @@ window.ScheduleHelper = function StaffScheduler() {
         const vacEntry = vacations.find(v => v.staffId === staffId && dk >= v.startDate && dk <= v.endDate);
         const mlEntry = medicalLeaves.find(ml => ml.staffId === staffId && dk >= ml.startDate && dk <= ml.endDate);
 
-        const getConflictReason = (actualId, otherRules, period) => {
+        const getConflictReason = (actualId, otherRules, period, currentRule) => {
           if (actualId === 'OFF') {
             if (holiday) {
               const closure = holiday.halfDay === 'am' ? 'half-day closure (AM only)' : 'full-day closure';
@@ -2309,7 +2346,7 @@ window.ScheduleHelper = function StaffScheduler() {
             return 'Scheduled as OFF — no override reason detected (AI decision)';
           }
           // Actual is a different location — check if another required rule explains it
-          const conflicting = otherRules.find(r => r.id !== rule.id && r.priority === 'required' &&
+          const conflicting = otherRules.find(r => r.id !== currentRule.id && r.priority === 'required' &&
             (r.period === period || r.period === 'both') && r.locationId === actualId);
           if (conflicting) {
             const cLoc = locations.find(l => l.id === conflicting.locationId)?.name || conflicting.locationId;
@@ -2327,7 +2364,7 @@ window.ScheduleHelper = function StaffScheduler() {
           if (period === 'am' || period === 'both') {
             if (periods.am !== rule.locationId) {
               const actualLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
-              const reason = getConflictReason(periods.am, requiredRules, 'am');
+              const reason = getConflictReason(periods.am, requiredRules, 'am', rule);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} AM (required) but is at ${actualLoc}`,
                 reason, ruleId: rule.id, current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
@@ -2337,7 +2374,7 @@ window.ScheduleHelper = function StaffScheduler() {
           if (period === 'pm' || period === 'both') {
             if (periods.pm !== rule.locationId) {
               const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
-              const reason = getConflictReason(periods.pm, requiredRules, 'pm');
+              const reason = getConflictReason(periods.pm, requiredRules, 'pm', rule);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} PM (required) but is at ${actualLoc}`,
                 reason, ruleId: rule.id, current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
@@ -2353,23 +2390,90 @@ window.ScheduleHelper = function StaffScheduler() {
   function applyConflictFix(fix) {
     setSchedules(prev => {
       pushScheduleHistory(prev);
-      const sched = { ...(prev[scheduleKey] || {}) };
-      if (!sched[fix.date]) sched[fix.date] = {};
-      if (!sched[fix.date][fix.staffId]) sched[fix.date][fix.staffId] = { am: 'OFF', pm: 'OFF' };
-      if (fix.period === 'both') { sched[fix.date][fix.staffId].am = fix.locationId; sched[fix.date][fix.staffId].pm = fix.locationId; }
-      else { sched[fix.date][fix.staffId][fix.period] = fix.locationId; }
-      return { ...prev, [scheduleKey]: sched };
+      const prevDay = prev[scheduleKey]?.[fix.date] || {};
+      const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
+      const newStaff = { ...prevStaff };
+      if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
+      else { newStaff[fix.period] = fix.locationId; }
+      return {
+        ...prev,
+        [scheduleKey]: {
+          ...(prev[scheduleKey] || {}),
+          [fix.date]: { ...prevDay, [fix.staffId]: newStaff }
+        }
+      };
     });
   }
 
   // AI Agent Chat
+
+  // ── Fuzzy match helpers for agent actions ──────────────────────────────────
+  // Ranked matching: exact > startsWith > reverse-startsWith > includes.
+  // Returns { match, ambiguous, candidates } — ambiguous means multiple equally-good matches.
+  function findStaffFuzzy(name) {
+    if (!name) return { match: null };
+    // Direct ID match (e.g. "s1")
+    const byId = staff.find(x => x.id === name);
+    if (byId) return { match: byId };
+    const lower = name.toLowerCase();
+    const exact = staff.filter(s => s.name.toLowerCase() === lower);
+    if (exact.length === 1) return { match: exact[0] };
+    const starts = staff.filter(s => s.name.toLowerCase().startsWith(lower));
+    if (starts.length === 1) return { match: starts[0] };
+    // Check if query starts with a staff name (e.g. "Steve Kim" starts with "Steve Kim MD" → no, but "Kim" includes)
+    const reverseStarts = staff.filter(s => lower.startsWith(s.name.toLowerCase()));
+    if (reverseStarts.length === 1) return { match: reverseStarts[0] };
+    const includes = staff.filter(s => s.name.toLowerCase().includes(lower));
+    if (includes.length === 1) return { match: includes[0] };
+    if (includes.length > 1) return { match: null, ambiguous: true, candidates: includes };
+    return { match: null };
+  }
+
+  function findLocationFuzzy(name) {
+    if (!name) return { match: null };
+    if (name === 'OFF') return { match: 'OFF' };
+    // Direct ID match (e.g. "l1")
+    const byId = locations.find(l => l.id === name);
+    if (byId) return { match: byId };
+    const lower = name.toLowerCase();
+    const exact = locations.filter(l => l.name.toLowerCase() === lower);
+    if (exact.length === 1) return { match: exact[0] };
+    const starts = locations.filter(l => l.name.toLowerCase().startsWith(lower));
+    if (starts.length === 1) return { match: starts[0] };
+    const reverseStarts = locations.filter(l => lower.startsWith(l.name.toLowerCase()));
+    if (reverseStarts.length === 1) return { match: reverseStarts[0] };
+    const includes = locations.filter(l => l.name.toLowerCase().includes(lower));
+    if (includes.length === 1) return { match: includes[0] };
+    if (includes.length > 1) return { match: null, ambiguous: true, candidates: includes };
+    return { match: null };
+  }
+
+  // Resolve staff from action, returning the staff object or an error string.
+  function resolveStaff(nameOrId) {
+    const result = findStaffFuzzy(nameOrId);
+    if (result.ambiguous) return { error: `❌ Ambiguous staff name "${nameOrId}" — matches: ${result.candidates.map(s => s.name).join(', ')}. Please use the full name.` };
+    if (!result.match) return { error: `❌ Staff "${nameOrId}" not found.` };
+    return { staff: result.match };
+  }
+
+  // Resolve location from action, returning the location object (or 'OFF') or an error string.
+  function resolveLocation(name) {
+    if (!name) return { error: `❌ Missing location name.` };
+    if (name === 'OFF') return { location: 'OFF', locId: 'OFF' };
+    const result = findLocationFuzzy(name);
+    if (result.ambiguous) return { error: `❌ Ambiguous location "${name}" — matches: ${result.candidates.map(l => l.name).join(', ')}. Please be more specific.` };
+    if (!result.match) return { error: `❌ Location "${name}" not found.` };
+    return { location: result.match, locId: result.match.id };
+  }
+
   // Execute an action command from the AI agent
   function executeAgentAction(action) {
     try {
       switch (action.type) {
         case 'add_vacation': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
-          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName || action.staffId);
+          if (r.error) return r.error;
+          const s = r.staff;
           if (!action.startDate || !action.endDate) return '❌ Missing start or end date.';
           const _vTs = Date.now();
           const v = { id: 'v' + _vTs, createdAt: _vTs, createdBy: user?.username || null, staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Vacation' };
@@ -2377,16 +2481,18 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Added vacation for ${s.name}: ${action.startDate} to ${action.endDate}${action.reason ? ' (' + action.reason + ')' : ''}`;
         }
         case 'remove_vacation': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
-          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName || action.staffId);
+          if (r.error) return r.error;
+          const s = r.staff;
           const matching = vacations.filter(v => v.staffId === s.id && (!action.startDate || v.startDate === action.startDate));
           if (matching.length === 0) return `❌ No matching vacation found for ${s.name}.`;
           setVacations(prev => prev.filter(v => v.id !== matching[0].id));
           return `✅ Removed vacation for ${s.name}: ${matching[0].startDate} to ${matching[0].endDate}`;
         }
         case 'add_medical_leave': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
-          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName || action.staffId);
+          if (r.error) return r.error;
+          const s = r.staff;
           if (!action.startDate || !action.endDate) return '❌ Missing start or end date.';
           const _mlTs = Date.now();
           const ml = { id: 'ml' + _mlTs, createdAt: _mlTs, createdBy: user?.username || null, staffId: s.id, startDate: action.startDate, endDate: action.endDate, reason: action.reason || 'Medical Leave' };
@@ -2394,8 +2500,9 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Added medical leave for ${s.name}: ${action.startDate} to ${action.endDate}${action.reason ? ' (' + action.reason + ')' : ''}`;
         }
         case 'remove_medical_leave': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()) || x.id === action.staffId);
-          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName || action.staffId);
+          if (r.error) return r.error;
+          const s = r.staff;
           const matching = medicalLeaves.filter(ml => ml.staffId === s.id && (!action.startDate || ml.startDate === action.startDate));
           if (matching.length === 0) return `❌ No matching medical leave found for ${s.name}.`;
           setMedicalLeaves(prev => prev.filter(ml => ml.id !== matching[0].id));
@@ -2408,10 +2515,11 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Added staff: ${action.name} (${newStaff.role})`;
         }
         case 'remove_staff': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
-          if (!s) return `❌ Staff member "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName);
+          if (r.error) return r.error;
+          const s = r.staff;
           setStaff(p => p.filter(x => x.id !== s.id));
-          setRules(p => p.filter(r => r.staffId !== s.id));
+          setRules(p => p.filter(rule => rule.staffId !== s.id));
           setVacations(p => p.filter(v => v.staffId !== s.id));
           setMedicalLeaves(p => p.filter(ml => ml.staffId !== s.id));
           return `✅ Removed ${s.name} and all their rules, vacations, and medical leaves.`;
@@ -2422,35 +2530,37 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Added location: ${action.name}`;
         }
         case 'remove_location': {
-          const loc = locations.find(l => l.name.toLowerCase().includes(action.name?.toLowerCase()));
-          if (!loc) return `❌ Location "${action.name}" not found.`;
-          setLocations(p => p.filter(l => l.id !== loc.id));
-          setRules(p => p.filter(r => r.locationId !== loc.id));
-          return `✅ Removed location: ${loc.name}`;
+          const lr = resolveLocation(action.name);
+          if (lr.error) return lr.error;
+          if (lr.locId === 'OFF') return `❌ Cannot remove OFF.`;
+          setLocations(p => p.filter(l => l.id !== lr.locId));
+          setRules(p => p.filter(rule => rule.locationId !== lr.locId));
+          return `✅ Removed location: ${lr.location.name}`;
         }
         case 'add_rule': {
           const ruleType = action.ruleType || 'standard';
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
-          if (!s) return `❌ Staff "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName);
+          if (r.error) return r.error;
+          const s = r.staff;
           const requiresLocation = ['standard', 'conditional', 'exception', 'rotation'].includes(ruleType);
           let loc = null;
           if (action.locationName) {
-            loc = locations.find(l => l.name.toLowerCase().includes(action.locationName.toLowerCase()));
-            if (!loc && requiresLocation) return `❌ Location "${action.locationName}" not found.`;
+            const lr = resolveLocation(action.locationName);
+            if (lr.error) return lr.error;
+            loc = lr.locId === 'OFF' ? null : lr.location;
+            if (!loc && requiresLocation) return `❌ A valid location (not OFF) is required for ${ruleType} rules.`;
           } else if (requiresLocation) {
             return `❌ A location is required for ${ruleType} rules.`;
           }
           let rotateWithStaffId = '';
           let rotateAtLocationId = '';
           if (ruleType === 'rotation') {
-            const partner = staff.find(x => x.name.toLowerCase().includes(action.rotateWithStaffName?.toLowerCase()));
-            if (!partner) return `❌ Rotation partner "${action.rotateWithStaffName}" not found.`;
-            rotateWithStaffId = partner.id;
-            const rotLoc = action.rotateAtLocationName
-              ? locations.find(l => l.name.toLowerCase().includes(action.rotateAtLocationName.toLowerCase()))
-              : loc;
-            if (!rotLoc) return `❌ Rotation location "${action.rotateAtLocationName}" not found.`;
-            rotateAtLocationId = rotLoc.id;
+            const pr = resolveStaff(action.rotateWithStaffName);
+            if (pr.error) return pr.error;
+            rotateWithStaffId = pr.staff.id;
+            const rlr = action.rotateAtLocationName ? resolveLocation(action.rotateAtLocationName) : (loc ? { location: loc, locId: loc.id } : { error: '❌ Rotation location required.' });
+            if (rlr.error) return rlr.error;
+            rotateAtLocationId = rlr.locId;
           }
           const _ruleTs = Date.now();
           const newRule = {
@@ -2473,18 +2583,19 @@ window.ScheduleHelper = function StaffScheduler() {
           return msg;
         }
         case 'remove_rule': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
-          if (!s) return `❌ Staff "${action.staffName}" not found.`;
-          const matching = rules.filter(r => r.staffId === s.id &&
-            (!action.ruleType || (r.ruleType || 'standard') === action.ruleType) &&
-            (!action.dayOfWeek || r.dayOfWeek === action.dayOfWeek) &&
-            (!action.locationName || locations.find(l => l.id === r.locationId)?.name.toLowerCase().includes(action.locationName.toLowerCase())) &&
-            (!action.description || r.description?.toLowerCase().includes(action.description.toLowerCase()))
+          const r = resolveStaff(action.staffName);
+          if (r.error) return r.error;
+          const s = r.staff;
+          const matching = rules.filter(rule => rule.staffId === s.id &&
+            (!action.ruleType || (rule.ruleType || 'standard') === action.ruleType) &&
+            (!action.dayOfWeek || rule.dayOfWeek === action.dayOfWeek) &&
+            (!action.locationName || locations.find(l => l.id === rule.locationId)?.name.toLowerCase().includes(action.locationName.toLowerCase())) &&
+            (!action.description || rule.description?.toLowerCase().includes(action.description.toLowerCase()))
           );
           if (matching.length === 0) return `❌ No matching rule found for ${s.name}.`;
           if (matching.length > 1) return `❌ ${matching.length} rules matched for ${s.name} — add ruleType or description text to narrow it down.`;
           const removed = matching[0];
-          setRules(prev => prev.filter(r => r.id !== removed.id));
+          setRules(prev => prev.filter(rule => rule.id !== removed.id));
           const rType = removed.ruleType || 'standard';
           const loc = locations.find(l => l.id === removed.locationId);
           const hasLocDay = ['standard','conditional','exception','rotation'].includes(rType);
@@ -2507,25 +2618,42 @@ window.ScheduleHelper = function StaffScheduler() {
           return `✅ Removed holiday: ${h.name}`;
         }
         case 'update_schedule': {
-          const s = staff.find(x => x.name.toLowerCase().includes(action.staffName?.toLowerCase()));
-          if (!s) return `❌ Staff "${action.staffName}" not found.`;
+          const r = resolveStaff(action.staffName);
+          if (r.error) return r.error;
+          const s = r.staff;
           if (!action.date) return '❌ Missing date.';
-          const loc = action.location === 'OFF' ? 'OFF' : locations.find(l => l.name.toLowerCase().includes(action.location?.toLowerCase()));
-          const locId = action.location === 'OFF' ? 'OFF' : loc?.id;
-          if (!locId) return `❌ Location "${action.location}" not found.`;
+          const lr = resolveLocation(action.location);
+          if (lr.error) return lr.error;
+          const locId = lr.locId;
+          const locDisplay = locId === 'OFF' ? 'OFF' : lr.location.name;
           const period = action.period || 'both';
+          // Derive the correct scheduleKey from the action's date, NOT the viewed month.
+          // This prevents writing a March date into April's schedule key.
+          const dateParts = action.date.split('-').map(Number);
+          const targetYear = dateParts[0];
+          const targetMonth = dateParts[1] - 1; // convert 1-indexed to 0-indexed
+          const targetKey = `schedule-${targetYear}-${targetMonth}-${activePlan || 'A'}`;
+          const isCrossMonth = (targetYear !== currentYear || targetMonth !== currentMonth);
           setSchedules(prev => {
             pushScheduleHistory(prev);
-            const sched = { ...prev[scheduleKey] || {} };
-            if (!sched[action.date]) sched[action.date] = {};
-            if (!sched[action.date][s.id]) sched[action.date][s.id] = { am: 'OFF', pm: 'OFF' };
-            if (period === 'am' || period === 'both') sched[action.date][s.id].am = locId;
-            if (period === 'pm' || period === 'both') sched[action.date][s.id].pm = locId;
-            return { ...prev, [scheduleKey]: sched };
+            const prevDay = prev[targetKey]?.[action.date] || {};
+            const prevStaff = prevDay[s.id] || { am: 'OFF', pm: 'OFF' };
+            const newStaff = { ...prevStaff };
+            if (period === 'am' || period === 'both') newStaff.am = locId;
+            if (period === 'pm' || period === 'both') newStaff.pm = locId;
+            return {
+              ...prev,
+              [targetKey]: {
+                ...(prev[targetKey] || {}),
+                [action.date]: { ...prevDay, [s.id]: newStaff }
+              }
+            };
           });
-          const agentDesc = 'AI agent: ' + getLastName(s.name) + ' · ' + action.date + ' · ' + (period === 'both' ? 'AM+PM' : period.toUpperCase()) + ' → ' + action.location;
-          addHistoryEntry(agentDesc);
-          return `✅ Updated ${s.name} on ${action.date}: ${period === 'both' ? 'AM+PM' : period.toUpperCase()} → ${action.location}`;
+          const agentDesc = 'AI agent: ' + getLastName(s.name) + ' · ' + action.date + ' · ' + (period === 'both' ? 'AM+PM' : period.toUpperCase()) + ' → ' + locDisplay;
+          addHistoryEntry(agentDesc, isCrossMonth ? targetKey : undefined);
+          let msg = `✅ Updated ${s.name} on ${action.date}: ${period === 'both' ? 'AM+PM' : period.toUpperCase()} → ${locDisplay}`;
+          if (isCrossMonth) msg += ` (applied to ${MONTHS[targetMonth]} ${targetYear} schedule)`;
+          return msg;
         }
         default:
           return `❌ Unknown action: ${action.type}`;
@@ -2635,7 +2763,13 @@ Available actions:
 - remove_holiday: {"type":"remove_holiday", "name":"Holiday Name"}
 - update_schedule: {"type":"update_schedule", "staffName":"Last Name", "date":"YYYY-MM-DD", "location":"Location Name or OFF", "period":"am|pm|both"}
 
-You can include MULTIPLE action blocks in one response. Always confirm what you're doing in natural language AND include the action block. If unsure about details, ask the user first.
+You can include MULTIPLE action blocks in one response. If unsure about details, ask the user first.
+
+CRITICAL RULES FOR MAKING CHANGES:
+- You MUST include the \`\`\`action block to make ANY change. Without the action block, NOTHING happens — your words alone do NOT modify the schedule.
+- NEVER say "I've updated", "I've moved", "Done", or "Changed" unless you have included the corresponding \`\`\`action block in the SAME response. Saying you made a change without the action block is a lie — the schedule will not change.
+- Every change = action block. No exceptions. If you describe a change, the action block MUST be present.
+- After each action block, briefly confirm what the action block does.
 
 For questions (not changes), just respond normally without action blocks. Be concise. Use last names for providers.`
       : `You are a read-only AI scheduling assistant for Schedule Helper. You can ONLY answer questions about the schedule — you cannot make any changes.
@@ -2685,6 +2819,16 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       let displayText = text.replace(/```action\s*\n?[\s\S]*?```/g, '').trim();
       if (results.length > 0) {
         displayText += '\n\n' + results.join('\n');
+      }
+
+      // Safety net: detect when Claude claims it made a change but didn't emit an action block.
+      // Require first-person claim pattern ("I've updated", "I moved", "Done, I switched") to
+      // avoid false positives on informational responses like "The schedule is set to...".
+      if (isAdmin && results.length === 0) {
+        const claimsChange = /\b(I('ve| have| just)?|I'll|Done[.,!]?\s*I)\s+(updated|moved|changed|switched|set|assigned|removed|added|deleted|swapped)\b/i.test(displayText);
+        if (claimsChange) {
+          displayText += '\n\n⚠️ No action block was found in this response — the schedule was NOT actually changed. Please try again or make the edit manually.';
+        }
       }
 
       setChatMessages(prev => [...prev, { role: 'assistant', content: displayText || 'Done.' }]);
