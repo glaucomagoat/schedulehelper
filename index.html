@@ -786,9 +786,15 @@ window.ScheduleHelper = function StaffScheduler() {
   // ── API HELPERS ────────────────────────────────────────────────────────────
   // callClaudeAPI: non-streaming, used by the AI chat agent for short requests.
   async function callClaudeAPI(body) {
+    var token = localStorage.getItem('sessionToken') || '';
+    if (token && isTokenExpired(token)) {
+      localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+      window.dispatchEvent(new Event('session-expired'));
+      return { ok: false, status: 401, errorText: 'Session expired — please log in again.' };
+    }
     var res = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-session-token': localStorage.getItem('sessionToken') || '' },
+      headers: { 'Content-Type': 'application/json', 'x-session-token': token },
       body: JSON.stringify(body)
     });
     return res;
@@ -800,10 +806,16 @@ window.ScheduleHelper = function StaffScheduler() {
   // inactivity timeout never fires, regardless of how long generation takes.
   // onProgress(charsReceived) called after each chunk for live UI feedback.
   async function streamClaudeAPI(body, onProgress) {
+    var token = localStorage.getItem('sessionToken') || '';
+    if (token && isTokenExpired(token)) {
+      localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+      window.dispatchEvent(new Event('session-expired'));
+      return { ok: false, status: 401, errorText: 'Session expired — please log in again.' };
+    }
     var payload = Object.assign({}, body, { stream: true });
     var response = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-session-token': localStorage.getItem('sessionToken') || '' },
+      headers: { 'Content-Type': 'application/json', 'x-session-token': token },
       body: JSON.stringify(payload)
     });
 
@@ -1965,11 +1977,11 @@ window.ScheduleHelper = function StaffScheduler() {
         '    }\n' +
         '  },\n' +
         '  "ambiguities": [\n' +
-        '    { "id": "unique_id", "severity": "critical|minor", "question": "≤12 words" }\n' +
+        '    { "id": "unique_id", "severity": "critical|minor", "question": "≤12 words", "chose": "what AI decided (e.g. OFF, or location name)", "alternatives": ["other option 1", "other option 2"] }\n' +
         '  ]\n' +
         '}\n' +
         'Use ONLY the exact staff IDs and location IDs provided in the system prompt. Never invent or approximate IDs. Include every listed day and every staff member.\n' +
-        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly.\n' +
+        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly. Include "chose" (what you decided) and 1-3 concise "alternatives" the user could pick instead.\n' +
         'For MINOR ambiguities: auto-resolve silently. Do NOT output auto_resolved.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
@@ -5385,8 +5397,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:600,color:'#fbbf24',marginBottom:6}}>{amb.question}</div>
-            <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>AI chose: {amb.chose}</div>
+            <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>
+              AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose || <em style={{opacity:0.5}}>not specified</em>}</span>
+            </div>
             <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+              <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
+                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
+                  background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'var(--bg-surface)',
+                  color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--text-muted)',
+                  border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose ? `Keep: ${amb.chose}` : "Keep AI's choice"}</div>
               {(amb.alternatives || []).map((alt, oi) => (
                 <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))}
                   style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
@@ -5394,11 +5413,6 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     color:genAmbiguityAnswers[amb.id||ai]===alt?'#818cf8':'var(--text-muted)',
                     border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===alt?'#6366f1':'var(--border-default)')}}>{alt}</div>
               ))}
-              <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
-                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
-                  background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'var(--bg-surface)',
-                  color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--text-muted)',
-                  border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--border-default)')}}>Keep AI's choice</div>
             </div>
           </div>
         ))}
