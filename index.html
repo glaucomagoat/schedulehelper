@@ -561,7 +561,7 @@ function DraggableNote({ initLeft, initTop, boxW, vw, vh, noteText, noteReadOnly
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
-  }, []);
+  }, [vw, vh, boxW]);
 
   return (
     <div onClick={e=>e.stopPropagation()} style={{
@@ -780,6 +780,10 @@ window.ScheduleHelper = function StaffScheduler() {
   const [genAmbiguityAnswers, setGenAmbiguityAnswers] = useState({}); // {id: answer}
   const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
   const [showAmbiguityModal, setShowAmbiguityModal] = useState(false);
+  const [ambiguityMinimized, setAmbiguityMinimized] = useState(false);
+  const [ambiguityFocusIdx, setAmbiguityFocusIdx] = useState(0);
+  const [ambiguityFloatPos, setAmbiguityFloatPos] = useState({x: 20, y: 100});
+  const ambiguityDragRef = useRef({dragging: false, startX: 0, startY: 0, origX: 0, origY: 0});
   const [showPdfMenu, setShowPdfMenu] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
@@ -856,6 +860,35 @@ window.ScheduleHelper = function StaffScheduler() {
 
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  function guardAmbiguity() {
+    if (genAmbiguities && genAmbiguities.length > 0) {
+      alert('Please resolve all critical scheduling decisions before making changes to the schedule.');
+      setAmbiguityMinimized(false);
+      setShowAmbiguityModal(true);
+      return true;
+    }
+    return false;
+  }
+
+  function handleAmbiguityDragStart(e) {
+    e.preventDefault();
+    ambiguityDragRef.current = {dragging: true, startX: e.clientX, startY: e.clientY, origX: ambiguityFloatPos.x, origY: ambiguityFloatPos.y};
+    function onMove(ev) {
+      if (!ambiguityDragRef.current.dragging) return;
+      setAmbiguityFloatPos({
+        x: Math.max(0, ambiguityDragRef.current.origX + ev.clientX - ambiguityDragRef.current.startX),
+        y: Math.max(0, ambiguityDragRef.current.origY + ev.clientY - ambiguityDragRef.current.startY),
+      });
+    }
+    function onUp() {
+      ambiguityDragRef.current.dragging = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
 
   // On mobile, always initialize currentWeekStart if null
   useEffect(() => {
@@ -1262,7 +1295,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (!username || !password) return;
     try {
       const action = isRegister ? 'register' : 'login';
-      if (isRegister && (!email || !email.includes('@'))) { alert('Please enter a valid email address.'); return; }
+      if (isRegister && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) { alert('Please enter a valid email address.'); return; }
       const result = await window.storage.call({ action, username, password, email, userType: loginForm.userType || 'admin' });
       localStorage.setItem('sessionToken', result.token);
       const u = result.user;
@@ -1279,7 +1312,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function handleForgotPassword() {
     const { forgotEmail } = loginForm;
-    if (!forgotEmail || !forgotEmail.includes('@')) { alert('Please enter a valid email address.'); return; }
+    if (!forgotEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotEmail)) { alert('Please enter a valid email address.'); return; }
     try {
       const result = await window.storage.call({ action: 'forgot-password', email: forgotEmail });
       if (result.resetToken) {
@@ -1323,7 +1356,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function handleUpdateEmail() {
     const { email } = profileForm;
-    if (!email || !email.includes('@')) { setProfileMsg('Please enter a valid email address.'); return; }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setProfileMsg('Please enter a valid email address.'); return; }
     try {
       const userData = await window.storage.get(`user:${user.username}`);
       if (!userData) { setProfileMsg('Account not found.'); return; }
@@ -1341,6 +1374,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const form = staffAccountForm[staffMember.id] || {};
     const { username, password } = form;
     if (!username || username.length < 2) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Username must be at least 2 characters.'}})); return; }
+    if (!/^[a-zA-Z0-9_.-]{2,50}$/.test(username)) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Username may only contain letters, numbers, underscores, dots, or hyphens (2–50 chars).'}})); return; }
     if (!password || password.length < 6) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,msg:'❌ Password must be at least 6 characters.'}})); return; }
     setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:true,msg:''}}));
     try {
@@ -2038,7 +2072,8 @@ window.ScheduleHelper = function StaffScheduler() {
       }
     }
 
-    // Post-process: enforce holidays
+    // Post-process (wrapped in try-finally so setGenerating(false) always runs)
+    try {
     let holidayEdits = 0;
     for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
       const parts = dk.split('-').map(Number);
@@ -2088,6 +2123,7 @@ window.ScheduleHelper = function StaffScheduler() {
     if (criticals.length > 0 && !userDecisions) {
       setGenAmbiguities(criticals);
       setGenPendingContext({ allAssignments, allAmbiguities, totalDays, holidayEdits });
+      setAmbiguityMinimized(false);
       setShowAmbiguityModal(true);
       setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
       setGenerating(false);
@@ -2097,15 +2133,19 @@ window.ScheduleHelper = function StaffScheduler() {
     // Detect rule conflicts/violations
     const conflicts = detectRuleConflicts(allAssignments);
     if (conflicts.length > 0) {
-      setConflictsReport({ conflicts, month: currentMonth, year: currentYear });
+      setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
       addLog('info', `Found ${conflicts.length} potential rule conflicts`);
       setAiLog('⚠️ Schedule generated with ' + conflicts.length + ' conflict' + (conflicts.length>1?'s':'') + ' needing review.' + (holidayEdits > 0 ? ' ' + holidayEdits + ' holiday corrections.' : ''));
     } else {
       setConflictsReport(null);
       setAiLog('✅ Schedule generated for ' + MONTHS[currentMonth] + ' ' + currentYear + '! ' + totalDays + ' days populated — no rule conflicts detected.' + (holidayEdits > 0 ? ' ' + holidayEdits + ' holiday corrections.' : ''));
     }
-
-    setGenerating(false);
+    } catch (err) {
+      addLog('error', `Post-processing error: ${err.message}`);
+      setAiLog('⚠️ Schedule generation completed but post-processing failed. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function generatePartialDays(selectedDayKeys) {
@@ -2308,7 +2348,7 @@ window.ScheduleHelper = function StaffScheduler() {
       addHistoryEntry(`AI regenerated ${daysGenerated} day${daysGenerated !== 1 ? 's' : ''}: ` + Object.keys(newDayData).sort().join(', '));
 
       if (pConflicts.length > 0) {
-        setConflictsReport({ conflicts: pConflicts, month: currentMonth, year: currentYear });
+        setConflictsReport({ conflicts: pConflicts, month: currentMonth, year: currentYear, scheduleKey });
         setAiLog('⚠️ Regenerated ' + daysGenerated + ' day' + (daysGenerated>1?'s':'') + ' with ' + pConflicts.length + ' conflict' + (pConflicts.length>1?'s':'') + ' needing review.' + (pHolidayEdits > 0 ? ' ' + pHolidayEdits + ' holiday corrections.' : ''));
       } else {
         setConflictsReport(null);
@@ -3069,7 +3109,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
-    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
+    if (w) { w.onload = () => { setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 600); }; }
+    else { URL.revokeObjectURL(url); alert('Pop-up was blocked. Please allow pop-ups for this site and try again.'); }
   }
 
   // Classic PDF: staff initials across top, location abbreviations in AM/PM rows with vertical text
@@ -3228,7 +3269,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
-    if (w) { w.onload = () => { setTimeout(() => { w.print(); }, 600); }; }
+    if (w) { w.onload = () => { setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 600); }; }
+    else { URL.revokeObjectURL(url); alert('Pop-up was blocked. Please allow pop-ups for this site and try again.'); }
   }
 
   const calDays = getCalendarDays(currentYear, currentMonth);
@@ -3417,8 +3459,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                 </div>
                 {/* Menu items */}
                 {[
-                  {icon:'✉️', label:'Edit Email', action:()=>{setProfileForm(p=>({...p,email:user.email||''}));setProfileMsg('');setProfileModal('editEmail');setShowProfileMenu(false);}},
-                  {icon:'🔑', label:'Change Password', action:()=>{setProfileForm(p=>({...p,currentPassword:'',newPassword:'',confirmPassword:''}));setProfileMsg('');setProfileModal('changePassword');setShowProfileMenu(false);}},
+                  {icon:'✉️', label:'Edit Email', action:()=>{setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:user.email||''});setProfileMsg('');setProfileModal('editEmail');setShowProfileMenu(false);}},
+                  {icon:'🔑', label:'Change Password', action:()=>{setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:''});setProfileMsg('');setProfileModal('changePassword');setShowProfileMenu(false);}},
                 ].map(item=>(
                   <div key={item.label} onClick={item.action}
                     style={{padding:'11px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',fontSize:14,color:'var(--text-primary)',transition:'background 0.1s'}}
@@ -3533,10 +3575,10 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       </button>
                     </div>
                   )}
-                  {isAdmin && <Btn variant="success" onClick={()=>{if(staff.length===0||locations.length===0){alert('Please add staff members and locations first.');return;}setPendingGenerate(true);}} disabled={generating}>
+                  {isAdmin && <Btn variant="success" onClick={()=>{if(guardAmbiguity())return;if(staff.length===0||locations.length===0){alert('Please add staff members and locations first.');return;}setPendingGenerate(true);}} disabled={generating}>
                     {generating ? '⏳ Generating...' : '✨ Generate Plan'}
                   </Btn>}
-                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{if(guardAmbiguity())return;setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
                     🗓 Regenerate Days
                   </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
@@ -3760,7 +3802,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               )}
 
               {/* Critical Ambiguity Banner — visible when modal was dismissed without resolving */}
-              {genAmbiguities && genAmbiguities.length > 0 && !generating && !showAmbiguityModal && (
+              {genAmbiguities && genAmbiguities.length > 0 && !generating && !showAmbiguityModal && !ambiguityMinimized && (
                 <div onClick={()=>setShowAmbiguityModal(true)}
                   style={{padding:'12px 18px',background:theme==='light'?'#fffbeb':'#78350f33',border:`1px solid ${theme==='light'?'#f59e0b':'#f59e0b55'}`,borderRadius:10,marginBottom:16,cursor:'pointer',display:'flex',alignItems:'center',gap:10,transition:'opacity 0.15s'}}
                   onMouseEnter={e=>e.currentTarget.style.opacity='0.8'} onMouseLeave={e=>e.currentTarget.style.opacity='1'}>
@@ -3782,6 +3824,10 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     <span style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
                     <div style={{display:'flex',gap:8}}>
                       <Btn variant="success" onClick={()=>{
+                        if (conflictsReport.scheduleKey && conflictsReport.scheduleKey !== scheduleKey) {
+                          alert('The schedule view has changed since conflicts were detected. Please regenerate to get current conflicts.');
+                          setConflictsReport(null); return;
+                        }
                         applyAllConflictFixes(conflictsReport.conflicts.map(c => c.fix).filter(Boolean));
                         setConflictsReport(null); setAiLog('✅ All conflicts resolved — rules applied.');
                       }} style={{fontSize:12,padding:'4px 12px'}}>Fix All</Btn>
@@ -3805,6 +3851,10 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         </div>
                         {c.fix && (
                           <Btn variant="success" onClick={()=>{
+                            if (conflictsReport.scheduleKey && conflictsReport.scheduleKey !== scheduleKey) {
+                              alert('The schedule view has changed since conflicts were detected. Please regenerate to get current conflicts.');
+                              setConflictsReport(null); return;
+                            }
                             applyConflictFix(c.fix);
                             setConflictsReport(prev => {
                               if (!prev) return null;
@@ -4075,7 +4125,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         return (
                           <div key={cellYear+'-'+cellMonth+'-'+day}
                             style={{minHeight:cellMinH,padding:isMobile?'5px 4px':(isWk?'6px 6px':'4px 4px'),borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)',background:wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)'),cursor:isAdmin?'pointer':'default',transition:'background 0.15s',overflow:'hidden',opacity:isCurMonth?1:0.5}}
-                            onClick={function(){if(isAdmin)setEditCell({day:day,dk:dk,cellMonth:cellMonth,cellYear:cellYear})}}
+                            onClick={function(){if(isAdmin){if(guardAmbiguity())return;setEditCell({day:day,dk:dk,cellMonth:cellMonth,cellYear:cellYear})}}}
                             onMouseEnter={function(e){if(isAdmin)e.currentTarget.style.background='var(--bg-hover)'}}
                             onMouseLeave={function(e){if(isAdmin)e.currentTarget.style.background=wkend?'var(--cell-weekend)':(isCurMonth?'var(--bg-surface)':'var(--cell-offmonth)');}}>
                             {(()=>{
@@ -5396,7 +5446,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:600,color:'#fbbf24',marginBottom:6}}>{amb.question}</div>
+            <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
             <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>
               AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose || <em style={{opacity:0.5}}>not specified</em>}</span>
             </div>
@@ -5417,7 +5467,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           </div>
         ))}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
-          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
+          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAmbiguityMinimized(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowAmbiguityModal(false);setAmbiguityMinimized(true);setAmbiguityFocusIdx(0);}}>Minimize ↙</Btn>
           <Btn variant="success" onClick={()=>{
             const decisions = {};
             if (genAmbiguities) genAmbiguities.forEach((amb, ai) => {
@@ -5432,6 +5483,69 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           }}>Re-generate with My Decisions</Btn>
         </div>
       </Modal>
+
+      {/* Floating Ambiguity Widget (minimized mode) */}
+      {genAmbiguities && genAmbiguities.length > 0 && ambiguityMinimized && (()=>{
+        const idx = Math.min(ambiguityFocusIdx, genAmbiguities.length - 1);
+        const amb = genAmbiguities[idx];
+        const key = amb.id || idx;
+        const allAnswered = genAmbiguities.every((a, ai) => genAmbiguityAnswers[a.id || ai] !== undefined);
+        return (
+          <div style={{position:'fixed',left:ambiguityFloatPos.x,top:ambiguityFloatPos.y,zIndex:9999,width:380,background:'var(--bg-surface)',border:'2px solid #1e40af',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,0.35)',userSelect:'none'}}>
+            {/* Drag handle */}
+            <div onMouseDown={handleAmbiguityDragStart}
+              style={{padding:'10px 14px',background:'#1e3a5f',borderRadius:'10px 10px 0 0',cursor:'grab',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span style={{fontSize:13,fontWeight:700,color:'#fff'}}>⚠️ Decisions Needed · {idx+1} of {genAmbiguities.length}</span>
+              <button onClick={()=>{setAmbiguityMinimized(false);setShowAmbiguityModal(true);}} onMouseDown={e=>e.stopPropagation()}
+                style={{background:'none',border:'none',color:'#93c5fd',cursor:'pointer',fontSize:13,fontWeight:600,padding:0}}>Expand ↗</button>
+            </div>
+            {/* Body */}
+            <div style={{padding:'14px 16px'}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
+              <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>
+                AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose || <em style={{opacity:0.5}}>not specified</em>}</span>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
+                <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:amb.chose}))}
+                  style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                    background:genAmbiguityAnswers[key]===amb.chose?'#10b98133':'var(--bg-elevated)',
+                    color:genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--text-muted)',
+                    border:'1px solid '+(genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose?`Keep: ${amb.chose}`:"Keep AI's choice"}</div>
+                {(amb.alternatives||[]).map((alt,oi)=>(
+                  <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:alt}))}
+                    style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
+                      background:genAmbiguityAnswers[key]===alt?'#6366f133':'var(--bg-elevated)',
+                      color:genAmbiguityAnswers[key]===alt?'#818cf8':'var(--text-muted)',
+                      border:'1px solid '+(genAmbiguityAnswers[key]===alt?'#6366f1':'var(--border-default)')}}>{alt}</div>
+                ))}
+              </div>
+              {/* Navigation */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderTop:'1px solid var(--border-subtle)',paddingTop:10}}>
+                <button onClick={()=>setAmbiguityFocusIdx(i=>Math.max(0,i-1))} disabled={idx===0}
+                  style={{background:'none',border:'1px solid var(--border-default)',borderRadius:6,padding:'4px 10px',cursor:idx===0?'default':'pointer',fontSize:12,color:idx===0?'var(--text-muted)':'var(--text-primary)',opacity:idx===0?0.4:1}}>← Prev</button>
+                <div style={{display:'flex',gap:4}}>
+                  {genAmbiguities.map((_,i)=>(
+                    <div key={i} onClick={()=>setAmbiguityFocusIdx(i)}
+                      style={{width:8,height:8,borderRadius:'50%',cursor:'pointer',
+                        background: genAmbiguityAnswers[genAmbiguities[i].id||i]!==undefined ? '#10b981' : (i===idx?'#1e40af':'var(--border-default)')}} />
+                  ))}
+                </div>
+                <button onClick={()=>setAmbiguityFocusIdx(i=>Math.min(genAmbiguities.length-1,i+1))} disabled={idx===genAmbiguities.length-1}
+                  style={{background:'none',border:'1px solid var(--border-default)',borderRadius:6,padding:'4px 10px',cursor:idx===genAmbiguities.length-1?'default':'pointer',fontSize:12,color:idx===genAmbiguities.length-1?'var(--text-muted)':'var(--text-primary)',opacity:idx===genAmbiguities.length-1?0.4:1}}>Next →</button>
+              </div>
+              {allAnswered && (
+                <button onClick={()=>{
+                  const decisions={};
+                  genAmbiguities.forEach((a,ai)=>{decisions[a.question]=genAmbiguityAnswers[a.id||ai]||a.chose;});
+                  setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setAmbiguityMinimized(false);generateWithAI(decisions);
+                }} style={{marginTop:10,width:'100%',padding:'8px',borderRadius:8,background:'#10b981',color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>
+                  ✓ Re-generate with My Decisions
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <Modal open={showVacationModal} onClose={()=>{setShowVacationModal(false);setEditingVacation(null);setVacationForm({staffId:staff[0]?.id||'',startDate:'',endDate:'',reason:''});}} title={editingVacation?'Edit Vacation':'Add Vacation'}>
         <Select label="Staff Member" value={vacationForm.staffId} onChange={v=>setVacationForm(p=>({...p,staffId:v}))}
@@ -5570,7 +5684,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       </Modal>
 
       {/* Profile Modals */}
-      <Modal open={profileModal==='changePassword'} onClose={()=>{setProfileModal(null);setProfileMsg('');}} title="🔑 Change Password">
+      <Modal open={profileModal==='changePassword'} onClose={()=>{setProfileModal(null);setProfileMsg('');setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:''}); }} title="🔑 Change Password">
         <div style={{marginBottom:4}}>
           <Input label="Current Password" value={profileForm.currentPassword} onChange={v=>setProfileForm(p=>({...p,currentPassword:v}))} placeholder="Enter current password" type="password" />
           <Input label="New Password" value={profileForm.newPassword} onChange={v=>setProfileForm(p=>({...p,newPassword:v}))} placeholder="Min 6 characters" type="password" />
@@ -5578,17 +5692,17 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
         {profileMsg && <div style={{fontSize:14,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
-          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:''});}}>Cancel</Btn>
           <Btn onClick={handleChangePassword}>Update Password</Btn>
         </div>
       </Modal>
 
-      <Modal open={profileModal==='editEmail'} onClose={()=>{setProfileModal(null);setProfileMsg('');}} title="✉️ Email Address">
+      <Modal open={profileModal==='editEmail'} onClose={()=>{setProfileModal(null);setProfileMsg('');setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:''});}} title="✉️ Email Address">
         <p style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>Your email is used for password recovery.</p>
         <Input label="Email Address" value={profileForm.email} onChange={v=>setProfileForm(p=>({...p,email:v}))} placeholder="your@email.com" type="email" />
         {profileMsg && <div style={{fontSize:14,padding:'8px 12px',borderRadius:8,marginBottom:12,background:profileMsg.startsWith('✅')?'#052e16':'#2a1010',color:profileMsg.startsWith('✅')?'#86efac':'#fca5a5',border:'1px solid '+(profileMsg.startsWith('✅')?'#166534':'#7f1d1d')}}>{profileMsg}</div>}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
-          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setProfileModal(null);setProfileMsg('');setProfileForm({currentPassword:'',newPassword:'',confirmPassword:'',email:''});}}>Cancel</Btn>
           <Btn onClick={handleUpdateEmail}>Save Email</Btn>
         </div>
       </Modal>

@@ -312,6 +312,9 @@ export default async (req) => {
     if (!resetToken || !newPassword) {
       return new Response(JSON.stringify({ error: "Reset token and new password required" }), { status: 400, headers: cors });
     }
+    if (typeof resetToken !== 'string' || resetToken.length > 256) {
+      return new Response(JSON.stringify({ error: "Invalid reset token" }), { status: 400, headers: cors });
+    }
     if (newPassword.length < 6) {
       return new Response(JSON.stringify({ error: "Password must be at least 6 characters" }), { status: 400, headers: cors });
     }
@@ -457,6 +460,6 @@ export default async (req) => {
     }
   } catch (err) {
     console.error('Storage error:', err);
-    return new Response(JSON.stringify({ error: "Storage error: " + err.message }), { status: 500, headers: cors });
+    return new Response(JSON.stringify({ error: "Storage operation failed" }), { status: 500, headers: cors });
   }
 };

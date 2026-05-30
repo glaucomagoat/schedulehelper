@@ -185,8 +185,8 @@ export default async function handler(req) {
     let lastUpdated = null;
     if (lastEntry?.ts) {
       try {
-        const d = new Date(lastEntry.ts);
-        if (!isNaN(d.getTime())) lastUpdated = d.toISOString();
+        const lastDate = new Date(lastEntry.ts);
+        if (!isNaN(lastDate.getTime())) lastUpdated = lastDate.toISOString();
       } catch(e) { /* leave lastUpdated as null */ }
     }
 
@@ -200,6 +200,7 @@ export default async function handler(req) {
     }, 200, req);
 
   } catch (err) {
-    return json({ error: "Server error", detail: err.message }, 500, req);
+    console.error('Partner API error:', err);
+    return json({ error: "Server error" }, 500, req);
   }
 }
