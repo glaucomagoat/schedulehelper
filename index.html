@@ -394,7 +394,7 @@ function useIsMobile() {
   return m;
 }
 
-function Modal({ open, onClose, title, children, wide }) {
+function Modal({ open, onClose, title, children, wide, headerActions }) {
   const mob = useIsMobile();
   if (!open) return null;
   if (mob) {
@@ -402,7 +402,10 @@ function Modal({ open, onClose, title, children, wide }) {
       <div style={{position:'fixed',inset:0,zIndex:1000,background:'var(--bg-deep)',display:'flex',flexDirection:'column',overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
         <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0,position:'sticky',top:0,zIndex:10}}>
           <h3 style={{margin:0,fontSize:17,color:'var(--text-primary)',fontFamily:'"DM Sans",sans-serif',fontWeight:700,flex:1,paddingRight:12}}>{title}</h3>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'var(--text-dim)',fontSize:26,cursor:'pointer',padding:'4px 8px',lineHeight:1,flexShrink:0}}>✕</button>
+          <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+            {headerActions}
+            <button onClick={onClose} style={{background:'none',border:'none',color:'var(--text-dim)',fontSize:26,cursor:'pointer',padding:'4px 8px',lineHeight:1}}>✕</button>
+          </div>
         </div>
         <div style={{flex:1,padding:16}}>
           {children}
@@ -415,7 +418,10 @@ function Modal({ open, onClose, title, children, wide }) {
       <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:32,minWidth:wide?700:420,maxWidth:wide?900:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
           <h3 style={{margin:0,fontSize:20,color:'var(--text-primary)',fontFamily:'"DM Sans",sans-serif',fontWeight:600}}>{title}</h3>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'var(--text-dim)',fontSize:22,cursor:'pointer',padding:4}}>✕</button>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            {headerActions}
+            <button onClick={onClose} style={{background:'none',border:'none',color:'var(--text-dim)',fontSize:22,cursor:'pointer',padding:4}}>✕</button>
+          </div>
         </div>
         {children}
       </div>
@@ -1014,7 +1020,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [collapsedVacYears, setCollapsedVacYears] = useState(new Set());
   const [collapsedMedYears, setCollapsedMedYears] = useState(new Set());
 
-  const [staffForm, setStaffForm] = useState({ name:'', role:'', color:defaultColors[0] });
+  const [staffForm, setStaffForm] = useState({ name:'', role:'', color:defaultColors[0], copyRulesFrom:'' });
   const [locationForm, setLocationForm] = useState({ name:'', address:'' });
   const [ruleForm, setRuleForm] = useState({ staffId:'', dayOfWeek:'Mon', weekOfMonth:'all', period:'both', locationId:'', priority:'preferred', description:'', ruleType:'standard', conditionText:'', exceptionText:'', negativeText:'', rotateWithStaffId:'', rotateAtLocationId:'' });
   const [vacationForm, setVacationForm] = useState({ staffId:'', startDate:'', endDate:'', reason:'' });
@@ -1629,9 +1635,21 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function addStaff() {
     if (!staffForm.name) return;
-    if (editingStaff) { setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffForm } : s)); setEditingStaff(null); }
-    else { setStaff(prev => [...prev, { id: 's' + Date.now(), ...staffForm }]); }
-    setStaffForm({ name:'', role:'', color:defaultColors[staff.length%defaultColors.length] }); setShowStaffModal(false);
+    if (editingStaff) {
+      setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffForm } : s));
+      setEditingStaff(null);
+    } else {
+      const newId = 's' + Date.now();
+      setStaff(prev => [...prev, { id: newId, name: staffForm.name, role: staffForm.role, color: staffForm.color }]);
+      if (staffForm.copyRulesFrom) {
+        const copied = rules
+          .filter(r => r.staffId === staffForm.copyRulesFrom)
+          .map(r => ({ ...r, id: 'r' + Date.now() + Math.random().toString(36).slice(2), staffId: newId }));
+        if (copied.length > 0) setRules(prev => [...prev, ...copied]);
+      }
+    }
+    setStaffForm({ name:'', role:'', color:defaultColors[staff.length%defaultColors.length], copyRulesFrom:'' });
+    setShowStaffModal(false);
   }
   function removeStaff(id) { if (!confirm('Remove this staff member and all their rules, vacations, and medical leaves?')) return; setStaff(p=>p.filter(s=>s.id!==id)); setRules(p=>p.filter(r=>r.staffId!==id)); setVacations(p=>p.filter(v=>v.staffId!==id)); setMedicalLeaves(p=>p.filter(ml=>ml.staffId!==id)); }
   function addLocation() {
@@ -4339,7 +4357,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
                 <h2 style={{fontSize:26,fontWeight:700,margin:0}}>Doctors</h2>
-                {isAdmin && <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length]});setShowStaffModal(true)}}>+ Add Staff</Btn>}
+                {isAdmin && <Btn onClick={()=>{setEditingStaff(null);setStaffForm({name:'',role:'',color:defaultColors[staff.length%defaultColors.length],copyRulesFrom:''});setShowStaffModal(true)}}>+ Add Staff</Btn>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:14}}>
                 {staff.map(s=>{
@@ -5034,7 +5052,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
       {/* ====== MODALS ====== */}
 
-      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length]});setEditingStaff(null);}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
+      <Modal open={showStaffModal} onClose={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length],copyRulesFrom:''});setEditingStaff(null);}} title={editingStaff?'Edit Staff':'Add Staff Member'}>
         <Input label="Full Name" value={staffForm.name} onChange={v=>setStaffForm(p=>({...p,name:v}))} placeholder="e.g., Jane Smith MD" />
         <Input label="Role / Title" value={staffForm.role} onChange={v=>setStaffForm(p=>({...p,role:v}))} placeholder="e.g., Ophthalmologist" />
         <div style={{marginBottom:16}}>
@@ -5043,8 +5061,23 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             {defaultColors.map(c=>(<div key={c} onClick={()=>setStaffForm(p=>({...p,color:c}))} style={{width:28,height:28,borderRadius:'50%',background:c,cursor:'pointer',border:staffForm.color===c?'3px solid #fff':'3px solid transparent',transition:'all 0.15s'}} />))}
           </div>
         </div>
+        {!editingStaff && staff.length > 0 && (
+          <div style={{marginBottom:16}}>
+            <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Copy Rules From (optional)</label>
+            <select value={staffForm.copyRulesFrom} onChange={e=>setStaffForm(p=>({...p,copyRulesFrom:e.target.value}))}
+              style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid var(--border-interactive)',background:'var(--bg-surface)',color:'var(--text-primary)',fontSize:14}}>
+              <option value=''>— None —</option>
+              {staff.map(s=>(<option key={s.id} value={s.id}>{s.name}{rules.filter(r=>r.staffId===s.id).length > 0 ? ` (${rules.filter(r=>r.staffId===s.id).length} rule${rules.filter(r=>r.staffId===s.id).length!==1?'s':''})` : ' (no rules)'}</option>))}
+            </select>
+            {staffForm.copyRulesFrom && (
+              <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:6}}>
+                {rules.filter(r=>r.staffId===staffForm.copyRulesFrom).length} rule{rules.filter(r=>r.staffId===staffForm.copyRulesFrom).length!==1?'s':''} will be copied and assigned to the new staff member.
+              </div>
+            )}
+          </div>
+        )}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length]});setEditingStaff(null);}}>Cancel</Btn>
+          <Btn variant="ghost" onClick={()=>{setShowStaffModal(false);setStaffForm({name:'',role:'',color:editingStaff?.color||defaultColors[staff.length%defaultColors.length],copyRulesFrom:''});setEditingStaff(null);}}>Cancel</Btn>
           <Btn onClick={addStaff}>{editingStaff?'Save':'Add Staff'}</Btn>
         </div>
       </Modal>
@@ -5456,7 +5489,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       </Modal>
 
       {/* Ambiguity Resolution Modal */}
-      <Modal open={!!genAmbiguities && genAmbiguities.length > 0 && showAmbiguityModal} onClose={()=>setShowAmbiguityModal(false)} title="⚠️ Critical Scheduling Decisions Needed" wide>
+      <Modal open={!!genAmbiguities && genAmbiguities.length > 0 && showAmbiguityModal} onClose={()=>setShowAmbiguityModal(false)} title="⚠️ Critical Scheduling Decisions Needed" wide
+        headerActions={<button onClick={()=>{setShowAmbiguityModal(false);setAmbiguityMinimized(true);setAmbiguityFocusIdx(0);}} style={{background:'none',border:'1px solid var(--border-default)',borderRadius:6,color:'var(--text-secondary)',cursor:'pointer',fontSize:12,fontWeight:600,padding:'3px 10px',lineHeight:1}}>↙ Minimize</button>}>
         <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
@@ -5482,7 +5516,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         ))}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
           <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAmbiguityMinimized(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
-          <Btn variant="ghost" onClick={()=>{setShowAmbiguityModal(false);setAmbiguityMinimized(true);setAmbiguityFocusIdx(0);}}>Minimize ↙</Btn>
+
           <Btn variant="success" onClick={()=>{
             const decisions = {};
             if (genAmbiguities) genAmbiguities.forEach((amb, ai) => {
