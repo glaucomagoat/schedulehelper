@@ -861,6 +861,20 @@ window.ScheduleHelper = function StaffScheduler() {
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
 
+  // Resolve an ambiguity value (location ID, "Name (ID)", or plain name) to a
+  // display-friendly name. The raw value is still stored/passed to the AI unchanged.
+  function resolveAmbiguityLabel(val) {
+    if (!val || val === 'OFF') return val;
+    const byId = locations.find(l => l.id === val);
+    if (byId) return byId.name;
+    const m = val.match(/^(.+?)\s*\(([^)]+)\)$/);
+    if (m) {
+      const byExtracted = locations.find(l => l.id === m[2].trim());
+      return byExtracted ? byExtracted.name : m[1].trim();
+    }
+    return val;
+  }
+
   function guardAmbiguity() {
     if (genAmbiguities && genAmbiguities.length > 0) {
       alert('Please resolve all critical scheduling decisions before making changes to the schedule.');
@@ -5448,20 +5462,20 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
             <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>
-              AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose || <em style={{opacity:0.5}}>not specified</em>}</span>
+              AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
             </div>
             <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
               <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
                 style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                   background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'var(--bg-surface)',
                   color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--text-muted)',
-                  border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose ? `Keep: ${amb.chose}` : "Keep AI's choice"}</div>
+                  border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose ? `Keep: ${resolveAmbiguityLabel(amb.chose)}` : "Keep AI's choice"}</div>
               {(amb.alternatives || []).map((alt, oi) => (
                 <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))}
                   style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:genAmbiguityAnswers[amb.id||ai]===alt?'#6366f133':'var(--bg-surface)',
                     color:genAmbiguityAnswers[amb.id||ai]===alt?'#818cf8':'var(--text-muted)',
-                    border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===alt?'#6366f1':'var(--border-default)')}}>{alt}</div>
+                    border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===alt?'#6366f1':'var(--border-default)')}}>{resolveAmbiguityLabel(alt)}</div>
               ))}
             </div>
           </div>
@@ -5503,20 +5517,20 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             <div style={{padding:'14px 16px'}}>
               <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
               <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>
-                AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose || <em style={{opacity:0.5}}>not specified</em>}</span>
+                AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
               </div>
               <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
                 <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:amb.chose}))}
                   style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
                     background:genAmbiguityAnswers[key]===amb.chose?'#10b98133':'var(--bg-elevated)',
                     color:genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--text-muted)',
-                    border:'1px solid '+(genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose?`Keep: ${amb.chose}`:"Keep AI's choice"}</div>
+                    border:'1px solid '+(genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose?`Keep: ${resolveAmbiguityLabel(amb.chose)}`:"Keep AI's choice"}</div>
                 {(amb.alternatives||[]).map((alt,oi)=>(
                   <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:alt}))}
                     style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
                       background:genAmbiguityAnswers[key]===alt?'#6366f133':'var(--bg-elevated)',
                       color:genAmbiguityAnswers[key]===alt?'#818cf8':'var(--text-muted)',
-                      border:'1px solid '+(genAmbiguityAnswers[key]===alt?'#6366f1':'var(--border-default)')}}>{alt}</div>
+                      border:'1px solid '+(genAmbiguityAnswers[key]===alt?'#6366f1':'var(--border-default)')}}>{resolveAmbiguityLabel(alt)}</div>
                 ))}
               </div>
               {/* Navigation */}
