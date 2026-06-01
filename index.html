@@ -2849,21 +2849,26 @@ window.ScheduleHelper = function StaffScheduler() {
     const holLines = (()=>{ const hols = []; holidays.forEach(h => { const dt = getHolidayDate(h, currentYear); if (!dt || dt.getMonth() !== currentMonth) return; hols.push(`- ${dateKey(dt.getFullYear(),dt.getMonth(),dt.getDate())}: ${h.name} (${h.halfDay==='am'?'AM only':'CLOSED'})`); }); return hols.length > 0 ? hols.join('\n') : 'None.'; })();
 
     const systemPrompt =
+      `CRITICAL OUTPUT RULE: Your ENTIRE response must be a single valid JSON object. ` +
+      `Start your response with { and end with }. No text before or after. No markdown. No backticks. No explanation.\n\n` +
       `You are an expert scheduling rule checker for a multi-location ophthalmology/optometry practice.\n` +
       `Analyze the schedule against ALL rules — required, preferred, negative constraints, rotation, conditional, exception, and complex rules.\n` +
       `Also flag staff scheduled during vacation, medical leave, or holidays.\n\n` +
-      `For each violation found, return a JSON object with these fields:\n` +
-      `  date: "YYYY-MM-DD"\n` +
-      `  staffName: "Full name as listed"\n` +
-      `  type: one of rule_violation | preferred_violation | rotation_violation | negative_constraint | vacation | medical_leave\n` +
-      `  message: short description (e.g. "Choi should be at DHM but is at Stockton")\n` +
-      `  current: what is currently scheduled (e.g. "AM: Stockton, PM: Stockton")\n` +
-      `  suggested: what it should be (e.g. "AM: DHM, PM: DHM")\n` +
-      `  reason: brief explanation of the rule that was violated\n` +
-      `  fixPeriod: "am", "pm", or "both" if a fix is possible, otherwise omit\n` +
-      `  fixLocation: location name (exactly as listed) if a fix is possible, otherwise omit\n\n` +
-      `Respond ONLY with valid JSON — no markdown, no backticks, no explanation:\n` +
-      `{"violations": [...]}  or  {"violations": []} if no issues found.`;
+      `Output format (JSON only):\n` +
+      `{"violations": [\n` +
+      `  {\n` +
+      `    "date": "YYYY-MM-DD",\n` +
+      `    "staffName": "Full name exactly as listed",\n` +
+      `    "type": "rule_violation|preferred_violation|rotation_violation|negative_constraint|vacation|medical_leave",\n` +
+      `    "message": "brief description",\n` +
+      `    "current": "AM: X, PM: Y",\n` +
+      `    "suggested": "AM: Z, PM: Z",\n` +
+      `    "reason": "which rule was violated and why",\n` +
+      `    "fixPeriod": "am|pm|both",\n` +
+      `    "fixLocation": "location name exactly as listed"\n` +
+      `  }\n` +
+      `]}\n\n` +
+      `If no violations found, respond with exactly: {"violations": []}`;
 
     const userMsg =
       `SCHEDULE TO CHECK (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
@@ -2871,12 +2876,13 @@ window.ScheduleHelper = function StaffScheduler() {
       `${prevMonthContext}\n\n` +
       `VACATIONS:\n${vacLines}\n\n` +
       `MEDICAL LEAVE:\n${mlLines}\n\n` +
-      `HOLIDAYS THIS MONTH:\n${holLines}`;
+      `HOLIDAYS THIS MONTH:\n${holLines}\n\n` +
+      `Remember: respond with ONLY the JSON object {"violations": [...]}. No other text.`;
 
     try {
       const result = await streamClaudeAPI({
         model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMsg }]
       }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
@@ -2887,14 +2893,19 @@ window.ScheduleHelper = function StaffScheduler() {
         return;
       }
 
-      // Parse JSON response
+      // Parse JSON response — try progressively more lenient approaches
       const clean = result.text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
       let parsed;
       try {
         parsed = JSON.parse(clean);
       } catch(e) {
+        // Try extracting the outermost {...} block (handles leading/trailing prose)
         const m = clean.match(/\{[\s\S]*\}/);
-        if (m) parsed = JSON.parse(m[0]); else throw e;
+        if (m) {
+          try { parsed = JSON.parse(m[0]); } catch(e2) { throw new Error('AI returned non-JSON response. Please try again.'); }
+        } else {
+          throw new Error('AI returned non-JSON response. Please try again.');
+        }
       }
 
       const violations = parsed.violations || [];
@@ -5680,11 +5691,6 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 <li>Rotation assignments vs. previous month's Final plan</li>
                 <li>Vacation, medical leave, and holiday conflicts</li>
               </ul>
-            </div>
-            <div style={{marginBottom:20,padding:'10px 14px',background:'#6366f111',borderRadius:8,border:'1px solid #6366f133'}}>
-              <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-                <b style={{color:'var(--text-primary)'}}>Note:</b> The AI may occasionally miss subtle violations or flag false positives — use your judgment on the results. Each check costs approximately $0.01–$0.05 in AI tokens.
-              </div>
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <Btn variant="ghost" onClick={()=>setShowRecheckInfoModal(false)}>Cancel</Btn>
