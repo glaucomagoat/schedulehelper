@@ -932,12 +932,9 @@ window.ScheduleHelper = function StaffScheduler() {
     if (!dateStr) return null;
     const parts = dateStr.split('-').map(Number);
     if (parts.length !== 3 || parts.some(isNaN)) return null;
-    const [y, m, d] = parts;
-    const dt = new Date(y, m - 1, d);
+    const [, m, d] = parts;
     const monthAbbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m - 1];
-    const dayName = DAYS_OF_WEEK[dt.getDay()];
-    const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4);
-    return `${monthAbbr} ${d}, ${dayName}, W${wk}`;
+    return `${monthAbbr} ${d}`;
   }
 
   function guardAmbiguity() {
@@ -2103,11 +2100,11 @@ window.ScheduleHelper = function StaffScheduler() {
         '    }\n' +
         '  },\n' +
         '  "ambiguities": [\n' +
-        '    { "id": "unique_id", "severity": "critical|minor", "date": "YYYY-MM-DD of the affected day", "question": "≤12 words", "chose": "location name only — no ID, no explanation (e.g. OFF, DHM, Stockton)", "alternatives": ["location name only", "location name only"] }\n' +
+        '    { "id": "unique_id", "severity": "critical|minor", "date": "YYYY-MM-DD of the affected day", "question": "≤12 words", "chose": "the resolution — a location name (e.g. DHM) OR a staff name for rotation questions (e.g. Daniel Choi) — no IDs, no parentheses", "alternatives": ["e.g. Mike Yang", "e.g. Stockton"] }\n' +
         '  ]\n' +
         '}\n' +
         'Use ONLY the exact staff IDs and location IDs provided in the system prompt. Never invent or approximate IDs. Include every listed day and every staff member.\n' +
-        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly. "chose" and each "alternatives" entry must be a plain location name (e.g. "DHM") or "OFF" — no IDs, no parentheses, no extra explanation.\n' +
+        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly. "chose" and each "alternatives" entry must be the direct answer to the question — a plain location name (e.g. "DHM") or "OFF" for location questions, or a staff name (e.g. "Daniel Choi") for rotation/person questions. No IDs, no parentheses, no explanation.\n' +
         'For MINOR ambiguities: auto-resolve silently. Do NOT output auto_resolved.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
@@ -5556,8 +5553,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:formatAmbiguityDate(amb.date)?2:6}}>{amb.question}</div>
-            {formatAmbiguityDate(amb.date) && <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>{formatAmbiguityDate(amb.date)}</div>}
+            <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:6}}>{formatAmbiguityDate(amb.date) ? `${formatAmbiguityDate(amb.date)} ${amb.question}` : amb.question}</div>
             <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>
               AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
             </div>
@@ -5612,8 +5608,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             </div>
             {/* Body */}
             <div style={{padding:'14px 16px'}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:formatAmbiguityDate(amb.date)?2:6}}>{amb.question}</div>
-              {formatAmbiguityDate(amb.date) && <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:6}}>{formatAmbiguityDate(amb.date)}</div>}
+              <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:6}}>{formatAmbiguityDate(amb.date) ? `${formatAmbiguityDate(amb.date)} ${amb.question}` : amb.question}</div>
               <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>
                 AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
               </div>
