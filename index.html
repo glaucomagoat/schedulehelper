@@ -791,6 +791,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const [ambiguityFloatPos, setAmbiguityFloatPos] = useState({x: 20, y: 100});
   const ambiguityDragRef = useRef({dragging: false, startX: 0, startY: 0, origX: 0, origY: 0});
   const [showPdfMenu, setShowPdfMenu] = useState(false);
+  const [showRecheckInfoModal, setShowRecheckInfoModal] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
   // ── API HELPERS ────────────────────────────────────────────────────────────
@@ -1969,6 +1970,65 @@ window.ScheduleHelper = function StaffScheduler() {
     return summary;
   }
 
+  // Pre-compute rotation assignments from the previous month's Final plan.
+  // Returns { "YYYY-MM-DD": { staffId, staffName, locationId, locationName, period } }
+  // so batch prompts can inject explicit "must follow" constraints, removing the
+  // AI's need to reason about rotation turns entirely.
+  function computeRotationAssignments() {
+    const result = {};
+    const rotationRules = rules.filter(r => (r.ruleType || 'standard') === 'rotation' && r.ruleScope !== 'location');
+    if (rotationRules.length === 0) return result;
+
+    let prevMonth = currentMonth - 1; let prevYear = currentYear;
+    if (prevMonth < 0) { prevMonth = 11; prevYear--; }
+
+    const prevFinalPlan = finalPlans[`${prevYear}-${prevMonth}`];
+    if (!prevFinalPlan) return result;
+    const prevSchedule = schedules[`schedule-${prevYear}-${prevMonth}-${prevFinalPlan}`];
+    if (!prevSchedule || Object.keys(prevSchedule).length === 0) return result;
+
+    const prevDays = new Date(prevYear, prevMonth + 1, 0).getDate();
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const processedPairs = new Set();
+
+    rotationRules.forEach(r => {
+      const s = staff.find(x => x.id === r.staffId);
+      const rotateWith = staff.find(x => x.id === r.rotateWithStaffId);
+      const rotateLoc = locations.find(x => x.id === (r.rotateAtLocationId || r.locationId));
+      if (!s || !rotateWith || !rotateLoc) return;
+
+      // Each rotation has two mirror rules — only process each unique pair once
+      const pairKey = [r.staffId, r.rotateWithStaffId].sort().join(':') + ':' + rotateLoc.id + ':' + r.dayOfWeek;
+      if (processedPairs.has(pairKey)) return;
+      processedPairs.add(pairKey);
+
+      // Find who was at the rotation location in the previous month's Final plan
+      let wasThereLastMonth = null;
+      for (let d = 1; d <= prevDays; d++) {
+        const dk = dateKey(prevYear, prevMonth, d);
+        const ds = prevSchedule[dk]; if (!ds) continue;
+        if (ds[s.id]?.am === rotateLoc.id || ds[s.id]?.pm === rotateLoc.id) wasThereLastMonth = s;
+        if (ds[rotateWith.id]?.am === rotateLoc.id || ds[rotateWith.id]?.pm === rotateLoc.id) wasThereLastMonth = rotateWith;
+      }
+      if (!wasThereLastMonth) return; // Can't determine — skip, let AI use context
+
+      // This month's turn is the other person
+      const thisMonthStaff = wasThereLastMonth.id === s.id ? rotateWith : s;
+      const weekNums = r.weekOfMonth === 'all' ? null : new Set(r.weekOfMonth.split(',').map(w => w.trim()));
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dt = new Date(currentYear, currentMonth, d);
+        if (DAYS_OF_WEEK[dt.getDay()] !== r.dayOfWeek) continue;
+        const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4);
+        if (weekNums && !weekNums.has(String(wk))) continue;
+        const dk = dateKey(currentYear, currentMonth, d);
+        result[dk] = { staffId: thisMonthStaff.id, staffName: thisMonthStaff.name, locationId: rotateLoc.id, locationName: rotateLoc.name, period: r.period || 'both' };
+      }
+    });
+
+    return result;
+  }
+
   async function generateWithAI(userDecisions) {
     if (!Array.isArray(staff) || staff.length === 0 || !Array.isArray(locations) || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
     setGenerating(true);
@@ -1980,6 +2040,9 @@ window.ScheduleHelper = function StaffScheduler() {
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
+    const rotationAssignments = computeRotationAssignments();
+    const rotationCount = Object.keys(rotationAssignments).length;
+    if (rotationCount > 0) { const pm = currentMonth - 1 < 0 ? 11 : currentMonth - 1; addLog('info', `Pre-computed ${rotationCount} rotation assignment${rotationCount !== 1 ? 's' : ''} from ${MONTHS[pm]}'s Final plan`); }
 
     // Weekly batches: W1=days 1-7, W2=8-14, W3=15-21, W4=22+
     // Each batch covers a natural calendar week (up to 5 weekdays).
@@ -2092,7 +2155,12 @@ window.ScheduleHelper = function StaffScheduler() {
       }
 
       // ── USER MESSAGE: only batch-specific content (prior context + task) ──
-      const batchPrompt = priorWeeksBlock +
+      const batchRotationEntries = batchDays.map(d => { const dk = dateKey(currentYear, currentMonth, d); return rotationAssignments[dk] ? { dk, ...rotationAssignments[dk] } : null; }).filter(Boolean);
+      const batchRotationBlock = batchRotationEntries.length > 0
+        ? 'PRE-COMPUTED ROTATION ASSIGNMENTS (from previous month\'s Final plan — must be followed exactly, do not override):\n' +
+          batchRotationEntries.map(ra => `  - ${ra.dk}: ${ra.staffName} MUST be assigned to ${ra.locationName} (${ra.period === 'both' ? 'AM and PM' : ra.period.toUpperCase()})`).join('\n') + '\n\n'
+        : '';
+      const batchPrompt = batchRotationBlock + priorWeeksBlock +
         'TASK: Generate schedule for ONLY these days: ' + daysList + '\n\n' +
         'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
         '{\n' +
@@ -2210,6 +2278,26 @@ window.ScheduleHelper = function StaffScheduler() {
     }
     if (vacEdits > 0) addLog('info', `Vacation enforcement: ${vacEdits} corrections`);
 
+    // Post-process: enforce pre-computed rotation assignments — correct any AI mistakes
+    // Skips days where the staff member is legitimately OFF (leave, vacation, full holiday)
+    let rotationEdits = 0;
+    for (const [dk, assignment] of Object.entries(rotationAssignments)) {
+      if (isOnVacation(assignment.staffId, dk) || isOnMedicalLeave(assignment.staffId, dk)) continue;
+      const parts = dk.split('-').map(Number);
+      const hol = getHolidayForDate(parts[0], parts[1] - 1, parts[2]);
+      if (hol && hol.halfDay !== 'am') continue; // Full-day closure — skip
+      const dayAssignments = allAssignments[dk];
+      if (!dayAssignments || !dayAssignments[assignment.staffId]) continue;
+      const slot = dayAssignments[assignment.staffId];
+      if (assignment.period === 'am' || assignment.period === 'both') {
+        if (slot.am !== assignment.locationId) { slot.am = assignment.locationId; rotationEdits++; }
+      }
+      if (assignment.period === 'pm' || assignment.period === 'both') {
+        if (slot.pm !== assignment.locationId) { slot.pm = assignment.locationId; rotationEdits++; }
+      }
+    }
+    if (rotationEdits > 0) addLog('info', `Rotation enforcement: ${rotationEdits} correction${rotationEdits !== 1 ? 's' : ''}`);
+
     // Post-process: strip any hallucinated/invalid location IDs — replace with OFF
     const validLocIds = new Set(locations.map(function(l){ return l.id; }));
     validLocIds.add('OFF');
@@ -2274,6 +2362,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
+    const rotationAssignments = computeRotationAssignments();
 
     const staffLines = staff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
     const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
@@ -2347,7 +2436,12 @@ window.ScheduleHelper = function StaffScheduler() {
       return dk + ' (' + DAYS_OF_WEEK[dt.getDay()] + ', W' + wk + ')';
     }).join(', ');
 
-    const partialBatchPrompt = partialPriorBlock +
+    const partialRotationEntries = selectedDayKeys.map(dk => rotationAssignments[dk] ? { dk, ...rotationAssignments[dk] } : null).filter(Boolean);
+    const partialRotationBlock = partialRotationEntries.length > 0
+      ? 'PRE-COMPUTED ROTATION ASSIGNMENTS (from previous month\'s Final plan — must be followed exactly, do not override):\n' +
+        partialRotationEntries.map(ra => `  - ${ra.dk}: ${ra.staffName} MUST be assigned to ${ra.locationName} (${ra.period === 'both' ? 'AM and PM' : ra.period.toUpperCase()})`).join('\n') + '\n\n'
+      : '';
+    const partialBatchPrompt = partialRotationBlock + partialPriorBlock +
       'TASK: Regenerate schedule for ONLY these selected days: ' + daysList + '\n\n' +
       'For each day, assign EVERY staff member an AM and PM location (or "OFF").\n' +
       '{\n  "assignments": {\n    "YYYY-MM-DD": {\n      "staffId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }\n    }\n  }\n}\n' +
@@ -2432,6 +2526,25 @@ window.ScheduleHelper = function StaffScheduler() {
       }
       if (pVacEdits > 0) addLog('info', `Vacation enforcement: ${pVacEdits} corrections`);
 
+      // Post-process: enforce pre-computed rotation assignments
+      let pRotationEdits = 0;
+      for (const [dk, assignment] of Object.entries(rotationAssignments)) {
+        if (isOnVacation(assignment.staffId, dk) || isOnMedicalLeave(assignment.staffId, dk)) continue;
+        const parts = dk.split('-').map(Number);
+        const hol = getHolidayForDate(parts[0], parts[1] - 1, parts[2]);
+        if (hol && hol.halfDay !== 'am') continue;
+        const dayAssignments = newDayData[dk];
+        if (!dayAssignments || !dayAssignments[assignment.staffId]) continue;
+        const slot = dayAssignments[assignment.staffId];
+        if (assignment.period === 'am' || assignment.period === 'both') {
+          if (slot.am !== assignment.locationId) { slot.am = assignment.locationId; pRotationEdits++; }
+        }
+        if (assignment.period === 'pm' || assignment.period === 'both') {
+          if (slot.pm !== assignment.locationId) { slot.pm = assignment.locationId; pRotationEdits++; }
+        }
+      }
+      if (pRotationEdits > 0) addLog('info', `Rotation enforcement: ${pRotationEdits} correction${pRotationEdits !== 1 ? 's' : ''}`);
+
       // Post-process: strip invalid location IDs
       const pValidLocIds = new Set(locations.map(function(l){ return l.id; }));
       pValidLocIds.add('OFF');
@@ -2506,9 +2619,13 @@ window.ScheduleHelper = function StaffScheduler() {
     setGenerating(false);
   }
 
-  // Detect scheduling rule violations
+  // Detect scheduling rule violations — covers required rules, preferred rules,
+  // negative constraints, and rotation rules.
   function detectRuleConflicts(assignments) {
     const conflicts = [];
+    const resolveLoc = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
+
+    // ── Per-day, per-staff checks ────────────────────────────────────────────
     for (const [dk, dayAssignments] of Object.entries(assignments)) {
       const parts = dk.split('-').map(Number);
       const [y, m, d] = parts;
@@ -2517,133 +2634,187 @@ window.ScheduleHelper = function StaffScheduler() {
       const dow = dt.getDay();
       if (dow === 0 || dow === 6) continue;
       const dayName = DAYS_OF_WEEK[dow];
-      const rawWk = Math.floor((d - 1) / 7) + 1;
-      const wk = rawWk; // 1-5; W5 falls back to W4 rules below
+      const wk = Math.floor((d - 1) / 7) + 1;
 
       for (const [staffId, periods] of Object.entries(dayAssignments)) {
         const s = staff.find(x => x.id === staffId);
         if (!s) continue;
 
-        // Check if on vacation
+        // Vacation
         if (isOnVacation(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
-            const locName = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
             conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'vacation',
               message: `${getLastName(s.name)} is on vacation but scheduled`,
-              current: `AM: ${locName(periods.am)}, PM: ${locName(periods.pm)}`, suggested: 'OFF for both AM and PM',
+              current: `AM: ${resolveLoc(periods.am)}, PM: ${resolveLoc(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
           }
           continue;
         }
 
-        // Check if on medical leave
+        // Medical leave
         if (isOnMedicalLeave(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
-            const locName = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
             conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'medical_leave',
               message: `${getLastName(s.name)} is on medical leave but scheduled`,
-              current: `AM: ${locName(periods.am)}, PM: ${locName(periods.pm)}`, suggested: 'OFF for both AM and PM',
+              current: `AM: ${resolveLoc(periods.am)}, PM: ${resolveLoc(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
           }
           continue;
         }
 
-        // Find applicable rules for this staff/day
-        // 5th occurrence of a weekday (days 29-31) falls back to W4 rules
         const weekStr = String(wk);
         const staffRules = rules.filter(r => r.staffId === staffId && r.dayOfWeek === dayName &&
           (r.weekOfMonth === 'all' || r.weekOfMonth.split(',').includes(weekStr) || (wk === 5 && r.weekOfMonth.split(',').includes('4'))));
 
         const requiredRules = staffRules.filter(r => r.priority === 'required');
+        const preferredRules = staffRules.filter(r => r.priority === 'preferred' && (r.ruleType || 'standard') === 'standard');
 
-        // Compute reason for OFF assignments on this date (used below)
         const holiday = getHolidayForDate(y, m - 1, d);
         const vacEntry = vacations.find(v => v.staffId === staffId && dk >= v.startDate && dk <= v.endDate);
         const mlEntry = medicalLeaves.find(ml => ml.staffId === staffId && dk >= ml.startDate && dk <= ml.endDate);
 
         const getConflictReason = (actualId, otherRules, period, currentRule) => {
           if (actualId === 'OFF') {
-            if (holiday) {
-              const closure = holiday.halfDay === 'am' ? 'half-day closure (AM only)' : 'full-day closure';
-              return `Scheduled as OFF — ${holiday.name} is a company holiday (${closure})`;
-            }
+            if (holiday) { const cl = holiday.halfDay === 'am' ? 'half-day (AM only)' : 'full-day closure'; return `Scheduled as OFF — ${holiday.name} is a company holiday (${cl})`; }
             if (vacEntry) return `Scheduled as OFF — provider is on vacation (${vacEntry.startDate} to ${vacEntry.endDate})`;
             if (mlEntry) return `Scheduled as OFF — provider is on medical leave${mlEntry.reason ? ' (' + mlEntry.reason + ')' : ''}`;
-            // Check if a nearby holiday with an aiNote explains this OFF (e.g. observed date shift)
             const conflictDate = new Date(y, m - 1, d);
             for (const h of holidays) {
               if (!h.aiNote) continue;
-              const hd = getHolidayDate(h, y);
-              if (!hd) continue;
-              const diffDays = Math.abs(Math.round((conflictDate - hd) / 86400000));
-              if (diffDays <= 3) {
-                return `Scheduled as OFF — likely due to ${h.name} observance (${h.aiNote})`;
-              }
+              const hd = getHolidayDate(h, y); if (!hd) continue;
+              if (Math.abs(Math.round((conflictDate - hd) / 86400000)) <= 3) return `Scheduled as OFF — likely due to ${h.name} observance (${h.aiNote})`;
             }
-            // Check if a conditional/exception/complex rule for this staff+day explains the AI's decision
-            const explanatoryRule = staffRules.find(r =>
-              r.priority !== 'required' &&
-              ['conditional', 'exception', 'complex'].includes(r.ruleType || 'standard')
-            );
-            if (explanatoryRule) {
-              const ruleText = explanatoryRule.conditionText || explanatoryRule.exceptionText || explanatoryRule.description || '';
-              if (ruleText) return `Scheduled as OFF — AI applied rule: ${ruleText}`;
-            }
+            const expRule = staffRules.find(r => r.priority !== 'required' && ['conditional','exception','complex'].includes(r.ruleType || 'standard'));
+            if (expRule) { const t = expRule.conditionText || expRule.exceptionText || expRule.description || ''; if (t) return `Scheduled as OFF — AI applied rule: ${t}`; }
             return 'Scheduled as OFF — no override reason detected (AI decision)';
           }
-          // Actual is a different location — check if another required rule explains it
-          const conflicting = otherRules.find(r => r.id !== currentRule.id && r.priority === 'required' &&
-            (r.period === period || r.period === 'both') && r.locationId === actualId);
-          if (conflicting) {
-            const cLoc = locations.find(l => l.id === conflicting.locationId)?.name || conflicting.locationId;
-            return `Another required rule assigns ${cLoc} — rules may conflict`;
-          }
-          // Check if a non-required rule explains the different location
-          const explanatoryLocRule = staffRules.find(r =>
-            r.id !== currentRule.id &&
-            ['conditional', 'exception', 'complex'].includes(r.ruleType || 'standard') &&
-            (r.locationId === actualId || !r.locationId)
-          );
-          if (explanatoryLocRule) {
-            const ruleText = explanatoryLocRule.conditionText || explanatoryLocRule.exceptionText || explanatoryLocRule.description || '';
-            if (ruleText) return `AI applied rule: ${ruleText}`;
-          }
-          const actualLocName = locations.find(l => l.id === actualId)?.name || actualId;
-          return `AI assigned ${actualLocName} instead`;
+          const conflicting = otherRules.find(r => r.id !== currentRule.id && r.priority === 'required' && (r.period === period || r.period === 'both') && r.locationId === actualId);
+          if (conflicting) return `Another required rule assigns ${locations.find(l => l.id === conflicting.locationId)?.name || conflicting.locationId} — rules may conflict`;
+          const expLocRule = staffRules.find(r => r.id !== currentRule.id && ['conditional','exception','complex'].includes(r.ruleType || 'standard') && (r.locationId === actualId || !r.locationId));
+          if (expLocRule) { const t = expLocRule.conditionText || expLocRule.exceptionText || expLocRule.description || ''; if (t) return `AI applied rule: ${t}`; }
+          return `AI assigned ${resolveLoc(actualId)} instead`;
         };
 
-        // Full-day holiday: all OFFs are legitimate — skip every rule check for this staff member
+        // Full-day holiday: skip rule checks
         if (holiday && holiday.halfDay !== 'am') continue;
 
+        // ── Required rules ──
         for (const rule of requiredRules) {
-          const loc = locations.find(l => l.id === rule.locationId);
-          const locName = loc?.name || rule.locationId;
+          const locName = locations.find(l => l.id === rule.locationId)?.name || rule.locationId;
           const period = rule.period;
-
           if (period === 'am' || period === 'both') {
             if (periods.am !== rule.locationId) {
-              const actualLoc = periods.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.am)?.name || periods.am);
-              const reason = getConflictReason(periods.am, requiredRules, 'am', rule);
+              const actualLoc = resolveLoc(periods.am);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} AM (required) but is at ${actualLoc}`,
-                reason, ruleId: rule.id, current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
+                reason: getConflictReason(periods.am, requiredRules, 'am', rule), ruleId: rule.id,
+                current: `AM: ${actualLoc}`, suggested: `AM: ${locName}`,
                 fix: { date: dk, staffId, period: 'am', locationId: rule.locationId } });
             }
           }
-          // AM-only holiday closes PM — don't flag PM rule violations on those days
           if ((period === 'pm' || period === 'both') && !holiday) {
             if (periods.pm !== rule.locationId) {
-              const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
-              const reason = getConflictReason(periods.pm, requiredRules, 'pm', rule);
+              const actualLoc = resolveLoc(periods.pm);
               conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'rule_violation',
                 message: `${getLastName(s.name)} should be at ${locName} PM (required) but is at ${actualLoc}`,
-                reason, ruleId: rule.id, current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
+                reason: getConflictReason(periods.pm, requiredRules, 'pm', rule), ruleId: rule.id,
+                current: `PM: ${actualLoc}`, suggested: `PM: ${locName}`,
                 fix: { date: dk, staffId, period: 'pm', locationId: rule.locationId } });
+            }
+          }
+        }
+
+        // ── Preferred rules (only standard type; skip if explained by a required or flex rule) ──
+        const hasFlexRule = staffRules.some(r => ['conditional','exception','complex'].includes(r.ruleType || ''));
+        for (const rule of preferredRules) {
+          const locName = locations.find(l => l.id === rule.locationId)?.name || rule.locationId;
+          const period = rule.period;
+          if (period === 'am' || period === 'both') {
+            if (periods.am !== rule.locationId) {
+              const coveredByRequired = requiredRules.some(r => (r.period === 'am' || r.period === 'both') && r.locationId === periods.am);
+              if (!coveredByRequired && !hasFlexRule) {
+                conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'preferred_violation',
+                  message: `${getLastName(s.name)} preferred at ${locName} AM but is at ${resolveLoc(periods.am)}`,
+                  reason: rule.description || 'Preferred rule not followed',
+                  current: `AM: ${resolveLoc(periods.am)}`, suggested: `AM: ${locName}`,
+                  fix: { date: dk, staffId, period: 'am', locationId: rule.locationId } });
+              }
+            }
+          }
+          if ((period === 'pm' || period === 'both') && !holiday) {
+            if (periods.pm !== rule.locationId) {
+              const coveredByRequired = requiredRules.some(r => (r.period === 'pm' || r.period === 'both') && r.locationId === periods.pm);
+              if (!coveredByRequired && !hasFlexRule) {
+                conflicts.push({ date: dk, day: dayName, week: wk, staff: s.name, staffId, type: 'preferred_violation',
+                  message: `${getLastName(s.name)} preferred at ${locName} PM but is at ${resolveLoc(periods.pm)}`,
+                  reason: rule.description || 'Preferred rule not followed',
+                  current: `PM: ${resolveLoc(periods.pm)}`, suggested: `PM: ${locName}`,
+                  fix: { date: dk, staffId, period: 'pm', locationId: rule.locationId } });
+              }
             }
           }
         }
       }
     }
+
+    // ── Negative constraint checks (monthly counts) ──────────────────────────
+    const negativeRules = rules.filter(r => (r.ruleType || 'standard') === 'negative' && r.ruleScope !== 'location' && r.staffId && r.locationId);
+    for (const rule of negativeRules) {
+      const s = staff.find(x => x.id === rule.staffId);
+      const loc = locations.find(l => l.id === rule.locationId);
+      if (!s || !loc) continue;
+      const weekNums = rule.weekOfMonth === 'all' ? null : new Set(rule.weekOfMonth.split(',').map(w => w.trim()));
+      const occurrences = [];
+      for (const [dk, dayAssignments] of Object.entries(assignments)) {
+        const parts = dk.split('-').map(Number);
+        if (parts.some(isNaN)) continue;
+        const [y, m, d] = parts;
+        const dt = new Date(y, m - 1, d);
+        if (DAYS_OF_WEEK[dt.getDay()] !== rule.dayOfWeek) continue;
+        const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4);
+        if (weekNums && !weekNums.has(String(wk))) continue;
+        const p = dayAssignments[rule.staffId];
+        if (p && (p.am === rule.locationId || p.pm === rule.locationId)) occurrences.push(dk);
+      }
+      const match = (rule.negativeText || '').match(/max(?:imum)?\s*(\d+)|no more than\s*(\d+)/i);
+      const threshold = match ? parseInt(match[1] || match[2]) : 1;
+      if (occurrences.length > threshold) {
+        const lastDk = occurrences[occurrences.length - 1];
+        const lParts = lastDk.split('-').map(Number);
+        const lDow = new Date(lParts[0], lParts[1] - 1, lParts[2]).getDay();
+        conflicts.push({ date: lastDk, day: DAYS_OF_WEEK[lDow], staff: s.name, staffId: rule.staffId, type: 'negative_constraint',
+          message: `${getLastName(s.name)} at ${loc.name} on ${rule.dayOfWeek}: ${occurrences.length}× this month (max ${threshold})`,
+          current: `${occurrences.length} occurrences: ${occurrences.join(', ')}`,
+          suggested: `Reduce to ${threshold} or fewer`,
+          reason: rule.negativeText || rule.description || '',
+          fix: null });
+      }
+    }
+
+    // ── Rotation rule checks ─────────────────────────────────────────────────
+    const rotAssignments = computeRotationAssignments();
+    for (const [dk, expected] of Object.entries(rotAssignments)) {
+      if (isOnVacation(expected.staffId, dk) || isOnMedicalLeave(expected.staffId, dk)) continue;
+      const rParts = dk.split('-').map(Number);
+      const hol = getHolidayForDate(rParts[0], rParts[1] - 1, rParts[2]);
+      if (hol && hol.halfDay !== 'am') continue;
+      const dayData = assignments[dk];
+      if (!dayData || !dayData[expected.staffId]) continue;
+      const slot = dayData[expected.staffId];
+      const rDt = new Date(rParts[0], rParts[1] - 1, rParts[2]);
+      const amWrong = (expected.period === 'am' || expected.period === 'both') && slot.am !== expected.locationId;
+      const pmWrong = (expected.period === 'pm' || expected.period === 'both') && slot.pm !== expected.locationId;
+      if (amWrong || pmWrong) {
+        const period = (amWrong && pmWrong) ? 'both' : amWrong ? 'am' : 'pm';
+        const current = period === 'am' ? `AM: ${resolveLoc(slot.am)}` : period === 'pm' ? `PM: ${resolveLoc(slot.pm)}` : `AM: ${resolveLoc(slot.am)}, PM: ${resolveLoc(slot.pm)}`;
+        conflicts.push({ date: dk, day: DAYS_OF_WEEK[rDt.getDay()], staff: expected.staffName, staffId: expected.staffId, type: 'rotation_violation',
+          message: `${getLastName(expected.staffName)} rotation: should be at ${expected.locationName} but isn't`,
+          current, suggested: `${period === 'both' ? 'AM & PM' : period.toUpperCase()}: ${expected.locationName}`,
+          reason: `Rotation turn based on previous month's Final plan`,
+          fix: { date: dk, staffId: expected.staffId, period, locationId: expected.locationId } });
+      }
+    }
+
     return conflicts;
   }
 
@@ -3730,16 +3901,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{if(guardAmbiguity())return;setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
                     🗓 Regenerate Days
                   </Btn>}
-                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="secondary" onClick={()=>{
-                    const conflicts = detectRuleConflicts(getSchedule());
-                    if (conflicts.length > 0) {
-                      setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
-                      setAiLog(`⚠️ ${conflicts.length} rule conflict${conflicts.length!==1?'s':''} found.`);
-                    } else {
-                      setConflictsReport(null);
-                      setAiLog('✅ No rule conflicts found.');
-                    }
-                  }} disabled={generating} title="Scan the current schedule against all rules and show any conflicts">
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="primary" onClick={()=>setShowRecheckInfoModal(true)} disabled={generating} title="Scan the current schedule against all rules and show any conflicts">
                     🔍 Recheck Rules
                   </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
@@ -3979,10 +4141,26 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               )}
 
               {/* Conflicts Report */}
-              {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (
+              {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (()=>{
+                const hardCount = conflictsReport.conflicts.filter(c => ['rule_violation','rotation_violation','vacation','medical_leave','negative_constraint'].includes(c.type)).length;
+                const prefCount = conflictsReport.conflicts.filter(c => c.type === 'preferred_violation').length;
+                const headerLabel = [hardCount > 0 && `${hardCount} conflict${hardCount!==1?'s':''}`, prefCount > 0 && `${prefCount} preferred rule${prefCount!==1?'s':''} unmet`].filter(Boolean).join(' · ');
+                const msgColor = c => {
+                  if (c.type === 'preferred_violation') return theme==='light'?'#3730a3':'#818cf8';
+                  if (c.type === 'negative_constraint') return theme==='light'?'#92400e':'#fbbf24';
+                  if (c.type === 'rotation_violation') return theme==='light'?'#991b1b':'#fca5a5';
+                  return theme==='light'?'#92400e':'#fbbf24';
+                };
+                const typeBadge = c => {
+                  if (c.type === 'preferred_violation') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#6366f122',color:'#818cf8',marginLeft:6}}>preferred</span>;
+                  if (c.type === 'negative_constraint') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#f59e0b22',color:'#d97706',marginLeft:6}}>negative</span>;
+                  if (c.type === 'rotation_violation') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#ef444422',color:'#f87171',marginLeft:6}}>rotation</span>;
+                  return null;
+                };
+                return (
                 <div style={{background:'var(--bg-elevated)',border:`1px solid ${theme==='light'?'#d97706':'#92400e'}`,borderRadius:10,marginBottom:16,overflow:'hidden'}}>
                   <div style={{padding:'10px 16px',background:theme==='light'?'#fef3c7':'#78350f33',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                    <span style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>⚠️ {conflictsReport.conflicts.length} Rule Conflict{conflictsReport.conflicts.length>1?'s':''} Detected</span>
+                    <span style={{fontSize:14,fontWeight:700,color:theme==='light'?'#92400e':'#fbbf24'}}>⚠️ {headerLabel}</span>
                     <div style={{display:'flex',gap:8}}>
                       <Btn variant="success" onClick={()=>{
                         if (conflictsReport.scheduleKey && conflictsReport.scheduleKey !== scheduleKey) {
@@ -3999,7 +4177,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     {conflictsReport.conflicts.map((c, ci) => (
                       <div key={ci} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:ci%2===0?(theme==='light'?'transparent':'#1e1530'):'transparent',borderRadius:6,marginBottom:2}}>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:600,color:theme==='light'?'#92400e':'#fbbf24'}}>{c.message}</div>
+                          <div style={{fontSize:13,fontWeight:600,color:msgColor(c),display:'flex',alignItems:'center',flexWrap:'wrap'}}>{c.message}{typeBadge(c)}</div>
                           <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>
                             {c.date} ({c.day}) — Current: {c.current} → Suggested: {c.suggested}
                           </div>
@@ -4037,7 +4215,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                     ))}
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               <div style={{display:'flex',alignItems:'center',gap:isMobile?6:16,marginBottom:12,flexWrap:isMobile?'wrap':'nowrap'}}>
                 <Btn variant="ghost" onClick={()=>{
@@ -5376,6 +5555,48 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         </div>
       )}
 
+      {showRecheckInfoModal && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>setShowRecheckInfoModal(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:28,maxWidth:480,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:20,marginBottom:10}}>🔍</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:12}}>Recheck Rules</div>
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#10b981',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>✅ What this checks</div>
+              <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
+                <li>Required rule violations (hard conflicts)</li>
+                <li>Preferred rule deviations (standard rules only)</li>
+                <li>Negative constraints exceeded (e.g. max 2 Stockton Thursdays)</li>
+                <li>Rotation rule assignments — verified against the previous month's Final plan</li>
+                <li>Staff scheduled during vacation or medical leave</li>
+              </ul>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#f87171',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>⚠️ Limitations</div>
+              <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
+                <li><b>Complex rules</b> (free-text) cannot be automatically evaluated — they require human or AI judgment</li>
+                <li><b>Conditional rules</b> (IF/THEN conditions) are not checked</li>
+                <li><b>Exception rules</b> (base rule + override condition) are not checked</li>
+              </ul>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" onClick={()=>setShowRecheckInfoModal(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={()=>{
+                setShowRecheckInfoModal(false);
+                const conflicts = detectRuleConflicts(getSchedule());
+                if (conflicts.length > 0) {
+                  setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
+                  setAiLog(`⚠️ ${conflicts.length} issue${conflicts.length!==1?'s':''} found.`);
+                } else {
+                  setConflictsReport(null);
+                  setAiLog('✅ No rule conflicts found.');
+                }
+              }}>Run Check</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingGenerate && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingGenerate(false)}>
@@ -5603,8 +5824,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
         {/* Negative constraint */}
         {ruleForm.ruleType === 'negative' && (
-          <Textarea label="Negative Constraint (what should NOT happen?)" value={ruleForm.negativeText} onChange={v=>setRuleForm(p=>({...p,negativeText:v}))}
-            placeholder="e.g., Does NOT want 3 Stockton Thursdays in a month. Maximum 2." rows={3} />
+          <>
+            <Textarea label="Negative Constraint (what should NOT happen?)" value={ruleForm.negativeText} onChange={v=>setRuleForm(p=>({...p,negativeText:v}))}
+              placeholder="e.g., Does NOT want 3 Stockton Thursdays in a month. Maximum 2." rows={3} />
+            <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
+              options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
+          </>
         )}
 
         {/* Rotation: who to rotate with and where — staff rules only */}
@@ -5619,8 +5844,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
         {/* Complex: free text */}
         {ruleForm.ruleType === 'complex' && (
-          <Textarea label="Describe the rule in plain English" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))}
-            placeholder="e.g., If Kim is at Turlock on 1st Friday AND Tittler was NOT in surgery Thursday, move Kim to 2nd Friday and notify Turlock Eye Care. Otherwise keep 1st Friday." rows={4} />
+          <>
+            <Textarea label="Describe the rule in plain English" value={ruleForm.description} onChange={v=>setRuleForm(p=>({...p,description:v}))}
+              placeholder="e.g., If Kim is at Turlock on 1st Friday AND Tittler was NOT in surgery Thursday, move Kim to 2nd Friday and notify Turlock Eye Care. Otherwise keep 1st Friday." rows={4} />
+            <Select label="Priority" value={ruleForm.priority} onChange={v=>setRuleForm(p=>({...p,priority:v}))}
+              options={[{value:'required',label:'🔴 Required'},{value:'preferred',label:'🟡 Preferred'},{value:'optional',label:'⚪ Optional'}]} />
+          </>
         )}
 
         {/* Notes (for all types except complex which uses description field) */}
