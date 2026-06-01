@@ -2821,7 +2821,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function runAIRecheckRules() {
     setAiRecheckLoading(true);
-    setAiLog('⏳ AI is checking your schedule against all rules...');
+    setAiLog('⏳ AI is reviewing your schedule against all rules — this may take 10–20 seconds...');
 
     const schedule = getSchedule();
 
@@ -2880,21 +2880,28 @@ window.ScheduleHelper = function StaffScheduler() {
       `Remember: respond with ONLY the JSON object {"violations": [...]}. No other text.`;
 
     try {
-      const result = await streamClaudeAPI({
+      // Use non-streaming callClaudeAPI — more reliable for structured JSON outputs.
+      // streamClaudeAPI can silently drop the text when unexpected SSE event types arrive.
+      const response = await callClaudeAPI({
         model: 'claude-sonnet-4-6',
         max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMsg }]
-      }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
+      });
 
-      if (!result.ok) {
-        setAiLog(`⚠️ AI check failed (${result.status}). Please try again.`);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${response.status}`;
+        setAiLog(`⚠️ AI check failed: ${errMsg}. Please try again.`);
         setAiRecheckLoading(false);
         return;
       }
 
+      const data = await response.json();
+      const rawText = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+
       // Parse JSON response — try progressively more lenient approaches
-      const clean = result.text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const clean = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
       let parsed;
       try {
         parsed = JSON.parse(clean);
