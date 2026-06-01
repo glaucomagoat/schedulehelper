@@ -1721,8 +1721,10 @@ window.ScheduleHelper = function StaffScheduler() {
     if (!isLocationRule && !ruleForm.staffId) return;
     // Standard/conditional/exception/rotation rules need locationId; negative/complex may not
     if (['standard','conditional','exception','rotation'].includes(ruleForm.ruleType) && !ruleForm.locationId) return;
-    if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleForm } : r)); setEditingRule(null); }
-    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, createdBy: user?.username || null, ...ruleForm }]); }
+    // Location-scoped rules don't belong to any staff member — clear staffId to avoid false associations
+    const ruleData = isLocationRule ? { ...ruleForm, staffId: '' } : ruleForm;
+    if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleData } : r)); setEditingRule(null); }
+    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, createdBy: user?.username || null, ...ruleData }]); }
     resetRuleForm(); setShowRuleModal(false);
   }
   function resetRuleForm(overrides) {
@@ -4846,16 +4848,33 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           ) : (
                             <div style={{display:'flex',flexDirection:'column',gap:8}}>
                               {lr.map(r => {
-                                const s = staff.find(x=>x.id===r.staffId);
+                                const isLocRule = r.ruleScope === 'location';
+                                const s = isLocRule ? null : staff.find(x=>x.id===r.staffId);
+                                const accentColor = isLocRule ? (lc.border||'var(--text-dim)') : (s?.color||'#666');
                                 return (
-                                  <div key={r.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${s?.color||'#666'}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+                                  <div key={r.id} style={{background:'var(--bg-surface)',borderRadius:8,padding:'10px 14px',borderLeft:`3px solid ${accentColor}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
                                     <div style={{flex:1,fontSize:14}}>
-                                      <span style={{color:s?.color||'var(--text-primary)',fontWeight:700}}>{s?.name||'?'}</span>
-                                      <span style={{color:'var(--text-secondary)',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
-                                      <span style={{color:'var(--text-dim)'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
-                                      {r.period!=='both'&&<span style={{color:'var(--text-muted)'}}> ({r.period.toUpperCase()})</span>}
-                                      <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
-                                      {r.description&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>{r.description}</div>}
+                                      {isLocRule ? (
+                                        <>
+                                          <span style={{color:lc.text||'var(--text-secondary)',fontWeight:700}}>📍 Location Rule</span>
+                                          {r.ruleType!=='negative'&&r.ruleType!=='complex'&&<>
+                                            <span style={{color:'var(--text-secondary)',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
+                                            <span style={{color:'var(--text-dim)'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
+                                            {r.period!=='both'&&<span style={{color:'var(--text-muted)'}}> ({r.period.toUpperCase()})</span>}
+                                          </>}
+                                          <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
+                                          {(r.description||r.negativeText||r.conditionText||r.exceptionText)&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>{r.negativeText||r.conditionText||r.exceptionText||r.description}</div>}
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span style={{color:s?.color||'var(--text-primary)',fontWeight:700}}>{s?.name||'?'}</span>
+                                          <span style={{color:'var(--text-secondary)',fontWeight:600,marginLeft:8}}>{r.dayOfWeek}</span>
+                                          <span style={{color:'var(--text-dim)'}}> [{formatWeekOfMonth(r.weekOfMonth)}]</span>
+                                          {r.period!=='both'&&<span style={{color:'var(--text-muted)'}}> ({r.period.toUpperCase()})</span>}
+                                          <span style={{marginLeft:8}}><Chip color={r.priority==='required'?'#ef4444':r.priority==='preferred'?'#f59e0b':'#6b7280'}>{r.priority}</Chip>{ruleTypeBadge(r)}</span>
+                                          {r.description&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>{r.description}</div>}
+                                        </>
+                                      )}
                                     </div>
                                     {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
                                       <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
