@@ -2182,6 +2182,32 @@ window.ScheduleHelper = function StaffScheduler() {
     }
     if (holidayEdits > 0) addLog('info', `Holiday enforcement: ${holidayEdits} corrections`);
 
+    // Post-process: enforce medical leave — force OFF for any staff member on leave
+    let leaveEdits = 0;
+    for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
+      for (const sid of Object.keys(dayAssignments)) {
+        if (isOnMedicalLeave(sid, dk)) {
+          if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+            dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; leaveEdits++;
+          }
+        }
+      }
+    }
+    if (leaveEdits > 0) addLog('info', `Medical leave enforcement: ${leaveEdits} corrections`);
+
+    // Post-process: enforce vacations — force OFF for any staff member on vacation
+    let vacEdits = 0;
+    for (const [dk, dayAssignments] of Object.entries(allAssignments)) {
+      for (const sid of Object.keys(dayAssignments)) {
+        if (isOnVacation(sid, dk)) {
+          if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+            dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; vacEdits++;
+          }
+        }
+      }
+    }
+    if (vacEdits > 0) addLog('info', `Vacation enforcement: ${vacEdits} corrections`);
+
     // Post-process: strip any hallucinated/invalid location IDs — replace with OFF
     const validLocIds = new Set(locations.map(function(l){ return l.id; }));
     validLocIds.add('OFF');
@@ -2378,6 +2404,32 @@ window.ScheduleHelper = function StaffScheduler() {
       }
       if (pHolidayEdits > 0) addLog('info', `Holiday enforcement: ${pHolidayEdits} corrections`);
 
+      // Post-process: enforce medical leave
+      let pLeaveEdits = 0;
+      for (const [dk, dayAssignments] of Object.entries(newDayData)) {
+        for (const sid of Object.keys(dayAssignments)) {
+          if (isOnMedicalLeave(sid, dk)) {
+            if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+              dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; pLeaveEdits++;
+            }
+          }
+        }
+      }
+      if (pLeaveEdits > 0) addLog('info', `Medical leave enforcement: ${pLeaveEdits} corrections`);
+
+      // Post-process: enforce vacations
+      let pVacEdits = 0;
+      for (const [dk, dayAssignments] of Object.entries(newDayData)) {
+        for (const sid of Object.keys(dayAssignments)) {
+          if (isOnVacation(sid, dk)) {
+            if (dayAssignments[sid].am !== 'OFF' || dayAssignments[sid].pm !== 'OFF') {
+              dayAssignments[sid].am = 'OFF'; dayAssignments[sid].pm = 'OFF'; pVacEdits++;
+            }
+          }
+        }
+      }
+      if (pVacEdits > 0) addLog('info', `Vacation enforcement: ${pVacEdits} corrections`);
+
       // Post-process: strip invalid location IDs
       const pValidLocIds = new Set(locations.map(function(l){ return l.id; }));
       pValidLocIds.add('OFF');
@@ -2558,6 +2610,9 @@ window.ScheduleHelper = function StaffScheduler() {
           return `AI assigned ${actualLocName} instead`;
         };
 
+        // Full-day holiday: all OFFs are legitimate — skip every rule check for this staff member
+        if (holiday && holiday.halfDay !== 'am') continue;
+
         for (const rule of requiredRules) {
           const loc = locations.find(l => l.id === rule.locationId);
           const locName = loc?.name || rule.locationId;
@@ -2573,7 +2628,8 @@ window.ScheduleHelper = function StaffScheduler() {
                 fix: { date: dk, staffId, period: 'am', locationId: rule.locationId } });
             }
           }
-          if (period === 'pm' || period === 'both') {
+          // AM-only holiday closes PM — don't flag PM rule violations on those days
+          if ((period === 'pm' || period === 'both') && !holiday) {
             if (periods.pm !== rule.locationId) {
               const actualLoc = periods.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === periods.pm)?.name || periods.pm);
               const reason = getConflictReason(periods.pm, requiredRules, 'pm', rule);
