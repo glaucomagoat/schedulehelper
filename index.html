@@ -2868,7 +2868,11 @@ window.ScheduleHelper = function StaffScheduler() {
       `    "fixLocation": "location name exactly as listed"\n` +
       `  }\n` +
       `]}\n\n` +
-      `If no violations found, respond with exactly: {"violations": []}`;
+      `If no violations found, respond with exactly: {"violations": []}\n\n` +
+      `IMPORTANT — keep the response compact:\n` +
+      `- For vacation or medical-leave conflicts spanning multiple days, report ONE violation per staff member summarizing the date range (e.g. "scheduled on 9 days during vacation 9/1–9/12"), NOT one per day. Omit fixPeriod/fixLocation for these.\n` +
+      `- Keep "reason" to one short sentence.\n` +
+      `- Report only genuine violations; do not pad the list.`;
 
     const userMsg =
       `SCHEDULE TO CHECK (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
@@ -2887,7 +2891,7 @@ window.ScheduleHelper = function StaffScheduler() {
       // wall-clock limit on large responses, surfacing as an HTTP 500.
       const result = await streamClaudeAPI({
         model: 'claude-sonnet-4-6',
-        max_tokens: 8192,
+        max_tokens: 16384,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMsg }]
       }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
@@ -2912,24 +2916,35 @@ window.ScheduleHelper = function StaffScheduler() {
 
       // Parse JSON response — try progressively more lenient approaches
       const clean = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      let parsed;
+      let parsed = null;
+      let truncated = false;
       try {
         parsed = JSON.parse(clean);
       } catch(e) {
-        // Try extracting the outermost {...} block (handles leading/trailing prose)
+        // Try the outermost {...} block (handles leading/trailing prose)
         const m = clean.match(/\{[\s\S]*\}/);
-        if (m) {
-          try { parsed = JSON.parse(m[0]); } catch(e2) {
-            addLog('error', 'AI rule check: response was not valid JSON', { sample: clean.substring(0, 300) });
-            throw new Error('AI returned non-JSON response. Please try again.');
-          }
-        } else {
-          addLog('error', 'AI rule check: response contained no JSON object', { sample: clean.substring(0, 300) });
-          throw new Error('AI returned non-JSON response. Please try again.');
-        }
+        if (m) { try { parsed = JSON.parse(m[0]); } catch(e2) { parsed = null; } }
       }
 
-      const violations = parsed.violations || [];
+      let violations;
+      if (parsed && Array.isArray(parsed.violations)) {
+        violations = parsed.violations;
+      } else {
+        // Salvage path: the response was likely truncated at the token limit.
+        // Each violation is a flat object with no nested braces, so extract every
+        // complete {...} block and parse them individually — the truncated tail is skipped.
+        const objs = clean.match(/\{[^{}]*\}/g) || [];
+        violations = [];
+        for (const o of objs) {
+          try { const v = JSON.parse(o); if (v && (v.date || v.staffName)) violations.push(v); } catch(e) {}
+        }
+        if (violations.length === 0) {
+          addLog('error', 'AI rule check: response was not valid JSON', { sample: clean.substring(0, 300) });
+          throw new Error('AI returned an unreadable response. Please try again.');
+        }
+        truncated = true;
+        addLog('warn', `AI response was truncated — salvaged ${violations.length} complete violation(s); some may be missing`);
+      }
       if (violations.length === 0) {
         setConflictsReport(null);
         addLog('success', 'AI rule check complete: no violations found');
@@ -2950,7 +2965,7 @@ window.ScheduleHelper = function StaffScheduler() {
         });
         setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
         addLog('success', `AI rule check complete: ${conflicts.length} issue${conflicts.length!==1?'s':''} found`);
-        setAiLog(`⚠️ AI found ${conflicts.length} issue${conflicts.length!==1?'s':''}.`);
+        setAiLog(`⚠️ AI found ${conflicts.length} issue${conflicts.length!==1?'s':''}.${truncated ? ' (Response was long and may be incomplete — re-run after fixing some.)' : ''}`);
       }
     } catch(err) {
       addLog('error', `AI rule check error: ${err.message}`);
@@ -4733,7 +4748,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       {devLogs.length === 0 ? (
                         <div style={{color:'var(--text-dim)',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
                       ) : devLogs.map((log, i) => {
-                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24' };
+                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24', warn:'#fbbf24' };
                         return (
                           <div key={i} style={{marginBottom:6,lineHeight:1.4}}>
                             <span style={{color:'var(--text-dim)'}}>[{log.time}]</span>{' '}
@@ -4779,7 +4794,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       {devLogs.length === 0 ? (
                         <div style={{color:'var(--text-dim)',fontStyle:'italic'}}>No logs yet. Click "Generate with AI" to see request/response logs.</div>
                       ) : devLogs.map((log, i) => {
-                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24' };
+                        const colors = { info:'#60a5fa', request:'#a78bfa', response:'#34d399', success:'#22d3ee', error:'#f87171', warning:'#fbbf24', warn:'#fbbf24' };
                         return (
                           <div key={i} style={{marginBottom:6,lineHeight:1.4}}>
                             <span style={{color:'var(--text-dim)'}}>[{log.time}]</span>{' '}
