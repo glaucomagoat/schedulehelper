@@ -2879,26 +2879,36 @@ window.ScheduleHelper = function StaffScheduler() {
       `HOLIDAYS THIS MONTH:\n${holLines}\n\n` +
       `Remember: respond with ONLY the JSON object {"violations": [...]}. No other text.`;
 
+    addLog('request', `AI rule check: ${scheduleLines.split('\n').length} schedule lines | system ${systemPrompt.length} chars | user ${userMsg.length} chars`);
+
     try {
-      // Use non-streaming callClaudeAPI — more reliable for structured JSON outputs.
-      // streamClaudeAPI can silently drop the text when unexpected SSE event types arrive.
-      const response = await callClaudeAPI({
+      // Use STREAMING — edge functions are built to stream. A non-streaming call
+      // buffers the entire completion server-side and can exceed Netlify's edge
+      // wall-clock limit on large responses, surfacing as an HTTP 500.
+      const result = await streamClaudeAPI({
         model: 'claude-sonnet-4-6',
         max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMsg }]
-      });
+      }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        const errMsg = errData?.error?.message || `HTTP ${response.status}`;
-        setAiLog(`⚠️ AI check failed: ${errMsg}. Please try again.`);
+      addLog('response', `AI rule check: HTTP ${result.status}`, { ok: result.ok });
+
+      if (!result.ok) {
+        const detail = (result.errorText || '').substring(0, 500);
+        addLog('error', `AI rule check failed: HTTP ${result.status}`, { errorText: detail });
+        setAiLog(`⚠️ AI check failed (HTTP ${result.status}). See activity logs below for details.`);
         setAiRecheckLoading(false);
         return;
       }
 
-      const data = await response.json();
-      const rawText = (data.content || []).map(i => i.type === 'text' ? (i.text || '') : '').join('');
+      const rawText = result.text || '';
+      if (!rawText.trim()) {
+        addLog('error', 'AI rule check returned an empty response');
+        setAiLog('⚠️ AI returned an empty response. Please try again.');
+        setAiRecheckLoading(false);
+        return;
+      }
 
       // Parse JSON response — try progressively more lenient approaches
       const clean = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
@@ -2909,8 +2919,12 @@ window.ScheduleHelper = function StaffScheduler() {
         // Try extracting the outermost {...} block (handles leading/trailing prose)
         const m = clean.match(/\{[\s\S]*\}/);
         if (m) {
-          try { parsed = JSON.parse(m[0]); } catch(e2) { throw new Error('AI returned non-JSON response. Please try again.'); }
+          try { parsed = JSON.parse(m[0]); } catch(e2) {
+            addLog('error', 'AI rule check: response was not valid JSON', { sample: clean.substring(0, 300) });
+            throw new Error('AI returned non-JSON response. Please try again.');
+          }
         } else {
+          addLog('error', 'AI rule check: response contained no JSON object', { sample: clean.substring(0, 300) });
           throw new Error('AI returned non-JSON response. Please try again.');
         }
       }
@@ -2918,6 +2932,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const violations = parsed.violations || [];
       if (violations.length === 0) {
         setConflictsReport(null);
+        addLog('success', 'AI rule check complete: no violations found');
         setAiLog('✅ AI found no rule violations.');
       } else {
         const conflicts = violations.map(v => {
@@ -2934,9 +2949,11 @@ window.ScheduleHelper = function StaffScheduler() {
             reason: v.reason || '', fix };
         });
         setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
+        addLog('success', `AI rule check complete: ${conflicts.length} issue${conflicts.length!==1?'s':''} found`);
         setAiLog(`⚠️ AI found ${conflicts.length} issue${conflicts.length!==1?'s':''}.`);
       }
     } catch(err) {
+      addLog('error', `AI rule check error: ${err.message}`);
       setAiLog(`⚠️ AI check failed: ${err.message}`);
     }
 
