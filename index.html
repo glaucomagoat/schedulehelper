@@ -3730,6 +3730,18 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{if(guardAmbiguity())return;setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
                     🗓 Regenerate Days
                   </Btn>}
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="secondary" onClick={()=>{
+                    const conflicts = detectRuleConflicts(getSchedule());
+                    if (conflicts.length > 0) {
+                      setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
+                      setAiLog(`⚠️ ${conflicts.length} rule conflict${conflicts.length!==1?'s':''} found.`);
+                    } else {
+                      setConflictsReport(null);
+                      setAiLog('✅ No rule conflicts found.');
+                    }
+                  }} disabled={generating} title="Scan the current schedule against all rules and show any conflicts">
+                    🔍 Recheck Rules
+                  </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
                     <Btn variant="secondary" onClick={()=>setShowPdfMenu(p=>!p)}>📄 Export PDF ▾</Btn>
                     {showPdfMenu && (
