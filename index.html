@@ -867,18 +867,77 @@ window.ScheduleHelper = function StaffScheduler() {
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // Resolve an ambiguity value (location ID, "Name (ID)", or plain name) to a
-  // display-friendly name. The raw value is still stored/passed to the AI unchanged.
+  // Resolve an ambiguity value to a display-friendly location name.
+  // Handles all formats the AI may return:
+  //   - bare ID:                  "l7"
+  //   - plain name:               "DHM"
+  //   - "Name (ID)":              "DHM (l9)"
+  //   - "Name (ID) — reason":     "DHM (l9) — rotation says Daniel's turn"
+  //   - "OFF — explanation":      "OFF — no backlog data"
+  // The raw value is always stored/passed to the AI unchanged.
   function resolveAmbiguityLabel(val) {
-    if (!val || val === 'OFF') return val;
-    const byId = locations.find(l => l.id === val);
+    if (!val) return val;
+    const trimmed = val.trim();
+
+    // Always show OFF as-is, regardless of appended explanation
+    if (trimmed === 'OFF' || trimmed.startsWith('OFF ') || trimmed.startsWith('OFF—') || trimmed.startsWith('OFF —')) return 'OFF';
+
+    // 1. Bare ID match (e.g. "l7")
+    const byId = locations.find(l => l.id === trimmed);
     if (byId) return byId.name;
-    const m = val.match(/^(.+?)\s*\(([^)]+)\)$/);
-    if (m) {
-      const byExtracted = locations.find(l => l.id === m[2].trim());
-      return byExtracted ? byExtracted.name : m[1].trim();
+
+    // 2. Exact name match
+    const byName = locations.find(l => l.name.toLowerCase() === trimmed.toLowerCase());
+    if (byName) return byName.name;
+
+    // 3. Location ID in parentheses anywhere in the string (e.g. "DHM (l9) — ...")
+    const parenMatch = trimmed.match(/\(([^)]+)\)/);
+    if (parenMatch) {
+      const byParen = locations.find(l => l.id === parenMatch[1].trim());
+      if (byParen) return byParen.name;
     }
+
+    // 4. String starts with a known location name or ID (require word boundary after)
+    for (const loc of locations) {
+      if (trimmed === loc.name || trimmed.startsWith(loc.name + ' ') || trimmed.startsWith(loc.name + '(') || trimmed.startsWith(loc.name + '—') || trimmed.startsWith(loc.name + '-')) return loc.name;
+      if (trimmed === loc.id  || trimmed.startsWith(loc.id  + ' ') || trimmed.startsWith(loc.id  + '(') || trimmed.startsWith(loc.id  + '—') || trimmed.startsWith(loc.id  + '-')) return loc.name;
+    }
+
+    // 5. Truncate at " — " or " - " and retry ID/name/paren lookup on the prefix
+    const sepIdx = trimmed.search(/ [—\-] /);
+    if (sepIdx > 0) {
+      const prefix = trimmed.slice(0, sepIdx).trim();
+      const byIdP = locations.find(l => l.id === prefix);
+      if (byIdP) return byIdP.name;
+      const byNameP = locations.find(l => l.name.toLowerCase() === prefix.toLowerCase());
+      if (byNameP) return byNameP.name;
+      const parenP = prefix.match(/\(([^)]+)\)/);
+      if (parenP) {
+        const byParenP = locations.find(l => l.id === parenP[1].trim());
+        if (byParenP) return byParenP.name;
+      }
+      // Strip "(ID)" suffix and return whatever name text remains
+      const nameOnly = prefix.replace(/\s*\([^)]+\)\s*$/, '').trim();
+      if (nameOnly) return nameOnly;
+    }
+
+    // 6. Strip "(ID)" suffix as last resort
+    const stripped = trimmed.replace(/\s*\([^)]+\)\s*$/, '').trim();
+    if (stripped && stripped !== trimmed) return stripped;
+
     return val;
+  }
+
+  function formatAmbiguityDate(dateStr) {
+    if (!dateStr) return null;
+    const parts = dateStr.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    const [y, m, d] = parts;
+    const dt = new Date(y, m - 1, d);
+    const monthAbbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m - 1];
+    const dayName = DAYS_OF_WEEK[dt.getDay()];
+    const wk = Math.min(Math.floor((d - 1) / 7) + 1, 4);
+    return `${monthAbbr} ${d}, ${dayName}, W${wk}`;
   }
 
   function guardAmbiguity() {
@@ -1636,7 +1695,8 @@ window.ScheduleHelper = function StaffScheduler() {
   function addStaff() {
     if (!staffForm.name) return;
     if (editingStaff) {
-      setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffForm } : s));
+      const { copyRulesFrom: _unused, ...staffFields } = staffForm;
+      setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffFields } : s));
       setEditingStaff(null);
     } else {
       const newId = 's' + Date.now();
@@ -2043,11 +2103,11 @@ window.ScheduleHelper = function StaffScheduler() {
         '    }\n' +
         '  },\n' +
         '  "ambiguities": [\n' +
-        '    { "id": "unique_id", "severity": "critical|minor", "question": "≤12 words", "chose": "what AI decided (e.g. OFF, or location name)", "alternatives": ["other option 1", "other option 2"] }\n' +
+        '    { "id": "unique_id", "severity": "critical|minor", "date": "YYYY-MM-DD of the affected day", "question": "≤12 words", "chose": "location name only — no ID, no explanation (e.g. OFF, DHM, Stockton)", "alternatives": ["location name only", "location name only"] }\n' +
         '  ]\n' +
         '}\n' +
         'Use ONLY the exact staff IDs and location IDs provided in the system prompt. Never invent or approximate IDs. Include every listed day and every staff member.\n' +
-        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly. Include "chose" (what you decided) and 1-3 concise "alternatives" the user could pick instead.\n' +
+        'For CRITICAL ambiguities only (rotation with no prior data, contradictory required rules): list them briefly. "chose" and each "alternatives" entry must be a plain location name (e.g. "DHM") or "OFF" — no IDs, no parentheses, no extra explanation.\n' +
         'For MINOR ambiguities: auto-resolve silently. Do NOT output auto_resolved.';
 
       addLog('request', `Batch ${bi+1} (${batchLabel}): ${batchDays.length} days | user msg: ${batchPrompt.length} chars`);
@@ -2416,9 +2476,10 @@ window.ScheduleHelper = function StaffScheduler() {
         // Check if on vacation
         if (isOnVacation(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
+            const locName = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
             conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'vacation',
               message: `${getLastName(s.name)} is on vacation but scheduled`,
-              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM',
+              current: `AM: ${locName(periods.am)}, PM: ${locName(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
           }
           continue;
@@ -2427,9 +2488,10 @@ window.ScheduleHelper = function StaffScheduler() {
         // Check if on medical leave
         if (isOnMedicalLeave(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
+            const locName = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
             conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'medical_leave',
               message: `${getLastName(s.name)} is on medical leave but scheduled`,
-              current: `AM: ${periods.am}, PM: ${periods.pm}`, suggested: 'OFF for both AM and PM',
+              current: `AM: ${locName(periods.am)}, PM: ${locName(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
           }
           continue;
@@ -5494,7 +5556,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>The AI encountered situations it couldn't resolve automatically. Please make a decision for each:</div>
         {genAmbiguities && genAmbiguities.map((amb, ai) => (
           <div key={amb.id || ai} style={{background:'var(--bg-elevated)',border:'1px solid #92400e',borderRadius:8,padding:'14px 16px',marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
+            <div style={{fontSize:14,fontWeight:600,color:'#1e40af',marginBottom:formatAmbiguityDate(amb.date)?2:6}}>{amb.question}</div>
+            {formatAmbiguityDate(amb.date) && <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>{formatAmbiguityDate(amb.date)}</div>}
             <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:8}}>
               AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
             </div>
@@ -5549,7 +5612,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             </div>
             {/* Body */}
             <div style={{padding:'14px 16px'}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:6}}>{amb.question}</div>
+              <div style={{fontSize:13,fontWeight:700,color:'#1e40af',marginBottom:formatAmbiguityDate(amb.date)?2:6}}>{amb.question}</div>
+              {formatAmbiguityDate(amb.date) && <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:6}}>{formatAmbiguityDate(amb.date)}</div>}
               <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>
                 AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
               </div>
