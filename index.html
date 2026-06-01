@@ -792,6 +792,7 @@ window.ScheduleHelper = function StaffScheduler() {
   const ambiguityDragRef = useRef({dragging: false, startX: 0, startY: 0, origX: 0, origY: 0});
   const [showPdfMenu, setShowPdfMenu] = useState(false);
   const [showRecheckInfoModal, setShowRecheckInfoModal] = useState(false);
+  const [aiRecheckLoading, setAiRecheckLoading] = useState(false);
 
   // Call Claude API via Netlify function (API key stays server-side)
   // ── API HELPERS ────────────────────────────────────────────────────────────
@@ -2818,6 +2819,112 @@ window.ScheduleHelper = function StaffScheduler() {
     return conflicts;
   }
 
+  async function runAIRecheckRules() {
+    setAiRecheckLoading(true);
+    setAiLog('⏳ AI is checking your schedule against all rules...');
+
+    const schedule = getSchedule();
+
+    // Format schedule as readable text (location names, not IDs)
+    const scheduleLines = Object.keys(schedule).sort().map(dk => {
+      const dayData = schedule[dk];
+      const parts = dk.split('-').map(Number);
+      const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+      if (dt.getDay() === 0 || dt.getDay() === 6) return null;
+      const entries = Object.entries(dayData).map(([sid, p]) => {
+        const s = staff.find(x => x.id === sid);
+        const amLoc = p.am === 'OFF' ? 'OFF' : (locations.find(l => l.id === p.am)?.name || p.am);
+        const pmLoc = p.pm === 'OFF' ? 'OFF' : (locations.find(l => l.id === p.pm)?.name || p.pm);
+        return `  ${s?.name || sid}: AM=${amLoc}, PM=${pmLoc}`;
+      }).join('\n');
+      return `${dk} (${DAYS_OF_WEEK[dt.getDay()]}):\n${entries}`;
+    }).filter(Boolean).join('\n');
+
+    const rulesSummary = buildRulesSummary();
+    const prevMonthContext = getPreviousMonthContext();
+    const vacLines = vacations.length > 0
+      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return `- ${sv?.name||'?'}: ${v.startDate} to ${v.endDate}`; }).join('\n') : 'None.';
+    const mlLines = medicalLeaves.length > 0
+      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return `- ${sv?.name||'?'}: ${ml.startDate} to ${ml.endDate}${ml.reason?' ('+ml.reason+')':''}`; }).join('\n') : 'None.';
+    const holLines = (()=>{ const hols = []; holidays.forEach(h => { const dt = getHolidayDate(h, currentYear); if (!dt || dt.getMonth() !== currentMonth) return; hols.push(`- ${dateKey(dt.getFullYear(),dt.getMonth(),dt.getDate())}: ${h.name} (${h.halfDay==='am'?'AM only':'CLOSED'})`); }); return hols.length > 0 ? hols.join('\n') : 'None.'; })();
+
+    const systemPrompt =
+      `You are an expert scheduling rule checker for a multi-location ophthalmology/optometry practice.\n` +
+      `Analyze the schedule against ALL rules — required, preferred, negative constraints, rotation, conditional, exception, and complex rules.\n` +
+      `Also flag staff scheduled during vacation, medical leave, or holidays.\n\n` +
+      `For each violation found, return a JSON object with these fields:\n` +
+      `  date: "YYYY-MM-DD"\n` +
+      `  staffName: "Full name as listed"\n` +
+      `  type: one of rule_violation | preferred_violation | rotation_violation | negative_constraint | vacation | medical_leave\n` +
+      `  message: short description (e.g. "Choi should be at DHM but is at Stockton")\n` +
+      `  current: what is currently scheduled (e.g. "AM: Stockton, PM: Stockton")\n` +
+      `  suggested: what it should be (e.g. "AM: DHM, PM: DHM")\n` +
+      `  reason: brief explanation of the rule that was violated\n` +
+      `  fixPeriod: "am", "pm", or "both" if a fix is possible, otherwise omit\n` +
+      `  fixLocation: location name (exactly as listed) if a fix is possible, otherwise omit\n\n` +
+      `Respond ONLY with valid JSON — no markdown, no backticks, no explanation:\n` +
+      `{"violations": [...]}  or  {"violations": []} if no issues found.`;
+
+    const userMsg =
+      `SCHEDULE TO CHECK (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
+      `SCHEDULING RULES:\n${rulesSummary}\n\n` +
+      `${prevMonthContext}\n\n` +
+      `VACATIONS:\n${vacLines}\n\n` +
+      `MEDICAL LEAVE:\n${mlLines}\n\n` +
+      `HOLIDAYS THIS MONTH:\n${holLines}`;
+
+    try {
+      const result = await streamClaudeAPI({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMsg }]
+      }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
+
+      if (!result.ok) {
+        setAiLog(`⚠️ AI check failed (${result.status}). Please try again.`);
+        setAiRecheckLoading(false);
+        return;
+      }
+
+      // Parse JSON response
+      const clean = result.text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let parsed;
+      try {
+        parsed = JSON.parse(clean);
+      } catch(e) {
+        const m = clean.match(/\{[\s\S]*\}/);
+        if (m) parsed = JSON.parse(m[0]); else throw e;
+      }
+
+      const violations = parsed.violations || [];
+      if (violations.length === 0) {
+        setConflictsReport(null);
+        setAiLog('✅ AI found no rule violations.');
+      } else {
+        const conflicts = violations.map(v => {
+          let fix = null;
+          if (v.fixLocation && v.fixPeriod) {
+            const loc = locations.find(l => l.name.toLowerCase() === v.fixLocation.toLowerCase());
+            const sv = staff.find(s => s.name === v.staffName);
+            if (loc && sv) fix = { date: v.date, staffId: sv.id, period: v.fixPeriod, locationId: loc.id };
+          }
+          const dParts = (v.date || '').split('-').map(Number);
+          const dayName = dParts.length === 3 && !dParts.some(isNaN) ? DAYS_OF_WEEK[new Date(dParts[0], dParts[1]-1, dParts[2]).getDay()] : '';
+          return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: staff.find(s => s.name === v.staffName)?.id || '',
+            type: v.type || 'rule_violation', message: v.message || '', current: v.current || '', suggested: v.suggested || '',
+            reason: v.reason || '', fix };
+        });
+        setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
+        setAiLog(`⚠️ AI found ${conflicts.length} issue${conflicts.length!==1?'s':''}.`);
+      }
+    } catch(err) {
+      setAiLog(`⚠️ AI check failed: ${err.message}`);
+    }
+
+    setAiRecheckLoading(false);
+  }
+
   function applyConflictFix(fix) {
     setSchedules(prev => {
       pushScheduleHistory(prev);
@@ -3901,8 +4008,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="success" onClick={()=>{if(guardAmbiguity())return;setPartialRegenDays(new Set());setShowPartialRegenModal(true);}} disabled={generating} title="Regenerate only selected days while keeping the rest of the schedule intact">
                     🗓 Regenerate Days
                   </Btn>}
-                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="primary" onClick={()=>setShowRecheckInfoModal(true)} disabled={generating} title="Scan the current schedule against all rules and show any conflicts">
-                    🔍 Recheck Rules
+                  {isAdmin && Object.keys(getSchedule()).length > 0 && <Btn variant="primary" onClick={()=>setShowRecheckInfoModal(true)} disabled={generating||aiRecheckLoading} title="AI-powered check of the current schedule against all rules">
+                    {aiRecheckLoading ? '⏳ Checking...' : '🔍 Recheck Rules'}
                   </Btn>}
                   {(isAdmin || finalPlanForMonth) && <div data-pdf-menu="true" style={{position:'relative'}}>
                     <Btn variant="secondary" onClick={()=>setShowPdfMenu(p=>!p)}>📄 Export PDF ▾</Btn>
@@ -5559,39 +5666,29 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setShowRecheckInfoModal(false)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:28,maxWidth:480,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
-            <div style={{fontSize:20,marginBottom:10}}>🔍</div>
-            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:12}}>Recheck Rules</div>
+            <div style={{fontSize:20,marginBottom:10}}>🤖</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>AI Rule Check</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+              The AI will review your full schedule against <b style={{color:'var(--text-primary)'}}>every rule</b> — including conditional, exception, and complex free-text rules that can't be evaluated automatically.
+            </div>
             <div style={{marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#10b981',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>✅ What this checks</div>
+              <div style={{fontSize:13,fontWeight:700,color:'#10b981',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>✅ What the AI checks</div>
               <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
-                <li>Required rule violations (hard conflicts)</li>
-                <li>Preferred rule deviations (standard rules only)</li>
-                <li>Negative constraints exceeded (e.g. max 2 Stockton Thursdays)</li>
-                <li>Rotation rule assignments — verified against the previous month's Final plan</li>
-                <li>Staff scheduled during vacation or medical leave</li>
+                <li>Required &amp; preferred rule violations</li>
+                <li>Conditional, exception, and complex (free-text) rules</li>
+                <li>Negative constraints (e.g. max 2 Stockton Thursdays)</li>
+                <li>Rotation assignments vs. previous month's Final plan</li>
+                <li>Vacation, medical leave, and holiday conflicts</li>
               </ul>
             </div>
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#f87171',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>⚠️ Limitations</div>
-              <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
-                <li><b>Complex rules</b> (free-text) cannot be automatically evaluated — they require human or AI judgment</li>
-                <li><b>Conditional rules</b> (IF/THEN conditions) are not checked</li>
-                <li><b>Exception rules</b> (base rule + override condition) are not checked</li>
-              </ul>
+            <div style={{marginBottom:20,padding:'10px 14px',background:'#6366f111',borderRadius:8,border:'1px solid #6366f133'}}>
+              <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
+                <b style={{color:'var(--text-primary)'}}>Note:</b> The AI may occasionally miss subtle violations or flag false positives — use your judgment on the results. Each check costs approximately $0.01–$0.05 in AI tokens.
+              </div>
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <Btn variant="ghost" onClick={()=>setShowRecheckInfoModal(false)}>Cancel</Btn>
-              <Btn variant="primary" onClick={()=>{
-                setShowRecheckInfoModal(false);
-                const conflicts = detectRuleConflicts(getSchedule());
-                if (conflicts.length > 0) {
-                  setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
-                  setAiLog(`⚠️ ${conflicts.length} issue${conflicts.length!==1?'s':''} found.`);
-                } else {
-                  setConflictsReport(null);
-                  setAiLog('✅ No rule conflicts found.');
-                }
-              }}>Run Check</Btn>
+              <Btn variant="primary" onClick={()=>{setShowRecheckInfoModal(false);runAIRecheckRules();}}>🤖 Run AI Check</Btn>
             </div>
           </div>
         </div>
