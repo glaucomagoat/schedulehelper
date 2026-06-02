@@ -2922,10 +2922,12 @@ window.ScheduleHelper = function StaffScheduler() {
       // Parse JSON response — try progressively more lenient approaches
       const clean = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
       let parsed = null;
+      let parseError = null;
       let truncated = false;
       try {
         parsed = JSON.parse(clean);
       } catch(e) {
+        parseError = e.message;
         // Try the outermost {...} block (handles leading/trailing prose)
         const m = clean.match(/\{[\s\S]*\}/);
         if (m) { try { parsed = JSON.parse(m[0]); } catch(e2) { parsed = null; } }
@@ -2935,9 +2937,9 @@ window.ScheduleHelper = function StaffScheduler() {
       if (parsed && Array.isArray(parsed.violations)) {
         violations = parsed.violations;
       } else {
-        // Salvage path: the response was likely truncated at the token limit.
-        // Each violation is a flat object with no nested braces, so extract every
-        // complete {...} block and parse them individually — the truncated tail is skipped.
+        // Salvage path: extract every complete flat {...} violation object and parse
+        // them individually. This recovers from BOTH a genuinely truncated response
+        // AND a complete-but-malformed one (e.g. an unescaped quote in one field).
         const objs = clean.match(/\{[^{}]*\}/g) || [];
         violations = [];
         for (const o of objs) {
@@ -2947,8 +2949,17 @@ window.ScheduleHelper = function StaffScheduler() {
           addLog('error', 'AI rule check: response was not valid JSON', { sample: clean.substring(0, 300) });
           throw new Error('AI returned an unreadable response. Please try again.');
         }
-        truncated = true;
-        addLog('warn', `AI response was truncated — salvaged ${violations.length} complete violation(s); some may be missing`);
+        // Distinguish a genuinely truncated response (cut off mid-output, no proper
+        // closing) from a complete-but-malformed one (ends properly, just a syntax
+        // error inside a field that salvage already recovered). Only the former is
+        // actually "incomplete".
+        const endsCleanly = /[}\]]\s*$/.test(clean);
+        truncated = !endsCleanly;
+        if (truncated) {
+          addLog('warn', `AI response was cut off — salvaged ${violations.length} complete violation(s); some may be missing`, { parseError });
+        } else {
+          addLog('info', `AI response had a minor formatting issue but was fully recovered (${violations.length} violation(s))`, { parseError });
+        }
       }
 
       // Safety net: drop confirmations and redundant pointer entries the AI may add
