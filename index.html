@@ -2854,8 +2854,9 @@ window.ScheduleHelper = function StaffScheduler() {
       `You are an expert scheduling rule checker for a multi-location ophthalmology/optometry practice.\n` +
       `Analyze the schedule against ALL rules — required, preferred, negative constraints, rotation, conditional, exception, and complex rules.\n` +
       `Also flag staff scheduled during vacation, medical leave, or holidays.\n\n` +
-      `ONLY report actual violations. Do NOT include entries for assignments that are correct or compliant. ` +
-      `Never output an entry whose message says "no violation", "correct", or "compliant". ` +
+      `ONLY report actual violations — cases where the assignment must CHANGE. ` +
+      `If "current" and "suggested" would be identical, it is NOT a violation: do not include it. ` +
+      `Do NOT include entries that are correct, compliant, or being skipped, and never output a message containing "correct", "no violation", "compliant", or "skipping". ` +
       `If everything is correct, return {"violations": []}.\n\n` +
       `Output format (JSON only):\n` +
       `{"violations": [\n` +
@@ -2966,8 +2967,15 @@ window.ScheduleHelper = function StaffScheduler() {
       // despite being told to report only genuine, de-duplicated violations.
       const beforeFilter = violations.length;
       violations = violations.filter(v => {
+        // Bulletproof: if the suggested assignment equals the current one, nothing
+        // needs to change — it is NOT a violation, regardless of what the message says.
+        const cur = (v.current || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const sug = (v.suggested || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (cur && sug && cur === sug) return false;
         const text = `${v.message || ''} ${v.reason || ''}`.toLowerCase();
+        // Confirmation phrasings (no violation / correct / skipping)
         if (text.includes('no violation') || text.includes('not a violation') || text.includes('compliant')) return false;
+        if (text.includes('actually correct') || text.includes('correct assignment') || text.includes('skipping') || text.includes('no change')) return false;
         // Redundant pointers like "already captured in summary above"
         if (text.includes('already captured') || text.includes('captured in') || text.includes('see above') || text.includes('noted above') || text.includes('summary above')) return false;
         return true;
@@ -3000,7 +3008,9 @@ window.ScheduleHelper = function StaffScheduler() {
         setAiLog('✅ AI found no rule violations.');
       } else {
         const conflicts = violations.map(v => {
-          const sv = staff.find(s => s.name === v.staffName);
+          // Fuzzy match — the AI's staffName may differ in case/suffix from the record,
+          // so an exact === match would fail and silently drop the Fix button.
+          const sv = findStaffFuzzy(v.staffName).match || staff.find(s => s.name === v.staffName);
           let fix = null;
           if ((v.type === 'vacation' || v.type === 'medical_leave') && sv) {
             // Multi-day fix: set OFF on every day in the current schedule where this
