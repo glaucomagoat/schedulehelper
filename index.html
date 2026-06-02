@@ -2863,18 +2863,20 @@ window.ScheduleHelper = function StaffScheduler() {
       `    "date": "YYYY-MM-DD",\n` +
       `    "staffName": "Full name exactly as listed",\n` +
       `    "type": "rule_violation|preferred_violation|rotation_violation|negative_constraint|vacation|medical_leave",\n` +
-      `    "message": "brief description",\n` +
+      `    "message": "≤10 words",\n` +
       `    "current": "AM: X, PM: Y",\n` +
       `    "suggested": "AM: Z, PM: Z",\n` +
-      `    "reason": "which rule was violated and why",\n` +
+      `    "reason": "≤12 words",\n` +
       `    "fixPeriod": "am|pm|both",\n` +
       `    "fixLocation": "location name exactly as listed"\n` +
       `  }\n` +
       `]}\n\n` +
       `If no violations found, respond with exactly: {"violations": []}\n\n` +
-      `IMPORTANT — keep the response compact:\n` +
-      `- For vacation or medical-leave conflicts spanning multiple days, report ONE violation per staff member summarizing the date range (e.g. "scheduled on 9 days during vacation 9/1–9/12"), NOT one per day. Omit fixPeriod/fixLocation for these.\n` +
-      `- Keep "reason" to one short sentence.\n` +
+      `IMPORTANT — keep the response SHORT so it completes quickly. Report each distinct problem EXACTLY ONCE, fully consolidated:\n` +
+      `- "message" ≤10 words, "reason" ≤12 words. Be terse. Do not restate the date or location names already in other fields.\n` +
+      `- For vacation or medical-leave conflicts spanning multiple days, output a SINGLE summary entry per staff member covering the whole date range — and NO per-day entries. Omit fixPeriod/fixLocation for these.\n` +
+      `- For a rotation conflict involving two doctors on the same day, output ONE entry (not one per doctor).\n` +
+      `- NEVER output placeholder or pointer entries such as "already captured above", "see summary", or "noted above". If a problem is already in another entry, simply do not repeat it.\n` +
       `- Report only genuine violations; do not pad the list.`;
 
     const userMsg =
@@ -2894,7 +2896,7 @@ window.ScheduleHelper = function StaffScheduler() {
       // wall-clock limit on large responses, surfacing as an HTTP 500.
       const result = await streamClaudeAPI({
         model: 'claude-sonnet-4-6',
-        max_tokens: 16384,
+        max_tokens: 8000, // bounds worst-case generation under the edge function's 120s limit; compact output finishes far sooner
         system: systemPrompt,
         messages: [{ role: 'user', content: userMsg }]
       }, chars => setAiLog(`⏳ AI checking rules... (${chars} chars received)`));
@@ -2949,15 +2951,36 @@ window.ScheduleHelper = function StaffScheduler() {
         addLog('warn', `AI response was truncated — salvaged ${violations.length} complete violation(s); some may be missing`);
       }
 
-      // Safety net: drop any "no violation" confirmations the AI may have included
-      // despite being told to report only genuine violations.
+      // Safety net: drop confirmations and redundant pointer entries the AI may add
+      // despite being told to report only genuine, de-duplicated violations.
       const beforeFilter = violations.length;
       violations = violations.filter(v => {
         const text = `${v.message || ''} ${v.reason || ''}`.toLowerCase();
-        return !text.includes('no violation') && !text.includes('not a violation') && !text.includes('compliant');
+        if (text.includes('no violation') || text.includes('not a violation') || text.includes('compliant')) return false;
+        // Redundant pointers like "already captured in summary above"
+        if (text.includes('already captured') || text.includes('captured in') || text.includes('see above') || text.includes('noted above') || text.includes('summary above')) return false;
+        return true;
       });
+
+      // Consolidate duplicate notifications about the same underlying problem.
+      const seenKeys = new Set();
+      violations = violations.filter(v => {
+        const name = (v.staffName || '').toLowerCase();
+        let key;
+        if (v.type === 'vacation' || v.type === 'medical_leave') {
+          key = `${v.type}:${name}`;                          // one entry per person per leave
+        } else if (v.type === 'rotation_violation') {
+          key = `rotation:${v.date || ''}`;                   // one entry per day's rotation conflict
+        } else {
+          key = `${v.type}:${v.date || ''}:${name}`;          // one per type/day/person
+        }
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+
       if (violations.length < beforeFilter) {
-        addLog('info', `Filtered out ${beforeFilter - violations.length} non-violation confirmation(s) from AI response`);
+        addLog('info', `Consolidated ${beforeFilter - violations.length} redundant/duplicate entr${beforeFilter - violations.length === 1 ? 'y' : 'ies'} from AI response`);
       }
 
       if (violations.length === 0) {
