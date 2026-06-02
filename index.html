@@ -2854,6 +2854,9 @@ window.ScheduleHelper = function StaffScheduler() {
       `You are an expert scheduling rule checker for a multi-location ophthalmology/optometry practice.\n` +
       `Analyze the schedule against ALL rules — required, preferred, negative constraints, rotation, conditional, exception, and complex rules.\n` +
       `Also flag staff scheduled during vacation, medical leave, or holidays.\n\n` +
+      `ONLY report actual violations. Do NOT include entries for assignments that are correct or compliant. ` +
+      `Never output an entry whose message says "no violation", "correct", or "compliant". ` +
+      `If everything is correct, return {"violations": []}.\n\n` +
       `Output format (JSON only):\n` +
       `{"violations": [\n` +
       `  {\n` +
@@ -2945,22 +2948,50 @@ window.ScheduleHelper = function StaffScheduler() {
         truncated = true;
         addLog('warn', `AI response was truncated — salvaged ${violations.length} complete violation(s); some may be missing`);
       }
+
+      // Safety net: drop any "no violation" confirmations the AI may have included
+      // despite being told to report only genuine violations.
+      const beforeFilter = violations.length;
+      violations = violations.filter(v => {
+        const text = `${v.message || ''} ${v.reason || ''}`.toLowerCase();
+        return !text.includes('no violation') && !text.includes('not a violation') && !text.includes('compliant');
+      });
+      if (violations.length < beforeFilter) {
+        addLog('info', `Filtered out ${beforeFilter - violations.length} non-violation confirmation(s) from AI response`);
+      }
+
       if (violations.length === 0) {
         setConflictsReport(null);
         addLog('success', 'AI rule check complete: no violations found');
         setAiLog('✅ AI found no rule violations.');
       } else {
         const conflicts = violations.map(v => {
+          const sv = staff.find(s => s.name === v.staffName);
           let fix = null;
-          if (v.fixLocation && v.fixPeriod) {
+          if ((v.type === 'vacation' || v.type === 'medical_leave') && sv) {
+            // Multi-day fix: set OFF on every day in the current schedule where this
+            // staff member is on leave/vacation and still scheduled. Computed in code,
+            // not from the AI, so it's always accurate across the full date range.
+            const dates = Object.keys(schedule).filter(dk => {
+              const onLeave = v.type === 'vacation' ? isOnVacation(sv.id, dk) : isOnMedicalLeave(sv.id, dk);
+              if (!onLeave) return false;
+              const p = schedule[dk][sv.id];
+              return p && (p.am !== 'OFF' || p.pm !== 'OFF');
+            });
+            if (dates.length > 0) fix = { staffId: sv.id, period: 'both', locationId: 'OFF', dates };
+          } else if (v.fixLocation && v.fixPeriod) {
             const loc = locations.find(l => l.name.toLowerCase() === v.fixLocation.toLowerCase());
-            const sv = staff.find(s => s.name === v.staffName);
             if (loc && sv) fix = { date: v.date, staffId: sv.id, period: v.fixPeriod, locationId: loc.id };
           }
           const dParts = (v.date || '').split('-').map(Number);
           const dayName = dParts.length === 3 && !dParts.some(isNaN) ? DAYS_OF_WEEK[new Date(dParts[0], dParts[1]-1, dParts[2]).getDay()] : '';
-          return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: staff.find(s => s.name === v.staffName)?.id || '',
-            type: v.type || 'rule_violation', message: v.message || '', current: v.current || '', suggested: v.suggested || '',
+          // Always lead the message with the staff member's name
+          let msg = v.message || '';
+          if (v.staffName && msg && !msg.toLowerCase().includes(getLastName(v.staffName).toLowerCase())) {
+            msg = `${v.staffName}: ${msg}`;
+          }
+          return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: sv?.id || '',
+            type: v.type || 'rule_violation', message: msg, current: v.current || '', suggested: v.suggested || '',
             reason: v.reason || '', fix };
         });
         setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
@@ -2975,21 +3006,23 @@ window.ScheduleHelper = function StaffScheduler() {
     setAiRecheckLoading(false);
   }
 
+  // Apply a single fix. Supports both single-date fixes ({date, ...}) and
+  // multi-day fixes ({dates: [...], ...}) used for vacation/medical-leave ranges.
   function applyConflictFix(fix) {
     setSchedules(prev => {
       pushScheduleHistory(prev);
-      const prevDay = prev[scheduleKey]?.[fix.date] || {};
-      const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
-      const newStaff = { ...prevStaff };
-      if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
-      else { newStaff[fix.period] = fix.locationId; }
-      return {
-        ...prev,
-        [scheduleKey]: {
-          ...(prev[scheduleKey] || {}),
-          [fix.date]: { ...prevDay, [fix.staffId]: newStaff }
-        }
-      };
+      const sched = { ...(prev[scheduleKey] || {}) };
+      const dates = (fix.dates && fix.dates.length) ? fix.dates : [fix.date];
+      for (const dk of dates) {
+        if (!dk) continue;
+        const prevDay = sched[dk] || {};
+        const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
+        const newStaff = { ...prevStaff };
+        if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
+        else { newStaff[fix.period] = fix.locationId; }
+        sched[dk] = { ...prevDay, [fix.staffId]: newStaff };
+      }
+      return { ...prev, [scheduleKey]: sched };
     });
   }
 
@@ -3000,12 +3033,16 @@ window.ScheduleHelper = function StaffScheduler() {
       const sched = { ...(prev[scheduleKey] || {}) };
       for (const fix of fixes) {
         if (!fix) continue;
-        const prevDay = sched[fix.date] || {};
-        const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
-        const newStaff = { ...prevStaff };
-        if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
-        else { newStaff[fix.period] = fix.locationId; }
-        sched[fix.date] = { ...prevDay, [fix.staffId]: newStaff };
+        const dates = (fix.dates && fix.dates.length) ? fix.dates : [fix.date];
+        for (const dk of dates) {
+          if (!dk) continue;
+          const prevDay = sched[dk] || {};
+          const prevStaff = prevDay[fix.staffId] || { am: 'OFF', pm: 'OFF' };
+          const newStaff = { ...prevStaff };
+          if (fix.period === 'both') { newStaff.am = fix.locationId; newStaff.pm = fix.locationId; }
+          else { newStaff[fix.period] = fix.locationId; }
+          sched[dk] = { ...prevDay, [fix.staffId]: newStaff };
+        }
       }
       return { ...prev, [scheduleKey]: sched };
     });
