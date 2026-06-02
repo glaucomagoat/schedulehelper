@@ -2644,7 +2644,7 @@ window.ScheduleHelper = function StaffScheduler() {
         // Vacation
         if (isOnVacation(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
-            conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'vacation',
+            conflicts.push({ date: dk, day: dayName, staff: s.name, staffId, type: 'vacation',
               message: `${getLastName(s.name)} is on vacation but scheduled`,
               current: `AM: ${resolveLoc(periods.am)}, PM: ${resolveLoc(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
@@ -2655,7 +2655,7 @@ window.ScheduleHelper = function StaffScheduler() {
         // Medical leave
         if (isOnMedicalLeave(staffId, dk)) {
           if (periods.am !== 'OFF' || periods.pm !== 'OFF') {
-            conflicts.push({ date: dk, day: dayName, staff: s.name, type: 'medical_leave',
+            conflicts.push({ date: dk, day: dayName, staff: s.name, staffId, type: 'medical_leave',
               message: `${getLastName(s.name)} is on medical leave but scheduled`,
               current: `AM: ${resolveLoc(periods.am)}, PM: ${resolveLoc(periods.pm)}`, suggested: 'OFF for both AM and PM',
               fix: { date: dk, staffId, period: 'both', locationId: 'OFF' } });
@@ -2821,9 +2821,64 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function runAIRecheckRules() {
     setAiRecheckLoading(true);
-    setAiLog('⏳ AI is reviewing your schedule against all rules — this may take 10–20 seconds...');
 
     const schedule = getSchedule();
+
+    // ── 1) Deterministic checks — these never hallucinate: required, preferred,
+    //        negative constraints, rotation, vacation, medical leave, holidays. ──
+    const codeConflicts = detectRuleConflicts(schedule);
+
+    // ── 2) Only conditional / exception / complex free-text rules need the AI. ──
+    const flexRules = rules.filter(r => ['conditional','exception','complex'].includes(r.ruleType || ''));
+
+    // Merge code + AI conflicts, consolidate multi-day leave into one entry each, dedupe, set report.
+    const finalizeRecheck = (aiConflicts, truncated) => {
+      const merged = [...codeConflicts, ...aiConflicts];
+      const leaveMap = {};
+      const others = [];
+      for (const c of merged) {
+        const sid = c.staffId || c.fix?.staffId;
+        if ((c.type === 'vacation' || c.type === 'medical_leave') && sid) {
+          const k = `${c.type}:${sid}`;
+          if (!leaveMap[k]) leaveMap[k] = { ...c, staffId: sid };
+        } else {
+          others.push(c);
+        }
+      }
+      const leaveConflicts = Object.values(leaveMap).map(c => {
+        const dates = Object.keys(schedule).filter(dk =>
+          c.type === 'vacation' ? isOnVacation(c.staffId, dk) : isOnMedicalLeave(c.staffId, dk));
+        const fix = dates.length > 0 ? { staffId: c.staffId, period: 'both', locationId: 'OFF', dates } : null;
+        const label = c.type === 'vacation' ? 'vacation' : 'medical leave';
+        return { ...c, message: `${c.staff}: scheduled during ${label}`, current: `${dates.length} scheduled day${dates.length!==1?'s':''}`, suggested: 'OFF for all those days', fix };
+      });
+      const seen = new Set();
+      const othersDeduped = others.filter(c => {
+        const name = (c.staff || '').toLowerCase();
+        const key = c.type === 'rotation_violation' ? `rotation:${c.date||''}` : `${c.type}:${c.date||''}:${name}`;
+        if (seen.has(key)) return false; seen.add(key); return true;
+      });
+      const all = [...othersDeduped, ...leaveConflicts];
+      if (all.length === 0) {
+        setConflictsReport(null);
+        addLog('success', 'Rule check complete: no violations found');
+        setAiLog('✅ No rule violations found.');
+      } else {
+        setConflictsReport({ conflicts: all, month: currentMonth, year: currentYear, scheduleKey });
+        addLog('success', `Rule check complete: ${all.length} issue${all.length!==1?'s':''} found`);
+        setAiLog(`⚠️ Found ${all.length} issue${all.length!==1?'s':''}.${truncated ? ' (AI portion may be incomplete — re-run after fixing some.)' : ''}`);
+      }
+      setAiRecheckLoading(false);
+    };
+
+    // No free-text rules → deterministic results are complete; skip the AI entirely.
+    if (flexRules.length === 0) {
+      addLog('info', `Rule check: ${codeConflicts.length} deterministic finding(s); no conditional/exception/complex rules to AI-check`);
+      finalizeRecheck([], false);
+      return;
+    }
+
+    setAiLog('⏳ AI is reviewing conditional/exception/complex rules — this may take 10–20 seconds...');
 
     // Format schedule as readable text (location names, not IDs)
     const scheduleLines = Object.keys(schedule).sort().map(dk => {
@@ -2841,60 +2896,39 @@ window.ScheduleHelper = function StaffScheduler() {
       return `${dk} (${DAYS_OF_WEEK[dt.getDay()]}, W${wk}):\n${entries}`;
     }).filter(Boolean).join('\n');
 
-    const rulesSummary = buildRulesSummary();
     const prevMonthContext = getPreviousMonthContext();
-    const vacLines = vacations.length > 0
-      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return `- ${sv?.name||'?'}: ${v.startDate} to ${v.endDate}`; }).join('\n') : 'None.';
-    const mlLines = medicalLeaves.length > 0
-      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return `- ${sv?.name||'?'}: ${ml.startDate} to ${ml.endDate}${ml.reason?' ('+ml.reason+')':''}`; }).join('\n') : 'None.';
-    const holLines = (()=>{ const hols = []; holidays.forEach(h => { const dt = getHolidayDate(h, currentYear); if (!dt || dt.getMonth() !== currentMonth) return; hols.push(`- ${dateKey(dt.getFullYear(),dt.getMonth(),dt.getDate())}: ${h.name} (${h.halfDay==='am'?'AM only':'CLOSED'})`); }); return hols.length > 0 ? hols.join('\n') : 'None.'; })();
+    // Focused list of ONLY the free-text rules the AI must evaluate.
+    const flexRulesText = flexRules.map(r => {
+      const who = r.ruleScope === 'location'
+        ? ('Location ' + (locations.find(l => l.id === r.locationId)?.name || '?'))
+        : (staff.find(s => s.id === r.staffId)?.name || '?');
+      const t = r.conditionText || r.exceptionText || r.description || '(no text)';
+      return `- [${r.ruleType}] ${who} — ${r.dayOfWeek} ${formatWeekOfMonth(r.weekOfMonth)} (${r.priority}): ${t}`;
+    }).join('\n');
 
     const systemPrompt =
       `CRITICAL OUTPUT RULE: Your ENTIRE response must be a single valid JSON object. ` +
-      `Start your response with { and end with }. No text before or after. No markdown. No backticks. No explanation.\n\n` +
-      `You are an expert scheduling rule checker for a multi-location ophthalmology/optometry practice.\n` +
-      `Analyze the schedule against ALL rules — required, preferred, negative constraints, rotation, conditional, exception, and complex rules.\n` +
-      `Also flag staff scheduled during vacation, medical leave, or holidays.\n\n` +
-      `WEEK-OF-MONTH: Every scheduled day is tagged with its week (W1–W4) using a fixed calendar-bucket convention: days 1–7 = W1, 8–14 = W2, 15–21 = W3, 22 and later = W4. ` +
-      `A rule's "week of month" (e.g. "2nd, 3rd Thursdays") refers to these W-tags, NOT to a manual count of how many times that weekday has occurred. ` +
-      `ALWAYS trust the W-tag printed on each day; never recompute or count weekday occurrences yourself. ` +
-      `Example: a Thursday tagged W1 does NOT satisfy a "2nd/3rd Thursday" (W2/W3) rule.\n\n` +
-      `ONLY report actual violations — cases where the assignment must CHANGE. ` +
-      `If "current" and "suggested" would be identical, it is NOT a violation: do not include it. ` +
-      `Do NOT include entries that are correct, compliant, or being skipped, and never output a message containing "correct", "no violation", "compliant", or "skipping". ` +
-      `If everything is correct, return {"violations": []}.\n\n` +
-      `Output format (JSON only):\n` +
+      `Start with { and end with }. No text before or after, no markdown, no backticks.\n\n` +
+      `You are a scheduling rule checker. You evaluate ONLY the CONDITIONAL (IF/THEN), EXCEPTION, and COMPLEX free-text rules listed in the user message. ` +
+      `Required, preferred, negative-constraint, rotation, vacation, medical-leave, and holiday checks are ALREADY handled by the system — do NOT report any of those; report ONLY free-text-rule violations.\n\n` +
+      `WEEK-OF-MONTH: each day is tagged W1–W4 (days 1–7=W1, 8–14=W2, 15–21=W3, 22+=W4). Trust the tag; never recount weekday occurrences.\n\n` +
+      `Report a violation ONLY when a free-text rule's condition is clearly met AND the schedule clearly contradicts what the rule requires. ` +
+      `If a rule's condition is ambiguous or cannot be verified from the data, do NOT report it. ` +
+      `If "current" and "suggested" would be identical, it is NOT a violation. ` +
+      `Never output an entry containing "correct", "no violation", "compliant", or "skipping".\n\n` +
+      `Output (JSON only):\n` +
       `{"violations": [\n` +
-      `  {\n` +
-      `    "date": "YYYY-MM-DD",\n` +
-      `    "staffName": "Full name exactly as listed",\n` +
-      `    "type": "rule_violation|preferred_violation|rotation_violation|negative_constraint|vacation|medical_leave",\n` +
-      `    "message": "≤10 words",\n` +
-      `    "current": "AM: X, PM: Y",\n` +
-      `    "suggested": "AM: Z, PM: Z",\n` +
-      `    "reason": "≤12 words",\n` +
-      `    "fixPeriod": "am|pm|both",\n` +
-      `    "fixLocation": "location name exactly as listed"\n` +
-      `  }\n` +
-      `]}\n\n` +
-      `If no violations found, respond with exactly: {"violations": []}\n\n` +
-      `IMPORTANT — keep the response SHORT so it completes quickly. Report each distinct problem EXACTLY ONCE, fully consolidated:\n` +
-      `- "message" ≤10 words, "reason" ≤12 words. Be terse. Do not restate the date or location names already in other fields.\n` +
-      `- For vacation or medical-leave conflicts spanning multiple days, output a SINGLE summary entry per staff member covering the whole date range — and NO per-day entries. Omit fixPeriod/fixLocation for these.\n` +
-      `- For a rotation conflict involving two doctors on the same day, output ONE entry (not one per doctor).\n` +
-      `- NEVER output placeholder or pointer entries such as "already captured above", "see summary", or "noted above". If a problem is already in another entry, simply do not repeat it.\n` +
-      `- Report only genuine violations; do not pad the list.`;
+      `  { "date": "YYYY-MM-DD", "staffName": "exact name", "type": "conditional_violation", "message": "≤10 words", "current": "AM: X, PM: Y", "suggested": "AM: Z, PM: Z", "reason": "≤12 words", "fixPeriod": "am|pm|both", "fixLocation": "exact location name" }\n` +
+      `]}\n` +
+      `If no free-text-rule violations, respond with exactly {"violations": []}.`;
 
     const userMsg =
-      `SCHEDULE TO CHECK (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
-      `SCHEDULING RULES:\n${rulesSummary}\n\n` +
+      `FREE-TEXT RULES TO EVALUATE (evaluate ONLY these):\n${flexRulesText}\n\n` +
+      `SCHEDULE (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
       `${prevMonthContext}\n\n` +
-      `VACATIONS:\n${vacLines}\n\n` +
-      `MEDICAL LEAVE:\n${mlLines}\n\n` +
-      `HOLIDAYS THIS MONTH:\n${holLines}\n\n` +
-      `Remember: respond with ONLY the JSON object {"violations": [...]}. No other text.`;
+      `Respond with ONLY the JSON object {"violations": [...]}. No other text.`;
 
-    addLog('request', `AI rule check: ${scheduleLines.split('\n').length} schedule lines | system ${systemPrompt.length} chars | user ${userMsg.length} chars`);
+    addLog('request', `AI free-text rule check: ${flexRules.length} rule(s) | system ${systemPrompt.length} chars | user ${userMsg.length} chars`);
 
     try {
       // Use STREAMING — edge functions are built to stream. A non-streaming call
@@ -2911,17 +2945,15 @@ window.ScheduleHelper = function StaffScheduler() {
 
       if (!result.ok) {
         const detail = (result.errorText || '').substring(0, 500);
-        addLog('error', `AI rule check failed: HTTP ${result.status}`, { errorText: detail });
-        setAiLog(`⚠️ AI check failed (HTTP ${result.status}). See activity logs below for details.`);
-        setAiRecheckLoading(false);
+        addLog('error', `AI free-text check failed: HTTP ${result.status} — showing deterministic results`, { errorText: detail });
+        finalizeRecheck([], false);
         return;
       }
 
       const rawText = result.text || '';
       if (!rawText.trim()) {
-        addLog('error', 'AI rule check returned an empty response');
-        setAiLog('⚠️ AI returned an empty response. Please try again.');
-        setAiRecheckLoading(false);
+        addLog('warn', 'AI free-text check returned empty — showing deterministic results only');
+        finalizeRecheck([], false);
         return;
       }
 
@@ -2952,8 +2984,9 @@ window.ScheduleHelper = function StaffScheduler() {
           try { const v = JSON.parse(o); if (v && (v.date || v.staffName)) violations.push(v); } catch(e) {}
         }
         if (violations.length === 0) {
-          addLog('error', 'AI rule check: response was not valid JSON', { sample: clean.substring(0, 300) });
-          throw new Error('AI returned an unreadable response. Please try again.');
+          addLog('warn', 'AI free-text response unreadable — showing deterministic results only', { sample: clean.substring(0, 300) });
+          finalizeRecheck([], false);
+          return;
         }
         // Distinguish a genuinely truncated response (cut off mid-output, no proper
         // closing) from a complete-but-malformed one (ends properly, just a syntax
@@ -2968,94 +3001,42 @@ window.ScheduleHelper = function StaffScheduler() {
         }
       }
 
-      // Safety net: drop confirmations and redundant pointer entries the AI may add
-      // despite being told to report only genuine, de-duplicated violations.
-      const beforeFilter = violations.length;
+      // Drop confirmations / no-change entries the AI may slip in.
       violations = violations.filter(v => {
-        // Bulletproof: if the suggested assignment equals the current one, nothing
-        // needs to change — it is NOT a violation, regardless of what the message says.
         const cur = (v.current || '').replace(/\s+/g, ' ').trim().toLowerCase();
         const sug = (v.suggested || '').replace(/\s+/g, ' ').trim().toLowerCase();
         if (cur && sug && cur === sug) return false;
         const text = `${v.message || ''} ${v.reason || ''}`.toLowerCase();
-        // Confirmation phrasings (no violation / correct / skipping)
         if (text.includes('no violation') || text.includes('not a violation') || text.includes('compliant')) return false;
         if (text.includes('actually correct') || text.includes('correct assignment') || text.includes('skipping') || text.includes('no change')) return false;
-        // Redundant pointers like "already captured in summary above"
-        if (text.includes('already captured') || text.includes('captured in') || text.includes('see above') || text.includes('noted above') || text.includes('summary above')) return false;
+        if (text.includes('already captured') || text.includes('see above') || text.includes('noted above')) return false;
         return true;
       });
 
-      // Consolidate duplicate notifications about the same underlying problem.
-      const seenKeys = new Set();
-      violations = violations.filter(v => {
-        const name = (v.staffName || '').toLowerCase();
-        let key;
-        if (v.type === 'vacation' || v.type === 'medical_leave') {
-          key = `${v.type}:${name}`;                          // one entry per person per leave
-        } else if (v.type === 'rotation_violation') {
-          key = `rotation:${v.date || ''}`;                   // one entry per day's rotation conflict
-        } else {
-          key = `${v.type}:${v.date || ''}:${name}`;          // one per type/day/person
+      // Map AI free-text-rule violations to conflict objects (type conditional_violation).
+      const aiConflicts = violations.map(v => {
+        const sv = findStaffFuzzy(v.staffName).match
+          || staff.find(s => s.name === v.staffName)
+          || staff.find(s => v.staffName && getLastName(s.name).toLowerCase() === getLastName(v.staffName).toLowerCase());
+        let fix = null;
+        if (v.fixLocation && v.fixPeriod && sv) {
+          const loc = locations.find(l => l.name.toLowerCase() === (v.fixLocation || '').toLowerCase());
+          if (loc) fix = { date: v.date, staffId: sv.id, period: v.fixPeriod, locationId: loc.id };
         }
-        if (seenKeys.has(key)) return false;
-        seenKeys.add(key);
-        return true;
+        const dParts = (v.date || '').split('-').map(Number);
+        const dayName = dParts.length === 3 && !dParts.some(isNaN) ? DAYS_OF_WEEK[new Date(dParts[0], dParts[1]-1, dParts[2]).getDay()] : '';
+        let msg = v.message || '';
+        if (v.staffName && msg && !msg.toLowerCase().includes(getLastName(v.staffName).toLowerCase())) msg = `${v.staffName}: ${msg}`;
+        return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: sv?.id || '',
+          type: 'conditional_violation', message: msg, current: v.current || '', suggested: v.suggested || '',
+          reason: v.reason || '', fix };
       });
 
-      if (violations.length < beforeFilter) {
-        addLog('info', `Consolidated ${beforeFilter - violations.length} redundant/duplicate entr${beforeFilter - violations.length === 1 ? 'y' : 'ies'} from AI response`);
-      }
-
-      if (violations.length === 0) {
-        setConflictsReport(null);
-        addLog('success', 'AI rule check complete: no violations found');
-        setAiLog('✅ AI found no rule violations.');
-      } else {
-        const conflicts = violations.map(v => {
-          // Resolve staff: fuzzy match, then exact, then last-name fallback — the AI's
-          // staffName may differ in case/suffix/prefix from the record.
-          const sv = findStaffFuzzy(v.staffName).match
-            || staff.find(s => s.name === v.staffName)
-            || staff.find(s => v.staffName && getLastName(s.name).toLowerCase() === getLastName(v.staffName).toLowerCase());
-          let fix = null;
-          if (v.type === 'vacation' || v.type === 'medical_leave') {
-            if (sv) {
-              // Multi-day fix: clear OFF on every scheduled day overlapping the leave/vacation
-              // range. No dependence on the current per-day assignment (which may be absent or
-              // already OFF) — setting OFF is idempotent, so the fix is always safe and available.
-              const dates = Object.keys(schedule).filter(dk =>
-                v.type === 'vacation' ? isOnVacation(sv.id, dk) : isOnMedicalLeave(sv.id, dk));
-              if (dates.length > 0) fix = { staffId: sv.id, period: 'both', locationId: 'OFF', dates };
-              else addLog('warn', `Recheck: ${v.staffName} ${v.type} overlaps no scheduled days — no fix built`);
-            } else {
-              addLog('warn', `Recheck: could not match staff "${v.staffName}" for ${v.type} — no fix built`);
-            }
-          } else if (v.fixLocation && v.fixPeriod) {
-            const loc = locations.find(l => l.name.toLowerCase() === v.fixLocation.toLowerCase());
-            if (loc && sv) fix = { date: v.date, staffId: sv.id, period: v.fixPeriod, locationId: loc.id };
-          }
-          const dParts = (v.date || '').split('-').map(Number);
-          const dayName = dParts.length === 3 && !dParts.some(isNaN) ? DAYS_OF_WEEK[new Date(dParts[0], dParts[1]-1, dParts[2]).getDay()] : '';
-          // Always lead the message with the staff member's name
-          let msg = v.message || '';
-          if (v.staffName && msg && !msg.toLowerCase().includes(getLastName(v.staffName).toLowerCase())) {
-            msg = `${v.staffName}: ${msg}`;
-          }
-          return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: sv?.id || '',
-            type: v.type || 'rule_violation', message: msg, current: v.current || '', suggested: v.suggested || '',
-            reason: v.reason || '', fix };
-        });
-        setConflictsReport({ conflicts, month: currentMonth, year: currentYear, scheduleKey });
-        addLog('success', `AI rule check complete: ${conflicts.length} issue${conflicts.length!==1?'s':''} found`);
-        setAiLog(`⚠️ AI found ${conflicts.length} issue${conflicts.length!==1?'s':''}.${truncated ? ' (Response was long and may be incomplete — re-run after fixing some.)' : ''}`);
-      }
+      finalizeRecheck(aiConflicts, truncated);
     } catch(err) {
-      addLog('error', `AI rule check error: ${err.message}`);
-      setAiLog(`⚠️ AI check failed: ${err.message}`);
+      addLog('error', `AI free-text check error: ${err.message} — showing deterministic results`);
+      finalizeRecheck([], false);
     }
-
-    setAiRecheckLoading(false);
   }
 
   // Apply a single fix. Supports both single-date fixes ({date, ...}) and
@@ -4388,19 +4369,21 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
               {/* Conflicts Report */}
               {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (()=>{
-                const hardCount = conflictsReport.conflicts.filter(c => ['rule_violation','rotation_violation','vacation','medical_leave','negative_constraint'].includes(c.type)).length;
                 const prefCount = conflictsReport.conflicts.filter(c => c.type === 'preferred_violation').length;
+                const hardCount = conflictsReport.conflicts.length - prefCount; // everything that isn't a preferred-rule deviation
                 const headerLabel = [hardCount > 0 && `${hardCount} conflict${hardCount!==1?'s':''}`, prefCount > 0 && `${prefCount} preferred rule${prefCount!==1?'s':''} unmet`].filter(Boolean).join(' · ');
                 const msgColor = c => {
                   if (c.type === 'preferred_violation') return theme==='light'?'#3730a3':'#818cf8';
                   if (c.type === 'negative_constraint') return theme==='light'?'#92400e':'#fbbf24';
                   if (c.type === 'rotation_violation') return theme==='light'?'#991b1b':'#fca5a5';
+                  if (c.type === 'conditional_violation') return theme==='light'?'#6b21a8':'#c4b5fd';
                   return theme==='light'?'#92400e':'#fbbf24';
                 };
                 const typeBadge = c => {
                   if (c.type === 'preferred_violation') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#6366f122',color:'#818cf8',marginLeft:6}}>preferred</span>;
                   if (c.type === 'negative_constraint') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#f59e0b22',color:'#d97706',marginLeft:6}}>negative</span>;
                   if (c.type === 'rotation_violation') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#ef444422',color:'#f87171',marginLeft:6}}>rotation</span>;
+                  if (c.type === 'conditional_violation') return <span style={{fontSize:10,fontWeight:700,padding:'1px 5px',borderRadius:4,background:'#8b5cf622',color:'#a78bfa',marginLeft:6}}>conditional</span>;
                   return null;
                 };
                 return (
@@ -5805,24 +5788,29 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setShowRecheckInfoModal(false)}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:28,maxWidth:480,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
-            <div style={{fontSize:20,marginBottom:10}}>🤖</div>
-            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>AI Rule Check</div>
+            <div style={{fontSize:20,marginBottom:10}}>🔍</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Recheck Rules</div>
             <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
-              The AI will review your full schedule against <b style={{color:'var(--text-primary)'}}>every rule</b> — including conditional, exception, and complex free-text rules that can't be evaluated automatically.
+              Your schedule is checked against <b style={{color:'var(--text-primary)'}}>every rule</b>. Most checks run instantly and exactly in code; the AI is used only for the free-text rules code can't evaluate.
             </div>
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#10b981',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>✅ What the AI checks</div>
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#10b981',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>⚙️ Checked exactly (in code)</div>
               <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
                 <li>Required &amp; preferred rule violations</li>
-                <li>Conditional, exception, and complex (free-text) rules</li>
                 <li>Negative constraints (e.g. max 2 Stockton Thursdays)</li>
                 <li>Rotation assignments vs. previous month's Final plan</li>
                 <li>Vacation, medical leave, and holiday conflicts</li>
               </ul>
             </div>
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#a78bfa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>🤖 Checked by AI</div>
+              <ul style={{fontSize:13,color:'var(--text-secondary)',margin:0,paddingLeft:18,lineHeight:1.8}}>
+                <li>Conditional (IF/THEN), exception, and complex free-text rules</li>
+              </ul>
+            </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <Btn variant="ghost" onClick={()=>setShowRecheckInfoModal(false)}>Cancel</Btn>
-              <Btn variant="primary" onClick={()=>{setShowRecheckInfoModal(false);runAIRecheckRules();}}>🤖 Run AI Check</Btn>
+              <Btn variant="primary" onClick={()=>{setShowRecheckInfoModal(false);runAIRecheckRules();}}>🔍 Run Check</Btn>
             </div>
           </div>
         </div>
