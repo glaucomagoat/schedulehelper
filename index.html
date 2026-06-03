@@ -2931,10 +2931,19 @@ window.ScheduleHelper = function StaffScheduler() {
       `]}\n` +
       `If no free-text-rule violations, respond with exactly {"violations": []}.`;
 
+    const unavailLines = (() => {
+      const out = [];
+      vacations.forEach(v => { const sv = staff.find(x => x.id === v.staffId); out.push(`- ${sv?.name||'?'}: VACATION ${v.startDate} to ${v.endDate}`); });
+      medicalLeaves.forEach(ml => { const sv = staff.find(x => x.id === ml.staffId); out.push(`- ${sv?.name||'?'}: MEDICAL LEAVE ${ml.startDate} to ${ml.endDate}`); });
+      holidays.forEach(h => { const dt = getHolidayDate(h, currentYear); if (!dt || dt.getMonth() !== currentMonth) return; out.push(`- ${dateKey(dt.getFullYear(),dt.getMonth(),dt.getDate())}: HOLIDAY ${h.name} (${h.halfDay==='am'?'AM only':'closed'})`); });
+      return out.length ? out.join('\n') : 'None.';
+    })();
+
     const userMsg =
       `FREE-TEXT RULES TO EVALUATE (evaluate ONLY these):\n${flexRulesText}\n\n` +
       `SCHEDULE (${MONTHS[currentMonth]} ${currentYear}):\n${scheduleLines}\n\n` +
       `${prevMonthContext}\n\n` +
+      `STAFF UNAVAILABLE (do NOT flag these as needing clinic — being OFF on these dates is correct):\n${unavailLines}\n\n` +
       `Respond with ONLY the JSON object {"violations": [...]}. No other text.`;
 
     addLog('request', `AI free-text rule check: ${flexRules.length} rule(s) | system ${systemPrompt.length} chars | user ${userMsg.length} chars`);
@@ -3039,6 +3048,15 @@ window.ScheduleHelper = function StaffScheduler() {
         return { date: v.date || '', day: dayName, staff: v.staffName || '', staffId: sv?.id || '',
           type: 'conditional_violation', message: msg, current: v.current || '', suggested: v.suggested || '',
           reason: v.reason || '', fix };
+      }).filter(c => {
+        // Bulletproof: a staff member who is on vacation, medical leave, or a full-day
+        // holiday is correctly OFF — never report an AI "should be in clinic" conflict then.
+        if (!c.date || !c.staffId) return true;
+        if (isOnVacation(c.staffId, c.date) || isOnMedicalLeave(c.staffId, c.date)) return false;
+        const dp = c.date.split('-').map(Number);
+        const hol = getHolidayForDate(dp[0], dp[1] - 1, dp[2]);
+        if (hol && hol.halfDay !== 'am') return false;
+        return true;
       });
 
       finalizeRecheck(aiConflicts, truncated);
@@ -4377,7 +4395,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               )}
 
               {/* Conflicts Report */}
-              {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (()=>{
+              {conflictsReport && conflictsReport.conflicts.length > 0 && !generating && (!conflictsReport.scheduleKey || conflictsReport.scheduleKey === scheduleKey) && (()=>{
                 const prefCount = conflictsReport.conflicts.filter(c => c.type === 'preferred_violation').length;
                 const hardCount = conflictsReport.conflicts.length - prefCount; // everything that isn't a preferred-rule deviation
                 const headerLabel = [hardCount > 0 && `${hardCount} conflict${hardCount!==1?'s':''}`, prefCount > 0 && `${prefCount} preferred rule${prefCount!==1?'s':''} unmet`].filter(Boolean).join(' · ');
