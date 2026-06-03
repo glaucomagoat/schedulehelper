@@ -1711,6 +1711,10 @@ window.ScheduleHelper = function StaffScheduler() {
     setShowStaffModal(false);
   }
   function removeStaff(id) { if (!confirm('Remove this staff member and all their rules, vacations, and medical leaves?')) return; setStaff(p=>p.filter(s=>s.id!==id)); setRules(p=>p.filter(r=>r.staffId!==id)); setVacations(p=>p.filter(v=>v.staffId!==id)); setMedicalLeaves(p=>p.filter(ml=>ml.staffId!==id)); }
+  // A doctor is active unless active === false (default active for backward compatibility).
+  // Toggling persists automatically via the saveData('staff', ...) effect.
+  const isStaffActive = (s) => s.active !== false;
+  function toggleStaffActive(id) { setStaff(prev => prev.map(s => s.id === id ? { ...s, active: s.active === false } : s)); }
   function addLocation() {
     if (!locationForm.name) return;
     if (editingLocation) { setLocations(prev => prev.map(l => l.id === editingLocation.id ? { ...l, ...locationForm } : l)); setEditingLocation(null); }
@@ -2032,6 +2036,9 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function generateWithAI(userDecisions) {
     if (!Array.isArray(staff) || staff.length === 0 || !Array.isArray(locations) || locations.length === 0) { alert('Please add staff members and locations first.'); return; }
+    // Only active doctors are scheduled. Inactive ones are excluded entirely.
+    const genStaff = staff.filter(isStaffActive);
+    if (genStaff.length === 0) { alert('All doctors are marked Inactive. Activate at least one doctor before generating.'); return; }
     setGenerating(true);
     setRegenDiffSummary(null);
     setGenAmbiguities(null);
@@ -2068,7 +2075,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
     // ── SYSTEM PROMPT: stable context sent once, cached by Anthropic across all batches ──
     // Pre-compute all sub-sections to avoid nested backticks (Babel in-browser parser limitation)
-    const staffLines = staff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
+    const staffLines = genStaff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
     const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
     const vacationLines = vacations.length > 0
       ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
@@ -2356,6 +2363,8 @@ window.ScheduleHelper = function StaffScheduler() {
 
   async function generatePartialDays(selectedDayKeys) {
     if (!Array.isArray(selectedDayKeys) || selectedDayKeys.length === 0) return;
+    const genStaff = staff.filter(isStaffActive);
+    if (genStaff.length === 0) { alert('All doctors are marked Inactive. Activate at least one doctor before generating.'); return; }
     setGenerating(true);
     setRegenDiffSummary(null);
     addLog('info', `Starting selective day regeneration: ${selectedDayKeys.length} day${selectedDayKeys.length > 1 ? 's' : ''}...`);
@@ -2365,7 +2374,7 @@ window.ScheduleHelper = function StaffScheduler() {
     const prevMonthContext = getPreviousMonthContext();
     const rotationAssignments = computeRotationAssignments();
 
-    const staffLines = staff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
+    const staffLines = genStaff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
     const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
     const vacationLines = vacations.length > 0
       ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
@@ -4904,12 +4913,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const sml=medicalLeaves.filter(ml=>ml.staffId===s.id && (ml.startDate||'').startsWith(thisYr));
                   const isExpanded = expandedStaffMember === s.id;
                   return(
-                    <div key={s.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${s.color}`,overflow:'hidden'}}>
+                    <div key={s.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${isStaffActive(s)?s.color:'var(--border-default)'}`,overflow:'hidden',opacity:isStaffActive(s)?1:0.6}}>
                       <div style={{padding:'18px 24px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}
                         onClick={()=>setExpandedStaffMember(isExpanded?null:s.id)}>
                         <div style={{display:'flex',alignItems:'center',gap:16}}>
                           <div>
-                            <div style={{fontSize:17,fontWeight:700}}>{s.name}</div>
+                            <div style={{fontSize:17,fontWeight:700,display:'flex',alignItems:'center',gap:8}}>{s.name}{!isStaffActive(s)&&<span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:'var(--border-default)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Inactive</span>}</div>
                             <div style={{fontSize:13,color:'var(--text-muted)',marginTop:2}}>{s.role||'—'}</div>
                           </div>
                           <div style={{display:'flex',gap:8}}>
@@ -4919,6 +4928,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           </div>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          {isAdmin && <button onClick={e=>{e.stopPropagation();toggleStaffActive(s.id)}}
+                            style={{border:`1px solid ${isStaffActive(s)?'#10b981':'var(--border-interactive)'}`,background:isStaffActive(s)?'#10b98122':'var(--bg-surface)',color:isStaffActive(s)?'#10b981':'var(--text-muted)',borderRadius:20,padding:'4px 12px',cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'"DM Sans",sans-serif',whiteSpace:'nowrap'}}
+                            title={isStaffActive(s)?'Click to exclude from AI-generated schedules':'Click to include in AI-generated schedules'}>
+                            {isStaffActive(s)?'● Active':'○ Inactive'}
+                          </button>}
                           {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:15}}>✏️</span>}
                           {isAdmin && <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
                           <span style={{color:'var(--text-muted)',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
@@ -5819,7 +5833,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {pendingGenerate && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingGenerate(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:520,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             <div style={{fontSize:22,marginBottom:10}}>✨</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Generate Plan {activePlan}?</div>
             <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
@@ -5841,9 +5855,30 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 </div>
               )}
             </div>
+            {/* Active/inactive doctors — toggling here mirrors and saves to the Doctors tab */}
+            <div style={{marginBottom:20,border:'1px solid var(--border-default)',borderRadius:10,overflow:'hidden'}}>
+              <div style={{padding:'8px 14px',background:'var(--bg-surface)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:13,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Doctors to include</span>
+                <span style={{fontSize:12,color:'var(--text-muted)'}}>{staff.filter(isStaffActive).length} of {staff.length} active</span>
+              </div>
+              <div style={{maxHeight:200,overflowY:'auto'}}>
+                {staff.map(s => (
+                  <div key={s.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'8px 14px',borderTop:'1px solid var(--border-subtle)'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                      <span style={{width:10,height:10,borderRadius:'50%',background:isStaffActive(s)?s.color:'var(--border-default)',flexShrink:0}} />
+                      <span style={{fontSize:13,fontWeight:600,color:isStaffActive(s)?'var(--text-primary)':'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.name}</span>
+                    </div>
+                    <button onClick={()=>toggleStaffActive(s.id)}
+                      style={{border:`1px solid ${isStaffActive(s)?'#10b981':'var(--border-interactive)'}`,background:isStaffActive(s)?'#10b98122':'var(--bg-surface)',color:isStaffActive(s)?'#10b981':'var(--text-muted)',borderRadius:20,padding:'3px 12px',cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'"DM Sans",sans-serif',whiteSpace:'nowrap',flexShrink:0}}>
+                      {isStaffActive(s)?'● Active':'○ Inactive'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <Btn variant="ghost" onClick={()=>setPendingGenerate(false)}>Cancel</Btn>
-              <Btn variant="success" onClick={()=>{setPendingGenerate(false);generateWithAI();}}>✨ Generate Plan {activePlan}</Btn>
+              <Btn variant="success" disabled={staff.filter(isStaffActive).length === 0} onClick={()=>{setPendingGenerate(false);generateWithAI();}}>✨ Generate Plan {activePlan}</Btn>
             </div>
           </div>
         </div>
