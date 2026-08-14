@@ -22,6 +22,19 @@
 [functions."storage-proxy"]
   timeout = 10
 
+# Sending to the whole roster across two channels takes longer than the default.
+# The cron itself stays fast because it only decides and delegates.
+[functions."tech-notify"]
+  timeout = 26
+
+# Short link for the technician day view. The signed token already rides in ?t=,
+# so keeping the path short keeps the whole URL comfortably inside one SMS segment
+# if SMS is ever added as a channel.
+[[redirects]]
+  from = "/d"
+  to = "/.netlify/functions/tech-day"
+  status = 200
+
 # Route /.netlify/functions/claude-proxy to the Edge Function instead of
 # the serverless function. Edge Functions support true response streaming,
 # which is required for AI schedule generation to work without timeouts.

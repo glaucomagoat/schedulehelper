@@ -1,0 +1,2568 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Technician Scheduler</title>
+<link rel="icon" href="logo.png" type="image/png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{transition:background-color 0.2s,color 0.2s;}
+html,body{background:var(--bg-base);color:var(--text-primary);font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-text-size-adjust:100%}
+:root {
+  --bg-base: #0a0a1a;
+  --bg-deep: #0d0d18;
+  --bg-surface: #12121f;
+  --bg-elevated: #1a1a2e;
+  --bg-hover: #1a1a30;
+  --bg-active: #1e2035;
+  --border-subtle: #1e1e35;
+  --border-default: #2a2a4a;
+  --border-interactive: #2a2a4a;
+  --text-primary: #e8e8f0;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --text-dim: #4b5563;
+  --text-faint: #374151;
+  --input-bg: #0f0f1a;
+  --overlay-bg: rgba(13,13,26,0.93);
+  --cell-weekend: #0d0d18;
+  --cell-offmonth: #0e0e1a;
+}
+:root[data-theme="light"] {
+  --bg-base: #f0f0f8;
+  --bg-deep: #e8e8f5;
+  --bg-surface: #ffffff;
+  --bg-elevated: #eceeff;
+  --bg-hover: #ebebff;
+  --bg-active: #e2e2f8;
+  --border-subtle: #d8d8ee;
+  --border-default: #c0c0dc;
+  --border-interactive: #9090b8;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --text-faint: #8080a8;
+  --input-bg: #fafafe;
+  --overlay-bg: rgba(26,26,46,0.6);
+  --cell-weekend: #eeeefa;
+  --cell-offmonth: #e8e8f5;
+}
+#root{min-height:100vh}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
+@media(max-width:768px){
+  .mob-hide{display:none!important}
+  .mob-full{width:100%!important;min-width:0!important}
+  .mob-stack{flex-direction:column!important;align-items:stretch!important}
+  .mob-wrap{flex-wrap:wrap!important}
+  .mob-pad{padding:16px!important}
+  .mob-grid1{grid-template-columns:1fr!important}
+  .mob-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
+</style>
+<script>(function(){try{var s=localStorage.getItem('session');if(s){var u=JSON.parse(s);if(u&&u.username){var t=localStorage.getItem('theme:'+u.username)||'light';document.documentElement.setAttribute('data-theme',t);return;}}document.documentElement.setAttribute('data-theme','light');}catch(e){document.documentElement.setAttribute('data-theme','light');}})()</script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head><body><div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<!-- Renders Telegram invite links as scannable QR codes. Optional: if it fails to
+     load, the invite UI falls back to copy-the-link and says so. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+// Identical to the storage client in index.html. localStorage is shared across pages
+// on this origin, so an admin already signed in at index.html is authenticated here
+// with no second login. Kept byte-compatible so session handling can never diverge.
+window.storage=(function(){
+  var API='/.netlify/functions/storage-proxy';
+  function isExpired(token){
+    try{var p=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));return Date.now()>p.exp;}catch(e){return true;}
+  }
+  function handleSessionExpired(){
+    localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+    window.dispatchEvent(new Event('session-expired'));
+  }
+  async function call(body){
+    var token=localStorage.getItem('sessionToken')||'';
+    var publicActions=['login','register','dev-auth','forgot-password','reset-password'];
+    if(token&&!publicActions.includes(body.action)&&isExpired(token)){
+      handleSessionExpired();
+      throw new Error('SESSION_EXPIRED');
+    }
+    var r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-session-token':token},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(r.status===401&&!publicActions.includes(body.action)){
+      handleSessionExpired();
+      throw new Error('SESSION_EXPIRED');
+    }
+    if(!r.ok)throw new Error(d.error||'Storage error');
+    return d;
+  }
+  return{
+    async get(key){var d=await call({action:'get',key:key});return{key:d.key,value:d.value};},
+    async set(key,value){await call({action:'set',key:key,value:value});return{key:key,value:value};},
+    async delete(key){await call({action:'delete',key:key});return{key:key,deleted:true};},
+    async list(prefix){var d=await call({action:'list',prefix:prefix||''});return{keys:d.keys||[],prefix:prefix};},
+    async call(body){return call(body);}
+  };
+})();
+</script><script type="text/babel">
+const { useState, useEffect, useMemo, useRef } = React;
+
+const DAYS_OF_WEEK = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const DAY_NAMES_FULL = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Mirrors index.html:156-169. Techs are assigned to the same physical sites as doctors,
+// so this must stay in sync — the app prefers the admin's saved locations when present.
+const PRESET_LOCATIONS = [
+  { id: "l1", name: "Manteca", address: "" },
+  { id: "l2", name: "Stockton", address: "" },
+  { id: "l5", name: "Modesto", address: "" },
+  { id: "l6", name: "Turlock", address: "" },
+  { id: "l7", name: "VLSC", address: "Valley Laser Surgery Center" },
+  { id: "l8", name: "MSC", address: "Modesto Surgery Center" },
+  { id: "l9", name: "DHM", address: "Doctors Hospital Manteca" },
+  { id: "l10", name: "LVC", address: "LASIK Surgery" },
+  { id: "l11", name: "NCSC", address: "NorCal Surgery Center" },
+  { id: "l12", name: "SJLSC", address: "San Joaquin Laser and Surgery Center" },
+  { id: "l13", name: "Admin", address: "" },
+  { id: "l14", name: "VA", address: "Veterans Affairs" },
+];
+
+const LOCATION_COLORS = {
+  l1:  { bg: '#1a2332', border: '#2d6a9f', text: '#5ba3d9' },
+  l2:  { bg: '#1a2a22', border: '#2d8f5f', text: '#4ec990' },
+  l5:  { bg: '#2a1f2e', border: '#8f4fc0', text: '#b47de0' },
+  l6:  { bg: '#2a2518', border: '#9f8030', text: '#d4b04a' },
+  l7:  { bg: '#1f1520', border: '#c04070', text: '#e06090' },
+  l8:  { bg: '#201a18', border: '#b06030', text: '#d08050' },
+  l9:  { bg: '#18202a', border: '#4080c0', text: '#60a0e0' },
+  l10: { bg: '#1f1520', border: '#c04070', text: '#e06090' },
+  l11: { bg: '#1a2025', border: '#3090a0', text: '#50c0d0' },
+  l12: { bg: '#201a28', border: '#7050b0', text: '#9070d0' },
+  l13: { bg: '#1a1a20', border: '#606070', text: '#8888a0' },
+  l14: { bg: '#1a2520', border: '#308060', text: '#50b080' },
+  OFF: { bg: '#15151f', border: '#333340', text: '#555565' },
+};
+const LOCATION_COLORS_LIGHT = {
+  l1:  {bg:'#cce0ff', border:'#2d6a9f', text:'#1d4ed8'},
+  l2:  {bg:'#ddfff0', border:'#1a7a4a', text:'#16a34a'},
+  l5:  {bg:'#f0ddff', border:'#7a30a0', text:'#7c3aed'},
+  l6:  {bg:'#fffadd', border:'#9f8030', text:'#b45309'},
+  l7:  {bg:'#ffe8f0', border:'#c04070', text:'#be185d'},
+  l8:  {bg:'#fff0e8', border:'#b06030', text:'#c2410c'},
+  l9:  {bg:'#ddf0ff', border:'#3070c0', text:'#0369a1'},
+  l10: {bg:'#ffe8f0', border:'#c04070', text:'#be185d'},
+  l11: {bg:'#ddfaff', border:'#2090a0', text:'#0e7490'},
+  l12: {bg:'#eeddff', border:'#6050b0', text:'#6d28d9'},
+  l13: {bg:'#e2e2ec', border:'#606070', text:'#4b5563'},
+  l14: {bg:'#c8f5e0', border:'#208060', text:'#047857'},
+  OFF: {bg:'#e6e6f0', border:'#8888aa', text:'#44446a'},
+};
+
+// Mirrors index.html:313-324
+const PRESET_HOLIDAYS = [
+  { id: 'h1', name: "New Year's Day", type: 'fixed', month: 0, day: 1, halfDay: 'closed', note: '' },
+  { id: 'h1b', name: "New Year's Eve", type: 'fixed', month: 11, day: 31, halfDay: 'am', note: 'Office open AM only — closes at noon' },
+  { id: 'h2', name: 'Presidents Day', type: 'nth', month: 1, nth: 3, weekday: 1, halfDay: 'closed', note: '' },
+  { id: 'h3', name: 'Memorial Day', type: 'lastMon', month: 4, halfDay: 'closed', note: '' },
+  { id: 'h4', name: 'Independence Day', type: 'fixed', month: 6, day: 4, halfDay: 'closed', note: '' },
+  { id: 'h5', name: 'Labor Day', type: 'nth', month: 8, nth: 1, weekday: 1, halfDay: 'closed', note: '' },
+  { id: 'h6', name: 'Thanksgiving Day', type: 'nth', month: 10, nth: 4, weekday: 4, halfDay: 'closed', note: '' },
+  { id: 'h7', name: 'Day After Thanksgiving', type: 'nthPlus', month: 10, nth: 4, weekday: 4, plusDays: 1, halfDay: 'closed', note: '' },
+  { id: 'h8', name: 'Christmas Day', type: 'fixed', month: 11, day: 25, halfDay: 'closed', note: '' },
+  { id: 'h8b', name: 'Christmas Eve', type: 'fixed', month: 11, day: 24, halfDay: 'am', note: 'Office open AM only — closes at noon' },
+];
+
+const TECH_LEVELS = ['Tech', 'COA', 'COT', 'COMT', 'Scribe', 'Front Desk'];
+const TECH_SKILLS  = ['refraction','workup','VF','OCT','A-scan','photos','scribe','surgical','contact lens'];
+
+const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
+const DEFAULT_NOTIFY_SETTINGS = {
+  enabled: false,
+  timezone: 'America/Los_Angeles',
+  eveningHour: 18,
+  morningHour: 6,
+  // Telegram only by default. Email stays implemented and pluggable, but an
+  // unconfigured channel is filtered out server-side anyway, so listing it here would
+  // only clutter the UI with a channel that cannot fire.
+  defaultChannels: ['telegram'],
+  fanout: false,
+  changeAlertsEnabled: true,
+};
+
+// Render a Telegram invite as a QR code the coordinator can hold up for a tech to
+// scan. With no email channel this is the fastest way to onboard someone in person —
+// scan, tap once, done. Returns null if the CDN library did not load.
+function qrDataUri(text, px) {
+  try {
+    if (typeof qrcode !== 'function') return null;
+    const q = qrcode(0, 'M');            // type 0 = auto-size, M = 15% error correction
+    q.addData(String(text));
+    q.make();
+    const count = q.getModuleCount();
+    const cell = Math.max(2, Math.floor((px || 180) / (count + 8)));
+    const quiet = cell * 4;
+    const size = count * cell + quiet * 2;
+    let rects = '';
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (!q.isDark(r, c)) continue;
+        rects += '<rect x="' + (quiet + c * cell) + '" y="' + (quiet + r * cell) +
+                 '" width="' + cell + '" height="' + cell + '" fill="#000"/>';
+      }
+    }
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size +
+                '" viewBox="0 0 ' + size + ' ' + size + '">' +
+                '<rect width="' + size + '" height="' + size + '" fill="#fff"/>' + rects + '</svg>';
+    return 'data:image/svg+xml;base64,' + btoa(svg);
+  } catch(e) {
+    return null;
+  }
+}
+
+// ── Date helpers (dateKey format matches index.html:374-376 exactly) ──────────
+function dateKey(year, month0, day) {
+  return `${year}-${String(month0+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+function parseDateKey(dk) {
+  const [y,m,d] = dk.split('-').map(Number);
+  return { year: y, month0: m-1, day: d };
+}
+function dkToDate(dk) { const p = parseDateKey(dk); return new Date(p.year, p.month0, p.day); }
+function addDays(dk, n) {
+  const dt = dkToDate(dk); dt.setDate(dt.getDate()+n);
+  return dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+}
+function todayKeyIn(tz) {
+  // Wall-clock "today" in the practice's timezone, not the browser's.
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
+    return parts; // en-CA gives YYYY-MM-DD
+  } catch(e) {
+    const d = new Date(); return dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+}
+function isWeekendDk(dk) { const d = dkToDate(dk).getDay(); return d === 0 || d === 6; }
+function fmtDateLong(dk) {
+  const p = parseDateKey(dk); const dt = dkToDate(dk);
+  return `${DAY_NAMES_FULL[dt.getDay()]}, ${MONTHS[p.month0]} ${p.day}`;
+}
+function fmtDateShort(dk) {
+  const p = parseDateKey(dk); const dt = dkToDate(dk);
+  return `${DAYS_OF_WEEK[dt.getDay()]} ${p.month0+1}/${p.day}`;
+}
+function techScheduleKeyFor(dk) {
+  const p = parseDateKey(dk);
+  return `tech-${p.year}-${p.month0}`;
+}
+function getWeekOfMonth(day) { return Math.min(Math.floor((day-1)/7)+1, 4); }
+
+// Mirrors index.html:327-363
+function getHolidayDate(h, year) {
+  if (h.type === 'fixed') {
+    const dt = new Date(year, h.month, h.day);
+    const dow = dt.getDay();
+    if (dow === 6) dt.setDate(dt.getDate() - 1);
+    if (dow === 0) dt.setDate(dt.getDate() + 1);
+    return dt;
+  }
+  if (h.type === 'nth') {
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getMonth() !== h.month) break;
+      if (dt.getDay() === h.weekday) { count++; if (count === h.nth) return dt; }
+    }
+  }
+  if (h.type === 'lastMon') {
+    const last = new Date(year, h.month + 1, 0);
+    for (let d = last.getDate(); d >= 1; d--) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getDay() === 1) return dt;
+    }
+  }
+  if (h.type === 'nthPlus') {
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, h.month, d);
+      if (dt.getMonth() !== h.month) break;
+      if (dt.getDay() === h.weekday) { count++; if (count === h.nth) { dt.setDate(dt.getDate() + h.plusDays); return dt; } }
+    }
+  }
+  return null;
+}
+
+function newId(prefix) { return prefix + Date.now() + Math.random().toString(36).slice(2,6); }
+
+// ── Claude API ───────────────────────────────────────────────────────────────
+// Talks to the SAME edge function the doctor scheduler uses
+// (netlify/edge-functions/claude-proxy.mjs). That proxy is generic — it verifies the
+// session JWT, rate-limits per user, pins the model server-side and streams the
+// response back untouched — so there is nothing tech-specific to add there.
+
+function isTokenExpired(token) {
+  try { const p = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); return Date.now() > p.exp; }
+  catch(e) { return true; }
+}
+
+// Streaming is mandatory, not a preference: bytes flow from the first token, so
+// Netlify's inactivity timeout never fires no matter how long generation runs.
+// `signal` adds the cancellation the doctor scheduler lacks.
+async function streamClaudeAPI(body, onProgress, signal) {
+  const token = localStorage.getItem('sessionToken') || '';
+  if (token && isTokenExpired(token)) {
+    localStorage.removeItem('session'); localStorage.removeItem('sessionToken');
+    window.dispatchEvent(new Event('session-expired'));
+    return { ok:false, status:401, errorText:'Session expired — please sign in again.' };
+  }
+  const payload = Object.assign({}, body, { stream: true });
+  let response;
+  try {
+    response = await fetch('/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-session-token': token },
+      body: JSON.stringify(payload),
+      signal: signal
+    });
+  } catch(e) {
+    if (e.name === 'AbortError') return { ok:false, status:0, aborted:true, errorText:'Cancelled' };
+    return { ok:false, status:0, errorText: e.message };
+  }
+  if (!response.ok) {
+    let errText = '';
+    try { errText = await response.text(); } catch(e) { errText = '(no body)'; }
+    return { ok:false, status:response.status, errorText:errText };
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '', fullText = '';
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream:true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw || raw === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(raw);
+          if (evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta') {
+            fullText += evt.delta.text;
+            if (onProgress) onProgress(fullText.length);
+          }
+        } catch(e) {}
+      }
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') return { ok:false, status:0, aborted:true, errorText:'Cancelled', text:fullText };
+    return { ok:false, status:0, errorText:e.message, text:fullText };
+  }
+  return { ok:true, status:200, text: fullText };
+}
+
+// Three-tier JSON recovery, ported from the doctor scheduler's recheck path.
+// Tier 3 is adapted to this response shape: the doctor version salvages flat objects,
+// which does not work for nested day→tech→{am,pm} data, so instead we brace-match each
+// "YYYY-MM-DD": {...} block and parse it alone. A day cut off mid-object is dropped
+// rather than poisoning the whole batch.
+function salvageAssignments(text) {
+  const out = {};
+  let truncated = false;
+  const re = /"(\d{4}-\d{2}-\d{2})"\s*:\s*\{/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const dk = m[1];
+    const start = re.lastIndex - 1;
+    let depth = 0, end = -1;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) { truncated = true; break; }
+    try { out[dk] = JSON.parse(text.slice(start, end + 1)); } catch(e) {}
+  }
+  return { days: out, truncated };
+}
+
+function parseModelJSON(text) {
+  const clean = String(text || '').replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  try { return { parsed: JSON.parse(clean), tier: 1, truncated: false }; } catch(e) {}
+  const m = clean.match(/\{[\s\S]*\}/);
+  if (m) { try { return { parsed: JSON.parse(m[0]), tier: 2, truncated: false }; } catch(e) {} }
+  const sal = salvageAssignments(clean);
+  if (Object.keys(sal.days).length > 0) {
+    // A response ending cleanly was merely malformed; one that does not was cut off.
+    const endsClean = /[}\]]\s*$/.test(clean);
+    return { parsed: { assignments: sal.days, ambiguities: [] }, tier: 3, truncated: sal.truncated || !endsClean };
+  }
+  return { parsed: null, tier: 0, truncated: !/[}\]]\s*$/.test(clean) };
+}
+
+function useIsMobile() {
+  const [m, setM] = useState(() => window.innerWidth <= 768);
+  useEffect(() => {
+    const on = () => setM(window.innerWidth <= 768);
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return m;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function App() {
+  const isMobile = useIsMobile();
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'light');
+  const [activeTab, setActiveTab] = useState('board');
+  const [toast, setToast] = useState(null);
+
+  // Technician-side data (owned by this app)
+  const [techs, setTechs]                 = useState([]);
+  const [techContacts, setTechContacts]   = useState({});
+  const [techRules, setTechRules]         = useState([]);
+  const [techStaffing, setTechStaffing]   = useState({});
+  const [techSchedules, setTechSchedules] = useState({});
+  const [techTimeOff, setTechTimeOff]     = useState([]);
+  const [notifySettings, setNotifySettings] = useState(DEFAULT_NOTIFY_SETTINGS);
+  const [notifyLog, setNotifyLog]         = useState({});
+
+  // Doctor-side data (read-only here — owned by index.html)
+  const [doctors, setDoctors]         = useState([]);
+  const [locations, setLocations]     = useState(PRESET_LOCATIONS);
+  const [finalPlans, setFinalPlans]   = useState({});
+  const [docSchedules, setDocSchedules] = useState({});
+  const [holidays, setHolidays]       = useState(PRESET_HOLIDAYS);
+
+  const [selectedDate, setSelectedDate] = useState(() => todayKeyIn(DEFAULT_NOTIFY_SETTINGS.timezone));
+  const [boardView, setBoardView] = useState('tech'); // 'tech' | 'site'
+
+  const isDev  = !!(user && user.isDev);
+  const isAdmin = isDev || (user && user.userType === 'admin');
+  const dataNs = user ? (user.adminUsername || user.username) : null;
+
+  function showToast(msg, kind) {
+    setToast({ msg, kind: kind || 'info' });
+    setTimeout(() => setToast(null), 3500);
+  }
+
+  // ── Persistence ────────────────────────────────────────────────────────────
+  // Debounced, unlike index.html's ten un-debounced useEffects. The day board is
+  // edited in rapid bursts (a coordinator reassigning five people at once), and
+  // each save rewrites the whole blob, so coalescing matters here.
+  const saveTimers = useRef({});
+  const pendingSaves = useRef({});
+  // Set once the initial load finishes. Without it, every state-setting call in
+  // loadAll() trips its own save effect and writes the blob straight back to the
+  // server unchanged — seven redundant full-blob PUTs on every single page load.
+  const hydrated = useRef(false);
+
+  function saveData(key, data) {
+    if (!hydrated.current || !user || !isAdmin || !dataNs) return;
+    pendingSaves.current[key] = data;
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => { flushKey(key); }, 600);
+  }
+  function flushKey(key) {
+    const data = pendingSaves.current[key];
+    if (data === undefined) return;
+    delete pendingSaves.current[key];
+    clearTimeout(saveTimers.current[key]);
+    window.storage.set(`${dataNs}:${key}`, JSON.stringify(data))
+      .catch(e => { if (e.message !== 'SESSION_EXPIRED') showToast('Save failed: ' + e.message, 'error'); });
+  }
+  function flushAll() { Object.keys(pendingSaves.current).forEach(flushKey); }
+
+  // Never lose a pending write to a tab close or a navigation back to index.html.
+  useEffect(() => {
+    const on = () => flushAll();
+    window.addEventListener('beforeunload', on);
+    window.addEventListener('pagehide', on);
+    return () => { window.removeEventListener('beforeunload', on); window.removeEventListener('pagehide', on); };
+  });
+
+  useEffect(() => { if (user) saveData('techs', techs); }, [techs]);
+  useEffect(() => { if (user) saveData('techContacts', techContacts); }, [techContacts]);
+  useEffect(() => { if (user) saveData('techRules', techRules); }, [techRules]);
+  useEffect(() => { if (user) saveData('techStaffing', techStaffing); }, [techStaffing]);
+  useEffect(() => { if (user) saveData('techSchedules', techSchedules); }, [techSchedules]);
+  useEffect(() => { if (user) saveData('techTimeOff', techTimeOff); }, [techTimeOff]);
+  useEffect(() => { if (user) saveData('techNotifySettings', notifySettings); }, [notifySettings]);
+
+  // MUST stay declared after every save effect above. loadAll's setState calls and
+  // setLoading(false) land in one commit, and React runs effects in declaration
+  // order — so the save effects see hydrated=false and skip, then this one arms
+  // them for genuine user edits. A timer here would race React's scheduler.
+  useEffect(() => { if (!loading && user) hydrated.current = true; }, [loading, user]);
+
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = localStorage.getItem('session');
+        const token = localStorage.getItem('sessionToken');
+        if (!raw || !token) { setLoading(false); return; }
+        let u;
+        try { u = JSON.parse(raw); } catch(e) { setLoading(false); return; }
+        if (!u || !u.username) { setLoading(false); return; }
+        setUser(u);
+        await loadAll(u.adminUsername || u.username);
+      } catch(e) {
+        console.warn('bootstrap failed', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const on = () => { setUser(null); };
+    window.addEventListener('session-expired', on);
+    return () => window.removeEventListener('session-expired', on);
+  }, []);
+
+  async function loadAll(ns) {
+    const d = async k => {
+      try { const r = await window.storage.get(`${ns}:${k}`); return r ? JSON.parse(r.value) : null; }
+      catch(e) { return null; }
+    };
+    const [
+      tk, tc, tr, ts, tsch, tto, tns, tnl,
+      st, loc, fp, sch, hol
+    ] = await Promise.all([
+      d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
+      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'),
+      d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'),
+    ]);
+    if (tk)  setTechs(tk);
+    if (tc)  setTechContacts(tc);
+    if (tr)  setTechRules(tr);
+    if (ts)  setTechStaffing(ts);
+    if (tsch) setTechSchedules(tsch);
+    if (tto) setTechTimeOff(tto);
+    if (tns) setNotifySettings(Object.assign({}, DEFAULT_NOTIFY_SETTINGS, tns));
+    if (tnl) setNotifyLog(tnl);
+    if (st)  setDoctors(st);
+    if (loc) setLocations(loc);
+    if (fp)  setFinalPlans(fp);
+    if (sch) setDocSchedules(sch);
+    if (hol) setHolidays(hol);
+    if (tns && tns.timezone) setSelectedDate(todayKeyIn(tns.timezone));
+    if (tk && tk.length) loadPortalAccounts(tk);
+  }
+
+  function toggleTheme() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    document.documentElement.setAttribute('data-theme', next);
+    if (user) localStorage.setItem('theme:' + user.username, next);
+  }
+  const LC = theme === 'dark' ? LOCATION_COLORS : LOCATION_COLORS_LIGHT;
+  function locColor(id) { return LC[id] || { bg:'var(--bg-elevated)', border:'var(--border-default)', text:'var(--text-secondary)' }; }
+
+  // ── Derived data ───────────────────────────────────────────────────────────
+  const activeTechs = useMemo(() => techs.filter(t => t.active !== false), [techs]);
+  const locById = useMemo(() => { const m = {}; locations.forEach(l => m[l.id] = l); return m; }, [locations]);
+  function locName(id) { return id === 'OFF' ? 'OFF' : (locById[id] ? locById[id].name : id); }
+
+  // Holiday lookup for the selected year, keyed by dateKey.
+  const holidayMap = useMemo(() => {
+    const map = {};
+    const yr = parseDateKey(selectedDate).year;
+    [yr-1, yr, yr+1].forEach(y => {
+      holidays.forEach(h => {
+        const dt = getHolidayDate(h, y);
+        if (dt) map[dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate())] = h;
+      });
+    });
+    return map;
+  }, [holidays, selectedDate]);
+
+  function holidayFor(dk) { return holidayMap[dk] || null; }
+  function isTechOff(techId, dk) {
+    return techTimeOff.some(t => t.techId === techId && dk >= t.startDate && dk <= t.endDate);
+  }
+  function timeOffFor(techId, dk) {
+    return techTimeOff.find(t => t.techId === techId && dk >= t.startDate && dk <= t.endDate) || null;
+  }
+
+  // Which doctors are at which site, per half-day, from the PUBLISHED doctor plan.
+  // Returns null when nothing is published for that month — the tech schedule has
+  // no basis without it, and the UI says so rather than silently showing zeros.
+  function getDoctorCoverage(dk) {
+    const p = parseDateKey(dk);
+    const plan = finalPlans[`${p.year}-${p.month0}`];
+    if (!plan) return null;
+    const sk = `schedule-${p.year}-${p.month0}-${plan}`;
+    const day = (docSchedules[sk] || {})[dk];
+    if (!day) return null;
+    const out = {};
+    Object.keys(day).forEach(staffId => {
+      const doc = doctors.find(x => x.id === staffId);
+      if (!doc || doc.active === false) return;
+      const per = day[staffId] || {};
+      ['am','pm'].forEach(period => {
+        const lid = per[period];
+        if (!lid || lid === 'OFF') return;
+        if (!out[lid]) out[lid] = { am: [], pm: [] };
+        out[lid][period].push(doc.name);
+      });
+    });
+    return out;
+  }
+
+  // The deterministic backbone: required tech count per site per half-day.
+  // Computed in JS precisely because it is arithmetic — the AI is told the answer
+  // rather than asked to derive it, and post-processing re-checks it.
+  function computeCoverageTargets(dk) {
+    const cov = getDoctorCoverage(dk);
+    const hol = holidayFor(dk);
+    const targets = {};
+    locations.forEach(l => {
+      const st = techStaffing[l.id];
+      if (!st) return;
+      const cfg = Object.assign({}, DEFAULT_STAFFING, st);
+      targets[l.id] = { am: 0, pm: 0 };
+      ['am','pm'].forEach(period => {
+        const docs = (cov && cov[l.id] && cov[l.id][period]) ? cov[l.id][period].length : 0;
+        let need = 0;
+        if (docs > 0) {
+          need = Math.ceil(docs * (Number(cfg.techsPerDoctor) || 0));
+          need = Math.max(need, Number(cfg.minimum) || 0);
+        } else if (cfg.staffWhenNoDoctor) {
+          need = Number(cfg.minimum) || 0;
+        }
+        if (Number(cfg.maximum) > 0) need = Math.min(need, Number(cfg.maximum));
+        if (hol && (hol.halfDay === 'closed' || (hol.halfDay === 'am' && period === 'pm'))) need = 0;
+        if (isWeekendDk(dk)) need = 0;
+        targets[l.id][period] = need;
+      });
+    });
+    return targets;
+  }
+
+  function getAssignment(dk, techId) {
+    const sk = techScheduleKeyFor(dk);
+    const day = (techSchedules[sk] || {})[dk] || {};
+    return day[techId] || { am: '', pm: '' };
+  }
+
+  function setAssignment(dk, techId, period, locId) {
+    const sk = techScheduleKeyFor(dk);
+    setTechSchedules(prev => {
+      const next = Object.assign({}, prev);
+      const month = Object.assign({}, next[sk] || {});
+      const day = Object.assign({}, month[dk] || {});
+      const cur = Object.assign({ am:'', pm:'' }, day[techId] || {});
+      if (period === 'both') { cur.am = locId; cur.pm = locId; }
+      else cur[period] = locId;
+      day[techId] = cur;
+      month[dk] = day;
+      next[sk] = month;
+      return next;
+    });
+  }
+
+  // Who is assigned where, for the selected day — inverse of the tech schedule.
+  function assignedAt(dk, locId, period) {
+    return activeTechs.filter(t => getAssignment(dk, t.id)[period] === locId);
+  }
+
+  const targets = useMemo(() => computeCoverageTargets(selectedDate), [selectedDate, techStaffing, locations, docSchedules, finalPlans, doctors, holidays]);
+  const coverage = useMemo(() => getDoctorCoverage(selectedDate), [selectedDate, docSchedules, finalPlans, doctors]);
+
+  // Sites that matter today: anything with a doctor, a target, or an assigned tech.
+  const activeSites = useMemo(() => {
+    return locations.filter(l => {
+      const t = targets[l.id];
+      if (t && (t.am > 0 || t.pm > 0)) return true;
+      if (coverage && coverage[l.id]) return true;
+      return assignedAt(selectedDate, l.id, 'am').length > 0 || assignedAt(selectedDate, l.id, 'pm').length > 0;
+    });
+  }, [locations, targets, coverage, selectedDate, techSchedules, activeTechs]);
+
+  // Under/over-staffing for the selected day.
+  const coverageIssues = useMemo(() => {
+    const out = [];
+    activeSites.forEach(l => {
+      ['am','pm'].forEach(period => {
+        const need = (targets[l.id] || {})[period] || 0;
+        const have = assignedAt(selectedDate, l.id, period).length;
+        if (need > 0 && have < need) out.push({ locId: l.id, period, need, have, kind: 'under' });
+        else if (need === 0 && have > 0 && !isWeekendDk(selectedDate)) out.push({ locId: l.id, period, need, have, kind: 'nodoctor' });
+        else if (need > 0 && have > need) out.push({ locId: l.id, period, need, have, kind: 'over' });
+      });
+    });
+    return out;
+  }, [activeSites, targets, selectedDate, techSchedules, activeTechs]);
+
+  // Has the board changed since techs were last notified about this day?
+  const lastSnapshot = (notifyLog[selectedDate] || {}).snapshot || null;
+  const unnotifiedChanges = useMemo(() => {
+    if (!lastSnapshot) return [];
+    const out = [];
+    activeTechs.forEach(t => {
+      const cur = getAssignment(selectedDate, t.id);
+      const old = lastSnapshot[t.id] || { am:'', pm:'' };
+      if (cur.am !== old.am || cur.pm !== old.pm) out.push({ tech: t, from: old, to: cur });
+    });
+    return out;
+  }, [lastSnapshot, selectedDate, techSchedules, activeTechs]);
+
+  // ── Portal accounts & day-view links ───────────────────────────────────────
+  const [portalAccounts, setPortalAccounts] = useState({});   // techId -> { username }
+  const [dayLinks, setDayLinks] = useState({});               // techId -> { token, url }
+  const [linksLoading, setLinksLoading] = useState(false);
+
+  async function callTechApi(payload) {
+    const token = localStorage.getItem('sessionToken') || '';
+    const r = await fetch('/.netlify/functions/tech-notify', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-session-token': token },
+      body: JSON.stringify(payload)
+    });
+    let d = {};
+    try { d = await r.json(); } catch(e) {}
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+  }
+
+  async function hashPassword(pw) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+
+  // Reverse lookup techId -> portal username, mirroring the staffPortal: pattern
+  // the doctor scheduler uses (index.html:1556-1583).
+  async function loadPortalAccounts(list) {
+    const out = {};
+    await Promise.all((list || []).map(async t => {
+      try {
+        const r = await window.storage.get('techPortal:' + t.id);
+        if (r) out[t.id] = JSON.parse(r.value);
+      } catch(e) {}
+    }));
+    setPortalAccounts(out);
+  }
+
+  async function createTechPortalAccount(tech) {
+    const base = (tech.name || 'tech').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'tech';
+    const username = base + Math.floor(100 + Math.random() * 900);
+    const password = Math.random().toString(36).slice(2, 10);
+    try {
+      const existing = await window.storage.get('user:' + username).catch(() => null);
+      if (existing) { showToast('Username collision — try again', 'error'); return; }
+      await window.storage.set('user:' + username, JSON.stringify({
+        username, userType: 'staff', techId: tech.id,
+        adminUsername: dataNs, created: Date.now(),
+        password: await hashPassword(password),
+      }));
+      await window.storage.set('techPortal:' + tech.id, JSON.stringify({ username }));
+      setPortalAccounts(prev => Object.assign({}, prev, { [tech.id]: { username } }));
+      // Shown once and never stored in the clear — copy it before dismissing.
+      window.prompt(`Portal login for ${tech.name} — copy this now, it is not stored:`, `${username} / ${password}`);
+    } catch(e) {
+      showToast('Could not create login: ' + e.message, 'error');
+    }
+  }
+
+  async function resetTechPortalPassword(tech) {
+    const acct = portalAccounts[tech.id];
+    if (!acct) return;
+    const password = Math.random().toString(36).slice(2, 10);
+    try {
+      const r = await window.storage.get('user:' + acct.username);
+      const rec = JSON.parse(r.value);
+      rec.password = await hashPassword(password);
+      await window.storage.set('user:' + acct.username, JSON.stringify(rec));
+      window.prompt(`New password for ${acct.username} — copy this now:`, password);
+    } catch(e) {
+      showToast('Could not reset password: ' + e.message, 'error');
+    }
+  }
+
+  async function loadDayLinks() {
+    setLinksLoading(true);
+    try {
+      const d = await callTechApi({ action: 'ensure-links' });
+      setDayLinks(d.links || {});
+      if (d.minted) showToast(`Created ${d.minted} new day-view link${d.minted===1?'':'s'}`, 'success');
+    } catch(e) {
+      showToast('Could not load links: ' + e.message, 'error');
+    } finally { setLinksLoading(false); }
+  }
+
+  async function rotateDayLink(techId) {
+    if (!confirm('Rotating invalidates every link this technician has already been sent. Continue?')) return;
+    try {
+      const d = await callTechApi({ action: 'rotate-link', techId });
+      setDayLinks(prev => Object.assign({}, prev, { [techId]: { token: d.token, url: d.url } }));
+      showToast('Link rotated — send them the new one', 'success');
+    } catch(e) {
+      showToast('Could not rotate link: ' + e.message, 'error');
+    }
+  }
+
+  // ── Sending ────────────────────────────────────────────────────────────────
+  const [sending, setSending] = useState(null);   // a label while a send is in flight
+  const [channelStatus, setChannelStatus] = useState(null);
+
+  async function reloadNotifyLog() {
+    if (!dataNs) return;
+    try {
+      const r = await window.storage.get(`${dataNs}:techNotifyLog`);
+      if (r) setNotifyLog(JSON.parse(r.value));
+    } catch(e) {}
+  }
+
+  async function loadChannelStatus() {
+    try { setChannelStatus(await callTechApi({ action: 'channel-status' })); }
+    catch(e) { setChannelStatus({ configured: [], error: e.message }); }
+  }
+
+  function describeSummary(s) {
+    if (!s) return '';
+    const bits = [];
+    if (s.delivered) bits.push(`${s.delivered} delivered`);
+    if (s.queued) bits.push(`${s.queued} queued`);
+    if (s.failed) bits.push(`${s.failed} failed`);
+    if (s.unreachable) bits.push(`${s.unreachable} unreachable`);
+    if (s.no_channel) bits.push(`${s.no_channel} with no channel`);
+    return bits.join(', ') || 'nothing sent';
+  }
+
+  async function sendDay(dk, kind) {
+    const label = kind === 'morning' ? "this morning's" : "tonight's";
+    if (!confirm(`Send ${label} assignments for ${fmtDateShort(dk)} to every technician?`)) return;
+    setSending(kind);
+    try {
+      const d = await callTechApi({ action: 'send-day', dateKey: dk, kind });
+      showToast(describeSummary(d.summary), (d.summary.failed || d.summary.unreachable) ? 'error' : 'success');
+      await reloadNotifyLog();
+    } catch(e) { showToast('Send failed: ' + e.message, 'error'); }
+    finally { setSending(null); }
+  }
+
+  async function sendChanges(dk) {
+    setSending('change');
+    try {
+      const d = await callTechApi({ action: 'send-changes', dateKey: dk });
+      if (d.nothingToSend) showToast('Nothing changed since the last send', 'info');
+      else showToast(`Notified ${d.changedCount} technician${d.changedCount===1?'':'s'} — ${describeSummary(d.summary)}`, 'success');
+      await reloadNotifyLog();
+    } catch(e) { showToast('Send failed: ' + e.message, 'error'); }
+    finally { setSending(null); }
+  }
+
+  async function sendTest(techId) {
+    setSending('test');
+    try {
+      const d = await callTechApi({ action: 'send-test', techId, dateKey: selectedDate });
+      const r = (d.results || [])[0] || {};
+      showToast(r.ok ? `Test sent via ${r.channel} — subject: ${d.subject}` : `Test failed: ${r.error || r.status}`,
+                r.ok ? 'success' : 'error');
+    } catch(e) { showToast('Test failed: ' + e.message, 'error'); }
+    finally { setSending(null); }
+  }
+
+  async function sendInvite(techId) {
+    setSending('invite');
+    try {
+      const d = await callTechApi({ action: 'send-telegram-invite', techId });
+      if (d.emailUnavailable) {
+        showToast('No email channel — use the invite link or QR code instead', 'info');
+      } else {
+        const r = (d.results || [])[0] || {};
+        showToast(r.ok ? 'Invite emailed' : `Could not email invite: ${r.error || r.status}`, r.ok ? 'success' : 'error');
+      }
+    } catch(e) { showToast('Invite failed: ' + e.message, 'error'); }
+    finally { setSending(null); }
+  }
+
+  // ── Telegram invites ───────────────────────────────────────────────────────
+  const [invites, setInvites] = useState({});          // techId -> { url, linked, linkedAt }
+  const [invitesLoading, setInvitesLoading] = useState(false);
+  const [botUsername, setBotUsername] = useState(null);
+
+  async function loadInvites(quiet) {
+    setInvitesLoading(true);
+    try {
+      const d = await callTechApi({ action: 'invite-links' });
+      setInvites(d.invites || {});
+      setBotUsername(d.botUsername || null);
+      if (!quiet && d.minted) showToast(`Created ${d.minted} new invite link${d.minted===1?'':'s'}`, 'success');
+    } catch(e) {
+      if (!quiet) showToast('Could not load invites: ' + e.message, 'error');
+    } finally { setInvitesLoading(false); }
+  }
+
+  // Who cannot be reached at all. With Telegram as the only channel this is not a
+  // minor gap — an unlinked technician receives nothing, ever, and will simply not
+  // know where to go. It is surfaced wherever a send is about to happen.
+  const unreachable = useMemo(() => activeTechs.filter(t => {
+    const c = techContacts[t.id] || {};
+    const chans = c.channels || notifySettings.defaultChannels || [];
+    const viaTelegram = chans.includes('telegram') && !!c.telegramChatId;
+    const viaEmail    = chans.includes('email') && !!c.email && !c.emailBounced;
+    return !viaTelegram && !viaEmail;
+  }), [activeTechs, techContacts, notifySettings]);
+
+  // ── AI generation ──────────────────────────────────────────────────────────
+  const [genYear, setGenYear]   = useState(() => parseDateKey(todayKeyIn(DEFAULT_NOTIFY_SETTINGS.timezone)).year);
+  const [genMonth, setGenMonth] = useState(() => parseDateKey(todayKeyIn(DEFAULT_NOTIFY_SETTINGS.timezone)).month0);
+  const [generating, setGenerating] = useState(false);
+  const [aiLog, setAiLog] = useState('');
+  const [genLog, setGenLog] = useState([]);
+  const [coverageReport, setCoverageReport] = useState(null);
+  const abortRef = useRef(null);
+
+  function addLog(kind, msg) {
+    setGenLog(prev => prev.concat([{ kind, msg, at: new Date().toLocaleTimeString() }]).slice(-200));
+  }
+
+  // Pure JS. Tech coverage is arithmetic, not free text, so there is no AI recheck
+  // pass here — unlike the doctor scheduler, which needs one for its prose rules.
+  function buildCoverageReport(assignments) {
+    const issues = [];
+    Object.keys(assignments).sort().forEach(dk => {
+      const tgt = computeCoverageTargets(dk);
+      const day = assignments[dk] || {};
+      locations.forEach(l => {
+        const cfg = techStaffing[l.id];
+        if (!cfg) return;
+        ['am','pm'].forEach(period => {
+          const need = (tgt[l.id] || {})[period] || 0;
+          const assigned = activeTechs.filter(t => day[t.id] && day[t.id][period] === l.id);
+          const have = assigned.length;
+          if (need > have)       issues.push({ dk, locId:l.id, period, need, have, type:'understaffed' });
+          else if (need === 0 && have > 0) issues.push({ dk, locId:l.id, period, need, have, type:'no_doctor' });
+          else if (have > need)  issues.push({ dk, locId:l.id, period, need, have, type:'overstaffed' });
+          const req = cfg.requiredSkills || [];
+          if (need > 0 && req.length) {
+            req.forEach(sk => {
+              if (!assigned.some(t => (t.skills || []).includes(sk))) {
+                issues.push({ dk, locId:l.id, period, type:'missing_skill', skill:sk });
+              }
+            });
+          }
+        });
+      });
+      // A tech left with no entry at all is an omission, not a decision to give them off.
+      activeTechs.forEach(t => {
+        if (isTechOff(t.id, dk)) return;
+        const a = day[t.id];
+        if (!a || (!a.am && !a.pm)) issues.push({ dk, techId:t.id, type:'unassigned' });
+      });
+    });
+    return issues;
+  }
+
+  function cancelGeneration() {
+    if (abortRef.current) abortRef.current.abort();
+    setAiLog('⏹ Cancelling…');
+  }
+
+  async function generateTechSchedule() {
+    const daysInMonth = new Date(genYear, genMonth + 1, 0).getDate();
+    const monthKey = `${genYear}-${genMonth}`;
+
+    if (activeTechs.length === 0) { showToast('Add technicians first', 'error'); return; }
+    if (Object.keys(techStaffing).length === 0) { showToast('Set staffing targets first', 'error'); return; }
+    if (!finalPlans[monthKey]) {
+      showToast(`No doctor plan published for ${MONTHS[genMonth]} ${genYear}`, 'error'); return;
+    }
+
+    setGenerating(true); setGenLog([]); setCoverageReport(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    // Weekly batches: W1=1-7, W2=8-14, W3=15-21, W4=22+. Weekdays only.
+    // Same bounds as the doctor scheduler — weekly batches keep monthly negative
+    // constraints and cross-week conditional rules resolvable within one call.
+    const allWeekdays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(genYear, genMonth, d).getDay();
+      if (dow >= 1 && dow <= 5) allWeekdays.push(d);
+    }
+    const weekBounds = [[1,7],[8,14],[15,21],[22,daysInMonth]];
+    const batches = weekBounds
+      .map((wb, wi) => ({ days: allWeekdays.filter(d => d >= wb[0] && d <= wb[1]), label: 'W' + (wi+1) }))
+      .filter(b => b.days.length > 0);
+
+    // ── Static prompt sections (pre-computed as string concat, not nested template
+    //    literals — the in-browser Babel parser chokes on those) ──
+    const techLines = activeTechs.map(t =>
+      '- ' + t.name + ' (ID: ' + t.id + ', Level: ' + (t.level || 'Tech') +
+      ((t.skills && t.skills.length) ? ', Skills: ' + t.skills.join(', ') : '') +
+      (t.homeLocationId && locById[t.homeLocationId] ? ', Home: ' + locById[t.homeLocationId].name : '') + ')'
+    ).join('\n');
+
+    const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
+
+    // Which doctors are where — the input that makes this a *technician* schedule
+    // rather than a generic assignment problem.
+    const doctorLines = [];
+    const targetLines = [];
+    allWeekdays.forEach(d => {
+      const dk = dateKey(genYear, genMonth, d);
+      const dow = DAYS_OF_WEEK[new Date(genYear, genMonth, d).getDay()];
+      const wk = getWeekOfMonth(d);
+      const cov = getDoctorCoverage(dk);
+      const tgt = computeCoverageTargets(dk);
+      const dParts = [], tParts = [];
+      locations.forEach(l => {
+        const c = cov && cov[l.id];
+        const need = tgt[l.id] || {};
+        if (c && (c.am.length || c.pm.length)) {
+          dParts.push(l.id + '{AM:' + (c.am.join('+') || '-') + ' PM:' + (c.pm.join('+') || '-') + '}');
+        }
+        if ((need.am || 0) > 0 || (need.pm || 0) > 0) {
+          tParts.push(l.id + '=' + (need.am || 0) + '/' + (need.pm || 0));
+        }
+      });
+      doctorLines.push('  ' + dk + '(' + dow + ',W' + wk + '): ' + (dParts.join(' | ') || 'no doctors'));
+      targetLines.push('  ' + dk + ': ' + (tParts.join(' ') || 'none — no site needs techs'));
+    });
+
+    const ruleLines = (() => {
+      if (!techRules.length) return 'None — assign purely from the required coverage below.';
+      const byTech = {};
+      techRules.forEach(r => {
+        const key = r.ruleScope === 'location'
+          ? 'SITE RULES'
+          : ((activeTechs.find(t => t.id === r.techId) || {}).name || 'Unknown');
+        (byTech[key] = byTech[key] || []).push(r);
+      });
+      return Object.keys(byTech).map(name => {
+        const lines = byTech[name].map(r => {
+          let s = '  - ' + r.dayOfWeek + ' W' + r.weekOfMonth + ' ' + r.period + ' [' + r.priority + ']: ' + r.description;
+          if (r.locationId) s += ' (site: ' + (r.locationId === 'OFF' ? 'OFF' : (locById[r.locationId] || {}).name || r.locationId) + ')';
+          if (r.ruleType === 'conditional' && r.conditionText) s += ' IF: ' + r.conditionText;
+          if (r.ruleType === 'exception'   && r.exceptionText) s += ' EXCEPT: ' + r.exceptionText;
+          if (r.ruleType === 'negative'    && r.negativeText)  s += ' [NEGATIVE CONSTRAINT] ' + r.negativeText;
+          return s;
+        }).join('\n');
+        return name + ':\n' + lines;
+      }).join('\n');
+    })();
+
+    const timeOffLines = (() => {
+      const rows = techTimeOff.filter(v => {
+        const t = activeTechs.find(x => x.id === v.techId);
+        if (!t) return false;
+        return !(v.endDate < dateKey(genYear, genMonth, 1) || v.startDate > dateKey(genYear, genMonth, daysInMonth));
+      }).map(v => {
+        const t = activeTechs.find(x => x.id === v.techId);
+        return '- ' + t.name + ' (' + t.id + '): ' + v.startDate + ' to ' + v.endDate + (v.reason ? ' — ' + v.reason : '');
+      });
+      return rows.length ? rows.join('\n') : 'None.';
+    })();
+
+    const holidayLines = (() => {
+      const rows = [];
+      holidays.forEach(h => {
+        const dt = getHolidayDate(h, genYear);
+        if (!dt || dt.getMonth() !== genMonth) return;
+        const dk = dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        rows.push('- ' + dk + ': ' + h.name + (h.halfDay === 'am' ? ' (AM only, PM OFF)' : ' (CLOSED — all OFF)'));
+      });
+      return rows.length ? rows.join('\n') : 'None this month.';
+    })();
+
+    const systemPrompt =
+      'You are an expert technician staffing assistant for a multi-location ophthalmology practice.\n' +
+      'You assign clinical technicians to sites based on which doctors are working there and how much support each doctor needs.\n\n' +
+      'MONTH: ' + MONTHS[genMonth] + ' ' + genYear + ' (' + daysInMonth + ' days)\n' +
+      'The 1st falls on ' + DAYS_OF_WEEK[new Date(genYear, genMonth, 1).getDay()] + '.\n\n' +
+      'TECHNICIANS:\n' + techLines + '\n\n' +
+      'LOCATIONS:\n' + locationLines + '\n' +
+      'VALID LOCATION IDs (exhaustive list): ' + locations.map(l => l.id).join(', ') + ', OFF\n' +
+      'CRITICAL: assign ONLY location IDs from the list above. NEVER invent, guess or approximate an ID. If nothing applies, assign "OFF".\n\n' +
+      'DOCTOR COVERAGE BY DAY (siteId{AM:doctors PM:doctors}):\n' + doctorLines.join('\n') + '\n\n' +
+      'REQUIRED TECH COVERAGE (siteId=AMcount/PMcount) — THESE NUMBERS ARE AUTHORITATIVE:\n' + targetLines.join('\n') + '\n' +
+      'These counts were computed from the doctor schedule and the practice staffing ratios. Do NOT recalculate them.\n' +
+      'Match each site\'s count exactly where the roster allows. A site not listed for a day needs ZERO techs that day.\n\n' +
+      'TECHNICIAN RULES:\n' + ruleLines + '\n\n' +
+      'TIME OFF:\n' + timeOffLines + '\n\n' +
+      'COMPANY HOLIDAYS:\n' + holidayLines + '\n\n' +
+      'SCHEDULING INSTRUCTIONS:\n' +
+      '- "Week of month": days 1-7=W1, 8-14=W2, 15-21=W3, 22+=W4. A 5th occurrence of a weekday uses W4 rules.\n' +
+      '- Meeting the REQUIRED TECH COVERAGE counts is the primary objective. Rules refine who fills each slot.\n' +
+      '- Follow REQUIRED rules strictly; honour PREFERRED rules when they do not break coverage.\n' +
+      '- Prefer a technician\'s home site, and keep people at one site across AM and PM unless coverage demands a move.\n' +
+      '- Match required skills to the sites that need them.\n' +
+      '- Time off → OFF for both AM and PM. Holiday CLOSED → OFF both. Holiday half-day → schedule AM, OFF PM.\n' +
+      '- Every technician must appear every day with both an "am" and a "pm" value. Use "OFF" when they are not working.\n' +
+      '- If the roster cannot cover every site, leave the LEAST critical site short and note it as an ambiguity.\n' +
+      '- Respond ONLY with valid JSON. No markdown, no backticks, no explanation.';
+
+    addLog('info', `System prompt: ${systemPrompt.length} chars | ${allWeekdays.length} weekdays | ${batches.length} weekly batches`);
+
+    const allAssignments = {};
+    const allAmbiguities = [];
+    let failedAt = null;
+
+    try {
+      for (let bi = 0; bi < batches.length; bi++) {
+        if (ctrl.signal.aborted) { failedAt = batches[bi].label + ' (cancelled)'; break; }
+        const batchDays = batches[bi].days;
+        const label = batches[bi].label;
+        setAiLog(`⏳ Generating ${label} (${batchDays.length} days) — batch ${bi+1} of ${batches.length}…`);
+
+        const daysList = batchDays.map(d => {
+          const dt = new Date(genYear, genMonth, d);
+          return dateKey(genYear, genMonth, d) + ' (' + DAYS_OF_WEEK[dt.getDay()] + ', W' + getWeekOfMonth(d) + ')';
+        }).join(', ');
+
+        // Full carry-forward in compact ID form. Not a last-N-days slice: monthly
+        // negative constraints ("max 2 Stockton Thursdays") need the whole count.
+        let priorBlock = '';
+        const priorDays = Object.keys(allAssignments).sort();
+        if (priorDays.length > 0) {
+          priorBlock = 'ALL DAYS SCHEDULED SO FAR (compact: techId=AM-siteId/PM-siteId):\n';
+          priorDays.forEach(dk => {
+            const dow = DAYS_OF_WEEK[dkToDate(dk).getDay()];
+            const entries = Object.keys(allAssignments[dk]).map(tid => {
+              const per = allAssignments[dk][tid] || {};
+              return tid + '=' + (per.am || 'OFF') + '/' + (per.pm || 'OFF');
+            }).join(' ');
+            priorBlock += '  ' + dk + '(' + dow + '): ' + entries + '\n';
+          });
+          priorBlock += 'Use this to count monthly constraint occurrences and keep site assignments stable week to week.\n\n';
+        }
+
+        const batchPrompt = priorBlock +
+          'TASK: Generate technician assignments for ONLY these days: ' + daysList + '\n\n' +
+          'Assign EVERY technician an AM and PM location (or "OFF") for each listed day.\n' +
+          '{\n' +
+          '  "assignments": {\n' +
+          '    "YYYY-MM-DD": {\n' +
+          '      "techId": { "am": "locationId_or_OFF", "pm": "locationId_or_OFF" }\n' +
+          '    }\n' +
+          '  },\n' +
+          '  "ambiguities": [\n' +
+          '    { "id": "unique_id", "severity": "critical|minor", "date": "YYYY-MM-DD", "question": "≤12 words", "chose": "what you did", "alternatives": ["other option"] }\n' +
+          '  ]\n' +
+          '}\n' +
+          'Use ONLY the exact technician IDs and location IDs from the system prompt. Include every listed day and every technician.\n' +
+          'Report a CRITICAL ambiguity only when a site cannot be covered or two required rules conflict. Auto-resolve minor choices silently.';
+
+        addLog('request', `Batch ${bi+1} (${label}): ${batchDays.length} days | user msg ${batchPrompt.length} chars`);
+
+        const result = await streamClaudeAPI({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role:'user', content: batchPrompt }]
+        }, chars => setAiLog(`⏳ Generating ${label}… (${chars} chars received)`), ctrl.signal);
+
+        if (result.aborted) { failedAt = label + ' (cancelled)'; break; }
+        if (!result.ok) {
+          addLog('error', `Batch ${label} failed (HTTP ${result.status}): ${String(result.errorText).slice(0,200)}`);
+          failedAt = label; break;
+        }
+
+        const { parsed, tier, truncated } = parseModelJSON(result.text);
+        if (!parsed) { addLog('error', `Batch ${label}: could not parse a response (${result.text.length} chars)`); failedAt = label; break; }
+        if (tier > 1) addLog('warn', `Batch ${label}: JSON recovered at tier ${tier}${truncated ? ' — response looks truncated' : ''}`);
+
+        let dayData = parsed.assignments;
+        if (!dayData) { dayData = Object.assign({}, parsed); delete dayData.ambiguities; }
+        Object.assign(allAssignments, dayData);
+        if (Array.isArray(parsed.ambiguities)) allAmbiguities.push.apply(allAmbiguities, parsed.ambiguities);
+        addLog('success', `Batch ${label}: ${Object.keys(dayData).length} days generated`);
+      }
+
+      const generatedDays = Object.keys(allAssignments);
+      if (generatedDays.length === 0) {
+        setAiLog(failedAt ? `❌ Generation stopped at ${failedAt} with nothing usable.` : '❌ Nothing was generated.');
+        return;
+      }
+
+      // ── Post-processing. Order matters: hard facts overwrite the model, then
+      //    unknown IDs are neutralised, then we measure what we actually got. ──
+      let holFix = 0, offFix = 0, badIds = new Set(), badFix = 0;
+
+      generatedDays.forEach(dk => {
+        const day = allAssignments[dk];
+        const hol = holidayFor(dk);
+        Object.keys(day).forEach(tid => {
+          const per = day[tid] || {};
+          if (hol && hol.halfDay === 'closed') { if (per.am !== 'OFF' || per.pm !== 'OFF') holFix++; per.am = 'OFF'; per.pm = 'OFF'; }
+          else if (hol && hol.halfDay === 'am') { if (per.pm !== 'OFF') holFix++; per.pm = 'OFF'; }
+          if (isTechOff(tid, dk)) { if (per.am !== 'OFF' || per.pm !== 'OFF') offFix++; per.am = 'OFF'; per.pm = 'OFF'; }
+          day[tid] = per;
+        });
+      });
+
+      const validLocIds = new Set(locations.map(l => l.id).concat(['OFF']));
+      generatedDays.forEach(dk => {
+        const day = allAssignments[dk];
+        Object.keys(day).forEach(tid => {
+          const per = day[tid] || {};
+          ['am','pm'].forEach(p => {
+            if (per[p] && !validLocIds.has(per[p])) { badIds.add(per[p]); per[p] = 'OFF'; badFix++; }
+            if (!per[p]) per[p] = 'OFF';
+          });
+        });
+      });
+
+      // Drop any tech ID the model invented — it would render as a ghost row.
+      const validTechIds = new Set(activeTechs.map(t => t.id));
+      let ghostTechs = 0;
+      generatedDays.forEach(dk => {
+        Object.keys(allAssignments[dk]).forEach(tid => {
+          if (!validTechIds.has(tid)) { delete allAssignments[dk][tid]; ghostTechs++; }
+        });
+      });
+
+      if (holFix)  addLog('info', `Holidays enforced: ${holFix} tech-day${holFix===1?'':'s'} set to OFF`);
+      if (offFix)  addLog('info', `Time off enforced: ${offFix} tech-day${offFix===1?'':'s'} set to OFF`);
+      if (badFix)  addLog('warn', `Invalid location IDs replaced with OFF: ${Array.from(badIds).join(', ')} (${badFix} slot${badFix===1?'':'s'})`);
+      if (ghostTechs) addLog('warn', `Removed ${ghostTechs} assignment${ghostTechs===1?'':'s'} for unknown technician IDs`);
+
+      const sk = `tech-${genYear}-${genMonth}`;
+      setTechSchedules(prev => {
+        const next = Object.assign({}, prev);
+        next[sk] = Object.assign({}, next[sk] || {}, allAssignments);
+        return next;
+      });
+
+      const issues = buildCoverageReport(allAssignments);
+      setCoverageReport({ issues, ambiguities: allAmbiguities, days: generatedDays.length, monthLabel: `${MONTHS[genMonth]} ${genYear}`, partial: !!failedAt, failedAt });
+
+      if (failedAt) {
+        // Unlike the doctor scheduler, a late failure does not discard the earlier
+        // batches — partial months are kept and the gap is named.
+        setAiLog(`⚠️ Stopped at ${failedAt}. Kept ${generatedDays.length} days that did generate.`);
+        addLog('warn', `Partial result kept: ${generatedDays.length} days`);
+      } else {
+        setAiLog(`✅ Generated ${generatedDays.length} days for ${MONTHS[genMonth]} ${genYear} · ${issues.length} coverage issue${issues.length===1?'':'s'}`);
+        addLog('success', `Done — ${generatedDays.length} days, ${issues.length} coverage issues`);
+      }
+      setSelectedDate(dateKey(genYear, genMonth, parseInt(generatedDays.sort()[0].split('-')[2], 10)));
+    } catch(e) {
+      addLog('error', 'Generation error: ' + e.message);
+      setAiLog('❌ ' + e.message);
+    } finally {
+      abortRef.current = null;
+      setGenerating(false);
+    }
+  }
+
+  // ── Styles ─────────────────────────────────────────────────────────────────
+  const S = {
+    card:   { background:'var(--bg-surface)', border:'1px solid var(--border-subtle)', borderRadius:12 },
+    input:  { background:'var(--input-bg)', border:'1px solid var(--border-default)', borderRadius:8, padding:'8px 10px', color:'var(--text-primary)', fontSize:14, fontFamily:'inherit' },
+    btn:    { background:'var(--bg-elevated)', border:'1px solid var(--border-default)', borderRadius:8, padding:'8px 14px', color:'var(--text-primary)', fontSize:14, cursor:'pointer', fontFamily:'inherit', fontWeight:600 },
+    btnP:   { background:'#4f46e5', border:'1px solid #4f46e5', borderRadius:8, padding:'8px 14px', color:'#fff', fontSize:14, cursor:'pointer', fontFamily:'inherit', fontWeight:600 },
+    btnD:   { background:'transparent', border:'1px solid #b91c1c', borderRadius:8, padding:'6px 10px', color:'#ef4444', fontSize:13, cursor:'pointer', fontFamily:'inherit', fontWeight:600 },
+    label:  { fontSize:11, textTransform:'uppercase', letterSpacing:0.6, color:'var(--text-muted)', fontWeight:700, marginBottom:4, display:'block' },
+    th:     { textAlign:'left', fontSize:11, textTransform:'uppercase', letterSpacing:0.6, color:'var(--text-muted)', fontWeight:700, padding:'8px 10px', borderBottom:'1px solid var(--border-subtle)' },
+    td:     { padding:'8px 10px', borderBottom:'1px solid var(--border-subtle)', fontSize:14, verticalAlign:'middle' },
+  };
+
+  if (loading) {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:14}}>
+        <div style={{width:32,height:32,border:'3px solid var(--border-default)',borderTopColor:'#6366f1',borderRadius:'50%',animation:'spin 0.8s linear infinite'}} />
+        <div style={{color:'var(--text-muted)',fontSize:14}}>Loading technician scheduler…</div>
+      </div>
+    );
+  }
+
+  // No duplicate login form here on purpose — index.html owns authentication, and a
+  // second auth surface would be a second thing to keep secure. Sign in there, come back.
+  if (!user) {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:24}}>
+        <div style={Object.assign({}, S.card, {padding:32,maxWidth:400,textAlign:'center'})}>
+          <div style={{fontSize:32,marginBottom:12}}>🩺</div>
+          <h1 style={{fontSize:20,marginBottom:8}}>Technician Scheduler</h1>
+          <p style={{color:'var(--text-secondary)',fontSize:14,lineHeight:1.6,marginBottom:20}}>
+            You need to be signed in. Use the main Schedule Helper login — your session carries over to this page automatically.
+          </p>
+          <a href="index.html" style={Object.assign({}, S.btnP, {display:'inline-block',textDecoration:'none'})}>Go to sign in →</a>
+        </div>
+      </div>
+    );
+  }
+
+  const TABS = [
+    { id:'board',    icon:'📋', label:'Day Board' },
+    ...(isAdmin ? [
+      { id:'generate', icon:'✨', label:'Generate' },
+      { id:'techs',    icon:'👥', label:`Technicians (${techs.length})` },
+      { id:'staffing', icon:'⚖️', label:'Staffing' },
+      { id:'rules',    icon:'📐', label:`Rules (${techRules.length})` },
+      { id:'timeoff',  icon:'🏖', label:`Time Off (${techTimeOff.length})` },
+      { id:'notify',   icon:'🔔', label:'Notifications' },
+    ] : []),
+  ];
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
+      {/* Header */}
+      <div style={{borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-surface)',padding:'10px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <a href="index.html" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>← Doctors</a>
+        <div style={{fontWeight:800,fontSize:16,whiteSpace:'nowrap'}}>🩺 Technician Scheduler</div>
+        <div style={{flex:1}} />
+        {!isAdmin && <span style={{fontSize:12,color:'var(--text-muted)',border:'1px solid var(--border-default)',borderRadius:99,padding:'3px 10px'}}>👁 View only</span>}
+        <button onClick={toggleTheme} style={Object.assign({}, S.btn, {padding:'6px 10px'})} title="Toggle theme">{theme==='dark'?'☀️':'🌙'}</button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',gap:4,padding:'8px 12px',borderBottom:'1px solid var(--border-subtle)',overflowX:'auto',background:'var(--bg-deep)'}}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            style={{background:activeTab===t.id?'var(--bg-active)':'transparent',border:'1px solid '+(activeTab===t.id?'var(--border-interactive)':'transparent'),
+                    borderRadius:8,padding:'7px 12px',color:activeTab===t.id?'var(--text-primary)':'var(--text-muted)',
+                    fontSize:13,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap',fontFamily:'inherit'}}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{flex:1,padding:isMobile?12:20,maxWidth:1400,width:'100%',margin:'0 auto'}}>
+        {activeTab === 'board' && (
+          <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,
+                         activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
+                         assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
+                         finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab}} />
+        )}
+        {activeTab === 'generate' && isAdmin && (
+          <GeneratePanel {...{S,genYear,setGenYear,genMonth,setGenMonth,generating,aiLog,genLog,coverageReport,
+                              generateTechSchedule,cancelGeneration,finalPlans,activeTechs,techStaffing,
+                              locName,locColor,setActiveTab,setSelectedDate,techs}} />
+        )}
+        {activeTab === 'techs' && isAdmin && (
+          <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations,showToast,
+                           portalAccounts,createTechPortalAccount,resetTechPortalPassword}} />
+        )}
+        {activeTab === 'staffing' && isAdmin && (
+          <StaffingPanel {...{S,locations,techStaffing,setTechStaffing,locColor}} />
+        )}
+        {activeTab === 'rules' && isAdmin && (
+          <RulesPanel {...{S,techRules,setTechRules,techs,locations,showToast}} />
+        )}
+        {activeTab === 'timeoff' && isAdmin && (
+          <TimeOffPanel {...{S,techTimeOff,setTechTimeOff,techs,showToast}} />
+        )}
+        {activeTab === 'notify' && isAdmin && (
+          <NotifyPanel {...{S,notifySettings,setNotifySettings,techs,techContacts,setTechContacts,notifyLog,showToast,
+                            dayLinks,linksLoading,loadDayLinks,rotateDayLink,
+                            selectedDate,setSelectedDate,sendDay,sendChanges,sendTest,sendInvite,sending,
+                            channelStatus,loadChannelStatus,reloadNotifyLog,
+                            invites,invitesLoading,loadInvites,botUsername,unreachable}} />
+        )}
+      </div>
+
+      {toast && (
+        <div style={{position:'fixed',bottom:20,left:'50%',transform:'translateX(-50%)',zIndex:999,
+                     background:toast.kind==='error'?'#7f1d1d':toast.kind==='success'?'#14532d':'var(--bg-elevated)',
+                     border:'1px solid var(--border-default)',borderRadius:10,padding:'10px 18px',fontSize:14,
+                     color:'var(--text-primary)',boxShadow:'0 8px 24px rgba(0,0,0,0.3)',maxWidth:'90vw'}}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Day Board ────────────────────────────────────────────────────────────────
+
+function DayBoard(p) {
+  const { S, locColor, isMobile, isAdmin, selectedDate, setSelectedDate, boardView, setBoardView,
+          activeTechs, locations, activeSites, targets, coverage, coverageIssues, getAssignment, setAssignment,
+          assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
+          lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab } = p;
+
+  const unreachableIds = new Set((unreachable || []).map(t => t.id));
+  const changedUnreachable = unnotifiedChanges.filter(c => unreachableIds.has(c.tech.id));
+
+  const hol = holidayFor(selectedDate);
+  const dp = parseDateKey(selectedDate);
+  const published = !!finalPlans[`${dp.year}-${dp.month0}`];
+  const weekend = isWeekendDk(selectedDate);
+
+  const locOptions = [{ id:'', name:'— unassigned —' }, { id:'OFF', name:'OFF' }].concat(locations);
+
+  function shift(n) { setSelectedDate(addDays(selectedDate, n)); }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* Date navigation */}
+      <div style={Object.assign({}, S.card, {padding:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'})}>
+        <button onClick={() => shift(-1)} style={S.btn}>←</button>
+        <div style={{minWidth:180}}>
+          <div style={{fontWeight:800,fontSize:17}}>{fmtDateLong(selectedDate)}</div>
+          <div style={{fontSize:12,color:'var(--text-muted)'}}>
+            {selectedDate} · W{getWeekOfMonth(dp.day)}
+            {hol && <span style={{color:'#f59e0b'}}> · {hol.name}{hol.halfDay==='am'?' (AM only)':' (closed)'}</span>}
+            {weekend && <span style={{color:'var(--text-dim)'}}> · weekend</span>}
+          </div>
+        </div>
+        <button onClick={() => shift(1)} style={S.btn}>→</button>
+        <input type="date" value={selectedDate} onChange={e => e.target.value && setSelectedDate(e.target.value)} style={S.input} />
+        <button onClick={() => setSelectedDate(todayKeyIn(notifySettings.timezone))} style={S.btn}>Today</button>
+        <div style={{flex:1}} />
+        <div style={{display:'flex',border:'1px solid var(--border-default)',borderRadius:8,overflow:'hidden'}}>
+          {['tech','site'].map(v => (
+            <button key={v} onClick={() => setBoardView(v)}
+              style={{background:boardView===v?'var(--bg-active)':'transparent',border:'none',padding:'8px 14px',
+                      color:boardView===v?'var(--text-primary)':'var(--text-muted)',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+              {v==='tech'?'By tech':'By site'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Warnings */}
+      {!published && (
+        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'10px 14px',fontSize:13,color:'#f59e0b'}}>
+          ⚠ No doctor plan is published for {MONTHS[dp.month0]} {dp.year}. Staffing targets can't be computed without it —
+          publish a final plan in the doctor scheduler first.
+        </div>
+      )}
+      {isAdmin && unnotifiedChanges.length > 0 && (
+        <div style={{background:'rgba(79,70,229,0.12)',border:'1px solid #4f46e5',borderRadius:10,padding:'10px 14px',
+                     display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:13,flex:1,minWidth:200}}>
+            🔔 <strong>{unnotifiedChanges.length}</strong> assignment{unnotifiedChanges.length===1?'':'s'} changed since techs were last notified:
+            {' '}{unnotifiedChanges.slice(0,3).map(c => c.tech.name).join(', ')}{unnotifiedChanges.length>3?` +${unnotifiedChanges.length-3} more`:''}
+            {changedUnreachable.length > 0 && (
+              <div style={{marginTop:5,color:'#f59e0b',fontWeight:600}}>
+                ⚠️ {changedUnreachable.length} of them cannot be reached ({changedUnreachable.map(c => c.tech.name).join(', ')}) — tell them in person.
+                {' '}<button onClick={() => setActiveTab('notify')}
+                        style={{background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit',
+                                fontSize:13,fontWeight:700,color:'#f59e0b',textDecoration:'underline'}}>Fix</button>
+              </div>
+            )}
+          </span>
+          <button onClick={() => sendChanges(selectedDate)} disabled={sending === 'change'} style={S.btnP}>
+            {sending === 'change' ? 'Sending…' : 'Push changes now'}
+          </button>
+        </div>
+      )}
+      {coverageIssues.length > 0 && (
+        <div style={Object.assign({}, S.card, {padding:12,borderColor:'#b45309'})}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:0.6,color:'#f59e0b',marginBottom:8}}>Coverage issues</div>
+          <div style={{display:'flex',flexDirection:'column',gap:5}}>
+            {coverageIssues.map((c,i) => (
+              <div key={i} style={{fontSize:13,color:'var(--text-secondary)'}}>
+                <strong style={{color:'var(--text-primary)'}}>{locName(c.locId)}</strong> {c.period.toUpperCase()} —
+                {c.kind === 'under' && <span style={{color:'#ef4444'}}> understaffed: {c.have} of {c.need} needed</span>}
+                {c.kind === 'over' && <span style={{color:'#f59e0b'}}> {c.have} assigned, only {c.need} needed</span>}
+                {c.kind === 'nodoctor' && <span style={{color:'#f59e0b'}}> {c.have} tech{c.have===1?'':'s'} assigned but no doctor scheduled</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {boardView === 'tech' ? (
+        <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+          <div className="mob-scroll">
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:520}}>
+              <thead><tr>
+                <th style={S.th}>Technician</th>
+                <th style={S.th}>AM</th>
+                <th style={S.th}>PM</th>
+                <th style={S.th}>Note</th>
+              </tr></thead>
+              <tbody>
+                {activeTechs.length === 0 && (
+                  <tr><td style={Object.assign({}, S.td, {color:'var(--text-muted)'})} colSpan={4}>
+                    No technicians yet — add them in the Technicians tab.
+                  </td></tr>
+                )}
+                {activeTechs.map(t => {
+                  const a = getAssignment(selectedDate, t.id);
+                  const off = timeOffFor(t.id, selectedDate);
+                  const changed = lastSnapshot && (() => {
+                    const o = lastSnapshot[t.id] || { am:'', pm:'' };
+                    return o.am !== a.am || o.pm !== a.pm;
+                  })();
+                  return (
+                    <tr key={t.id} style={{background: changed ? 'rgba(79,70,229,0.07)' : 'transparent'}}>
+                      <td style={S.td}>
+                        <div style={{fontWeight:600}}>{t.name} {changed && <span title="Changed since last notification" style={{color:'#818cf8'}}>•</span>}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)'}}>{t.level}{t.skills && t.skills.length ? ' · ' + t.skills.join(', ') : ''}</div>
+                      </td>
+                      {['am','pm'].map(period => (
+                        <td key={period} style={S.td}>
+                          {isAdmin ? (
+                            <select value={a[period] || ''} onChange={e => setAssignment(selectedDate, t.id, period, e.target.value)}
+                              style={Object.assign({}, S.input, {minWidth:130,
+                                borderColor: a[period] && a[period]!=='OFF' ? locColor(a[period]).border : 'var(--border-default)',
+                                color: a[period] && a[period]!=='OFF' ? locColor(a[period]).text : 'var(--text-primary)'})}>
+                              {locOptions.map(l => <option key={l.id||'none'} value={l.id}>{l.name}</option>)}
+                            </select>
+                          ) : (
+                            <Chip locId={a[period]} locColor={locColor} label={a[period] ? locName(a[period]) : '—'} />
+                          )}
+                        </td>
+                      ))}
+                      <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)'})}>
+                        {off ? `🏖 ${off.reason || 'Time off'} (${off.startDate} → ${off.endDate})` : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(280px,1fr))',gap:12}}>
+          {activeSites.length === 0 && (
+            <div style={Object.assign({}, S.card, {padding:20,color:'var(--text-muted)',fontSize:14})}>
+              Nothing scheduled for this day.
+            </div>
+          )}
+          {activeSites.map(l => {
+            const c = locColor(l.id);
+            return (
+              <div key={l.id} style={Object.assign({}, S.card, {padding:14,borderColor:c.border})}>
+                <div style={{fontWeight:800,fontSize:15,color:c.text,marginBottom:10}}>{l.name}</div>
+                {['am','pm'].map(period => {
+                  const need = (targets[l.id] || {})[period] || 0;
+                  const here = assignedAt(selectedDate, l.id, period);
+                  const docs = (coverage && coverage[l.id] && coverage[l.id][period]) || [];
+                  const bad = need > 0 && here.length < need;
+                  return (
+                    <div key={period} style={{marginBottom:10,paddingBottom:10,borderBottom:period==='am'?'1px solid var(--border-subtle)':'none'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:5}}>
+                        <span style={{fontSize:11,fontWeight:800,letterSpacing:0.8,color:'var(--text-muted)'}}>{period.toUpperCase()}</span>
+                        <span style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:99,
+                                      background: bad ? 'rgba(239,68,68,0.15)' : need>0 ? 'rgba(16,185,129,0.13)' : 'var(--bg-elevated)',
+                                      color: bad ? '#ef4444' : need>0 ? '#10b981' : 'var(--text-dim)'}}>
+                          {here.length}/{need}
+                        </span>
+                      </div>
+                      <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>
+                        {docs.length ? '🩺 ' + docs.join(', ') : 'no doctor'}
+                      </div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                        {here.length === 0
+                          ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>no techs assigned</span>
+                          : here.map(t => (
+                              <span key={t.id} style={{fontSize:12,fontWeight:600,padding:'3px 9px',borderRadius:99,
+                                                       background:c.bg,border:'1px solid '+c.border,color:c.text}}>{t.name}</span>
+                            ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Chip({ locId, locColor, label }) {
+  if (!locId) return <span style={{color:'var(--text-dim)'}}>{label}</span>;
+  const c = locColor(locId);
+  return <span style={{fontSize:12,fontWeight:600,padding:'3px 9px',borderRadius:99,background:c.bg,border:'1px solid '+c.border,color:c.text}}>{label}</span>;
+}
+
+// ── Generate ─────────────────────────────────────────────────────────────────
+
+function GeneratePanel(p) {
+  const { S, genYear, setGenYear, genMonth, setGenMonth, generating, aiLog, genLog, coverageReport,
+          generateTechSchedule, cancelGeneration, finalPlans, activeTechs, techStaffing,
+          locName, locColor, setActiveTab, setSelectedDate, techs } = p;
+
+  const published   = !!finalPlans[`${genYear}-${genMonth}`];
+  const hasTechs    = activeTechs.length > 0;
+  const hasStaffing = Object.keys(techStaffing).length > 0;
+  const ready = published && hasTechs && hasStaffing;
+  const years = [genYear-1, genYear, genYear+1];
+
+  const ISSUE_LABEL = {
+    understaffed:  { icon:'🔴', color:'#ef4444', text: i => `${locName(i.locId)} ${i.period.toUpperCase()} — ${i.have} of ${i.need} techs` },
+    overstaffed:   { icon:'🟡', color:'#f59e0b', text: i => `${locName(i.locId)} ${i.period.toUpperCase()} — ${i.have} assigned, ${i.need} needed` },
+    no_doctor:     { icon:'🟡', color:'#f59e0b', text: i => `${locName(i.locId)} ${i.period.toUpperCase()} — ${i.have} tech${i.have===1?'':'s'} but no doctor` },
+    missing_skill: { icon:'🟠', color:'#f97316', text: i => `${locName(i.locId)} ${i.period.toUpperCase()} — nobody with "${i.skill}"` },
+    unassigned:    { icon:'⚪️', color:'var(--text-muted)', text: i => `${(techs.find(t=>t.id===i.techId)||{}).name || i.techId} — no assignment` },
+  };
+
+  // Group by day so the report reads as "what's wrong on the 14th", not a flat wall.
+  // The lines that matter most — sanitizer warnings and the final tally — are the
+  // last ones written, so pin the view to the bottom as they arrive.
+  const logRef = useRef(null);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [genLog]);
+
+  const byDay = {};
+  if (coverageReport) coverageReport.issues.forEach(i => { (byDay[i.dk] = byDay[i.dk] || []).push(i); });
+  const issueDays = Object.keys(byDay).sort();
+
+  const counts = {};
+  if (coverageReport) coverageReport.issues.forEach(i => { counts[i.type] = (counts[i.type]||0)+1; });
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:12}}>Generate a month of technician assignments</div>
+        <div style={{display:'flex',gap:12,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div>
+            <label style={S.label}>Month</label>
+            <select value={genMonth} onChange={e => setGenMonth(Number(e.target.value))} disabled={generating} style={Object.assign({}, S.input, {minWidth:140})}>
+              {MONTHS.map((m,i) => <option key={m} value={i}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Year</label>
+            <select value={genYear} onChange={e => setGenYear(Number(e.target.value))} disabled={generating} style={Object.assign({}, S.input, {minWidth:100})}>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          {!generating ? (
+            <button onClick={generateTechSchedule} disabled={!ready}
+              style={Object.assign({}, ready ? S.btnP : S.btn, {opacity: ready ? 1 : 0.5, cursor: ready ? 'pointer':'not-allowed'})}>
+              ✨ Generate
+            </button>
+          ) : (
+            <button onClick={cancelGeneration} style={Object.assign({}, S.btn, {borderColor:'#b91c1c',color:'#ef4444'})}>⏹ Cancel</button>
+          )}
+        </div>
+
+        <div style={{marginTop:14,display:'flex',flexDirection:'column',gap:5}}>
+          <Pre ok={published}   label={published ? `Doctor plan published for ${MONTHS[genMonth]} ${genYear}` : `No doctor plan published for ${MONTHS[genMonth]} ${genYear} — publish one in the doctor scheduler first`} />
+          <Pre ok={hasTechs}    label={hasTechs ? `${activeTechs.length} active technician${activeTechs.length===1?'':'s'}` : 'No active technicians — add them in the Technicians tab'} />
+          <Pre ok={hasStaffing} label={hasStaffing ? `${Object.keys(techStaffing).length} site${Object.keys(techStaffing).length===1?'':'s'} configured` : 'No staffing targets — set them in the Staffing tab'} />
+        </div>
+        <div style={{marginTop:12,fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          Generating overwrites existing assignments for the days it covers (weekdays only). Required tech counts are computed
+          here in JavaScript from the published doctor plan, then handed to the model as fixed numbers — it decides <em>who</em> goes where, not how many.
+        </div>
+      </div>
+
+      {(generating || aiLog) && (
+        <div style={Object.assign({}, S.card, {padding:14})}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom: genLog.length ? 12 : 0}}>
+            {generating && <div style={{width:16,height:16,border:'2px solid var(--border-default)',borderTopColor:'#6366f1',borderRadius:'50%',animation:'spin 0.8s linear infinite',flexShrink:0}} />}
+            <span style={{fontSize:14,fontWeight:600}}>{aiLog}</span>
+          </div>
+          {genLog.length > 0 && (
+            <div ref={logRef} style={{maxHeight:200,overflowY:'auto',background:'var(--input-bg)',borderRadius:8,padding:10,
+                         fontFamily:'"Space Mono",monospace',fontSize:11,lineHeight:1.7}}>
+              {genLog.map((l,i) => (
+                <div key={i} style={{color: l.kind==='error' ? '#ef4444' : l.kind==='warn' ? '#f59e0b' : l.kind==='success' ? '#10b981' : 'var(--text-muted)'}}>
+                  <span style={{opacity:0.5}}>{l.at}</span> {l.msg}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {coverageReport && (
+        <div style={Object.assign({}, S.card, {padding:16})}>
+          <div style={{display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap',marginBottom:12}}>
+            <span style={{fontWeight:700,fontSize:15}}>Coverage report — {coverageReport.monthLabel}</span>
+            <span style={{fontSize:13,color:'var(--text-muted)'}}>{coverageReport.days} days</span>
+            {coverageReport.partial && <span style={{fontSize:12,color:'#f59e0b',fontWeight:600}}>partial — stopped at {coverageReport.failedAt}</span>}
+          </div>
+
+          {Object.keys(counts).length > 0 && (
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14}}>
+              {Object.keys(counts).map(k => (
+                <span key={k} style={{fontSize:12,fontWeight:700,padding:'4px 10px',borderRadius:99,
+                                      background:'var(--bg-elevated)',border:'1px solid var(--border-default)',color:(ISSUE_LABEL[k]||{}).color||'var(--text-muted)'}}>
+                  {(ISSUE_LABEL[k]||{}).icon} {counts[k]} {k.replace('_',' ')}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {coverageReport.ambiguities.length > 0 && (
+            <div style={{background:'rgba(245,158,11,0.09)',border:'1px solid #b45309',borderRadius:8,padding:12,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:0.6,color:'#f59e0b',marginBottom:8}}>
+                Judgement calls the model flagged
+              </div>
+              {coverageReport.ambiguities.map((a,i) => (
+                <div key={i} style={{fontSize:13,marginBottom:6,lineHeight:1.5}}>
+                  <span style={{color:'var(--text-muted)'}}>{a.date}</span>{' '}
+                  {a.severity === 'critical' && <span style={{color:'#ef4444',fontWeight:700}}>[critical] </span>}
+                  {a.question} → <strong>{a.chose}</strong>
+                  {a.alternatives && a.alternatives.length ? <span style={{color:'var(--text-dim)'}}> (alt: {a.alternatives.join(', ')})</span> : null}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {issueDays.length === 0 ? (
+            <div style={{fontSize:14,color:'#10b981',fontWeight:600}}>✅ Every site is covered exactly as configured.</div>
+          ) : (
+            <div style={{maxHeight:420,overflowY:'auto',display:'flex',flexDirection:'column',gap:10}}>
+              {issueDays.map(dk => (
+                <div key={dk}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                    <button onClick={() => { setSelectedDate(dk); setActiveTab('board'); }}
+                      style={{background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit',
+                              fontSize:13,fontWeight:700,color:'#818cf8',textDecoration:'underline'}}>
+                      {fmtDateShort(dk)}
+                    </button>
+                    <span style={{fontSize:11,color:'var(--text-dim)'}}>{byDay[dk].length} issue{byDay[dk].length===1?'':'s'}</span>
+                  </div>
+                  {byDay[dk].map((i,ix) => {
+                    const cfg = ISSUE_LABEL[i.type];
+                    if (!cfg) return null;
+                    return (
+                      <div key={ix} style={{fontSize:13,color:'var(--text-secondary)',paddingLeft:12,lineHeight:1.7}}>
+                        <span style={{color:cfg.color}}>{cfg.icon}</span> {cfg.text(i)}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Pre({ ok, label }) {
+  return (
+    <div style={{fontSize:13,color: ok ? 'var(--text-secondary)' : '#f59e0b',display:'flex',alignItems:'center',gap:7}}>
+      <span>{ok ? '✅' : '⚠️'}</span> {label}
+    </div>
+  );
+}
+
+// ── Technicians ──────────────────────────────────────────────────────────────
+
+function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, showToast,
+                      portalAccounts, createTechPortalAccount, resetTechPortalPassword }) {
+  const blank = { id:'', name:'', level:'Tech', skills:[], homeLocationId:'', active:true };
+  const [form, setForm] = useState(blank);
+  const [editing, setEditing] = useState(false);
+
+  function save() {
+    if (!form.name.trim()) { showToast('Name is required', 'error'); return; }
+    if (editing) {
+      setTechs(techs.map(t => t.id === form.id ? Object.assign({}, form, {name:form.name.trim()}) : t));
+    } else {
+      setTechs(techs.concat([Object.assign({}, form, { id: newId('t'), name: form.name.trim() })]));
+    }
+    setForm(blank); setEditing(false);
+  }
+  function edit(t) { setForm(Object.assign({}, blank, t)); setEditing(true); window.scrollTo({top:0,behavior:'smooth'}); }
+  function remove(t) {
+    if (!confirm(`Delete ${t.name}? Their past assignments stay in the schedule but will show as an unknown ID.`)) return;
+    setTechs(techs.filter(x => x.id !== t.id));
+    const c = Object.assign({}, techContacts); delete c[t.id]; setTechContacts(c);
+  }
+  function toggleSkill(sk) {
+    const has = (form.skills || []).includes(sk);
+    setForm(Object.assign({}, form, { skills: has ? form.skills.filter(x => x !== sk) : (form.skills||[]).concat([sk]) }));
+  }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:12}}>{editing ? 'Edit technician' : 'Add technician'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}} className="mob-grid1">
+          <div>
+            <label style={S.label}>Name</label>
+            <input value={form.name} onChange={e => setForm(Object.assign({}, form, {name:e.target.value}))}
+                   placeholder="Jane Doe" style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          <div>
+            <label style={S.label}>Level</label>
+            <select value={form.level} onChange={e => setForm(Object.assign({}, form, {level:e.target.value}))} style={Object.assign({}, S.input, {width:'100%'})}>
+              {TECH_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Home site (preferred)</label>
+            <select value={form.homeLocationId} onChange={e => setForm(Object.assign({}, form, {homeLocationId:e.target.value}))} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="">— none —</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginTop:12}}>
+          <label style={S.label}>Skills</label>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {TECH_SKILLS.map(sk => {
+              const on = (form.skills||[]).includes(sk);
+              return (
+                <button key={sk} onClick={() => toggleSkill(sk)}
+                  style={{fontSize:12,fontWeight:600,padding:'5px 11px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
+                          background:on?'rgba(79,70,229,0.18)':'var(--bg-elevated)',
+                          border:'1px solid '+(on?'#4f46e5':'var(--border-default)'),
+                          color:on?'#818cf8':'var(--text-muted)'}}>{sk}</button>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8,marginTop:14}}>
+          <button onClick={save} style={S.btnP}>{editing ? 'Save changes' : 'Add technician'}</button>
+          {editing && <button onClick={() => { setForm(blank); setEditing(false); }} style={S.btn}>Cancel</button>}
+        </div>
+      </div>
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div className="mob-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+            <thead><tr>
+              <th style={S.th}>Name</th><th style={S.th}>Level</th><th style={S.th}>Skills</th>
+              <th style={S.th}>Contact</th><th style={S.th}>Portal login</th><th style={S.th}>Active</th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {techs.length === 0 && <tr><td style={Object.assign({}, S.td,{color:'var(--text-muted)'})} colSpan={7}>No technicians yet.</td></tr>}
+              {techs.map(t => {
+                const c = techContacts[t.id] || {};
+                return (
+                  <tr key={t.id} style={{opacity: t.active === false ? 0.5 : 1}}>
+                    <td style={Object.assign({}, S.td, {fontWeight:600})}>{t.name}</td>
+                    <td style={S.td}>{t.level}</td>
+                    <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)'})}>{(t.skills||[]).join(', ') || '—'}</td>
+                    <td style={Object.assign({}, S.td, {fontSize:12})}>
+                      {c.email ? <span title={c.email}>✉️</span> : <span style={{opacity:0.3}}>✉️</span>}{' '}
+                      {c.telegramChatId ? <span title="Telegram linked">💬</span> : <span style={{opacity:0.3}}>💬</span>}
+                    </td>
+                    <td style={Object.assign({}, S.td, {fontSize:12})}>
+                      {portalAccounts[t.id] ? (
+                        <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                          <code style={{background:'var(--bg-elevated)',padding:'2px 6px',borderRadius:4}}>{portalAccounts[t.id].username}</code>
+                          <button onClick={() => resetTechPortalPassword(t)}
+                                  style={{background:'none',border:'none',cursor:'pointer',fontSize:11,color:'var(--text-muted)',
+                                          textDecoration:'underline',fontFamily:'inherit',padding:0}}>reset</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => createTechPortalAccount(t)}
+                                style={Object.assign({}, S.btn, {padding:'4px 9px',fontSize:12})}>Create</button>
+                      )}
+                    </td>
+                    <td style={S.td}>
+                      <button onClick={() => setTechs(techs.map(x => x.id===t.id ? Object.assign({}, x, {active: x.active === false}) : x))}
+                        style={{background:'transparent',border:'none',cursor:'pointer',fontSize:18,fontFamily:'inherit'}}>
+                        {t.active === false ? '⚪️' : '🟢'}
+                      </button>
+                    </td>
+                    <td style={S.td}>
+                      <div style={{display:'flex',gap:6}}>
+                        <button onClick={() => edit(t)} style={Object.assign({}, S.btn, {padding:'5px 10px',fontSize:13})}>Edit</button>
+                        <button onClick={() => remove(t)} style={S.btnD}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Staffing targets ─────────────────────────────────────────────────────────
+
+function StaffingPanel({ S, locations, techStaffing, setTechStaffing, locColor }) {
+  function upd(locId, field, val) {
+    setTechStaffing(Object.assign({}, techStaffing, {
+      [locId]: Object.assign({}, DEFAULT_STAFFING, techStaffing[locId] || {}, { [field]: val })
+    }));
+  }
+  function enable(locId, on) {
+    const next = Object.assign({}, techStaffing);
+    if (on) next[locId] = Object.assign({}, DEFAULT_STAFFING);
+    else delete next[locId];
+    setTechStaffing(next);
+  }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:6}}>How clinic load becomes tech coverage</div>
+        <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6}}>
+          For each half-day, the required tech count is <code style={{background:'var(--bg-elevated)',padding:'1px 5px',borderRadius:4}}>ceil(doctors present × techs per doctor)</code>,
+          raised to the minimum and capped at the maximum. Sites with no entry are ignored entirely — enable only the sites techs actually staff.
+          Holidays and weekends force the target to zero.
+        </p>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:12}} className="mob-grid1">
+        {locations.map(l => {
+          const on = !!techStaffing[l.id];
+          const cfg = Object.assign({}, DEFAULT_STAFFING, techStaffing[l.id] || {});
+          const c = locColor(l.id);
+          return (
+            <div key={l.id} style={Object.assign({}, S.card, {padding:14, borderColor: on ? c.border : 'var(--border-subtle)', opacity: on ? 1 : 0.6})}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:on?12:0}}>
+                <input type="checkbox" checked={on} onChange={e => enable(l.id, e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
+                <span style={{fontWeight:700,color: on ? c.text : 'var(--text-muted)'}}>{l.name}</span>
+                {l.address && <span style={{fontSize:11,color:'var(--text-dim)'}}>{l.address}</span>}
+              </div>
+              {on && (
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                  <div>
+                    <label style={S.label}>Techs per doctor</label>
+                    <input type="number" min="0" step="0.5" value={cfg.techsPerDoctor}
+                           onChange={e => upd(l.id, 'techsPerDoctor', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
+                  </div>
+                  <div>
+                    <label style={S.label}>Minimum</label>
+                    <input type="number" min="0" value={cfg.minimum}
+                           onChange={e => upd(l.id, 'minimum', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
+                  </div>
+                  <div>
+                    <label style={S.label}>Maximum (0 = none)</label>
+                    <input type="number" min="0" value={cfg.maximum}
+                           onChange={e => upd(l.id, 'maximum', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
+                  </div>
+                  <div style={{display:'flex',alignItems:'flex-end',paddingBottom:8}}>
+                    <label style={{display:'flex',alignItems:'center',gap:7,fontSize:12,color:'var(--text-secondary)',cursor:'pointer'}}>
+                      <input type="checkbox" checked={!!cfg.staffWhenNoDoctor}
+                             onChange={e => upd(l.id, 'staffWhenNoDoctor', e.target.checked)} style={{width:15,height:15,cursor:'pointer'}} />
+                      Staff even with no doctor
+                    </label>
+                  </div>
+                  <div style={{gridColumn:'1 / -1'}}>
+                    <label style={S.label}>Must have someone with</label>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                      {TECH_SKILLS.map(sk => {
+                        const on = (cfg.requiredSkills || []).includes(sk);
+                        return (
+                          <button key={sk}
+                            onClick={() => upd(l.id, 'requiredSkills', on
+                              ? (cfg.requiredSkills||[]).filter(x => x !== sk)
+                              : (cfg.requiredSkills||[]).concat([sk]))}
+                            style={{fontSize:11,fontWeight:600,padding:'4px 9px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
+                                    background:on?'rgba(249,115,22,0.16)':'var(--bg-elevated)',
+                                    border:'1px solid '+(on?'#f97316':'var(--border-default)'),
+                                    color:on?'#f97316':'var(--text-dim)'}}>{sk}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Rules ────────────────────────────────────────────────────────────────────
+
+function RulesPanel({ S, techRules, setTechRules, techs, locations, showToast }) {
+  const blank = { id:'', ruleScope:'tech', techId:'', locationId:'', dayOfWeek:'Mon', weekOfMonth:'all',
+                  period:'both', priority:'preferred', ruleType:'standard', description:'',
+                  conditionText:'', exceptionText:'', negativeText:'' };
+  const [form, setForm] = useState(blank);
+  const [editing, setEditing] = useState(false);
+  const set = (k,v) => setForm(Object.assign({}, form, {[k]:v}));
+
+  function save() {
+    if (form.ruleScope === 'tech' && !form.techId) { showToast('Pick a technician', 'error'); return; }
+    if (!form.description.trim()) { showToast('Description is required', 'error'); return; }
+    if (editing) setTechRules(techRules.map(r => r.id === form.id ? form : r));
+    else setTechRules(techRules.concat([Object.assign({}, form, { id: newId('tr'), createdAt: Date.now() })]));
+    setForm(blank); setEditing(false);
+  }
+
+  const byTech = {};
+  techRules.forEach(r => {
+    const k = r.ruleScope === 'location' ? '__loc' : (r.techId || '__none');
+    (byTech[k] = byTech[k] || []).push(r);
+  });
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:12}}>{editing ? 'Edit rule' : 'Add rule'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12}} className="mob-grid1">
+          <div>
+            <label style={S.label}>Scope</label>
+            <select value={form.ruleScope} onChange={e => set('ruleScope', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="tech">Technician</option><option value="location">Site</option>
+            </select>
+          </div>
+          {form.ruleScope === 'tech' && (
+            <div>
+              <label style={S.label}>Technician</label>
+              <select value={form.techId} onChange={e => set('techId', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+                <option value="">— pick —</option>
+                {techs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <label style={S.label}>Site</label>
+            <select value={form.locationId} onChange={e => set('locationId', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="">— any —</option><option value="OFF">OFF</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Day</label>
+            <select value={form.dayOfWeek} onChange={e => set('dayOfWeek', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              {['Mon','Tue','Wed','Thu','Fri'].map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Week of month</label>
+            <input value={form.weekOfMonth} onChange={e => set('weekOfMonth', e.target.value)}
+                   placeholder="all or 1,2,4" style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          <div>
+            <label style={S.label}>Period</label>
+            <select value={form.period} onChange={e => set('period', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="both">Both</option><option value="am">AM</option><option value="pm">PM</option>
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Priority</label>
+            <select value={form.priority} onChange={e => set('priority', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="preferred">Preferred</option><option value="required">Required</option>
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Type</label>
+            <select value={form.ruleType} onChange={e => set('ruleType', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="standard">Standard</option><option value="conditional">Conditional</option>
+              <option value="exception">Exception</option><option value="negative">Negative constraint</option>
+            </select>
+          </div>
+        </div>
+        <div style={{marginTop:12}}>
+          <label style={S.label}>Description</label>
+          <input value={form.description} onChange={e => set('description', e.target.value)}
+                 placeholder="Jane covers Turlock every Friday" style={Object.assign({}, S.input, {width:'100%'})} />
+        </div>
+        {form.ruleType === 'conditional' && (
+          <div style={{marginTop:12}}>
+            <label style={S.label}>Condition (free text — read by the AI)</label>
+            <textarea value={form.conditionText} onChange={e => set('conditionText', e.target.value)} rows={2}
+                      placeholder="IF Dr. Kim is at Manteca, otherwise Stockton" style={Object.assign({}, S.input, {width:'100%',resize:'vertical'})} />
+          </div>
+        )}
+        {form.ruleType === 'exception' && (
+          <div style={{marginTop:12}}>
+            <label style={S.label}>Exception (free text)</label>
+            <textarea value={form.exceptionText} onChange={e => set('exceptionText', e.target.value)} rows={2}
+                      style={Object.assign({}, S.input, {width:'100%',resize:'vertical'})} />
+          </div>
+        )}
+        {form.ruleType === 'negative' && (
+          <div style={{marginTop:12}}>
+            <label style={S.label}>Negative constraint (free text)</label>
+            <textarea value={form.negativeText} onChange={e => set('negativeText', e.target.value)} rows={2}
+                      placeholder="Maximum 2 Stockton Thursdays per month" style={Object.assign({}, S.input, {width:'100%',resize:'vertical'})} />
+          </div>
+        )}
+        <div style={{display:'flex',gap:8,marginTop:14}}>
+          <button onClick={save} style={S.btnP}>{editing ? 'Save changes' : 'Add rule'}</button>
+          {editing && <button onClick={() => { setForm(blank); setEditing(false); }} style={S.btn}>Cancel</button>}
+        </div>
+      </div>
+
+      {techRules.length === 0 ? (
+        <div style={Object.assign({}, S.card, {padding:20,color:'var(--text-muted)',fontSize:14})}>
+          No rules yet. Rules are optional — the staffing targets alone will produce a workable schedule.
+        </div>
+      ) : Object.keys(byTech).map(k => {
+        const t = techs.find(x => x.id === k);
+        const title = k === '__loc' ? 'Site rules' : (t ? t.name : 'Unassigned');
+        return (
+          <div key={k} style={Object.assign({}, S.card, {padding:14})}>
+            <div style={{fontWeight:700,marginBottom:10}}>{title}</div>
+            {byTech[k].map(r => (
+              <div key={r.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid var(--border-subtle)',flexWrap:'wrap'}}>
+                <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:99,
+                              background: r.priority==='required' ? 'rgba(239,68,68,0.13)' : 'var(--bg-elevated)',
+                              color: r.priority==='required' ? '#ef4444' : 'var(--text-muted)'}}>
+                  {r.priority}
+                </span>
+                <span style={{fontSize:12,color:'var(--text-muted)'}}>{r.dayOfWeek} · W{r.weekOfMonth} · {r.period}</span>
+                <span style={{flex:1,fontSize:14,minWidth:160}}>{r.description}</span>
+                <button onClick={() => { setForm(Object.assign({}, blank, r)); setEditing(true); window.scrollTo({top:0,behavior:'smooth'}); }}
+                        style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>Edit</button>
+                <button onClick={() => setTechRules(techRules.filter(x => x.id !== r.id))} style={S.btnD}>Delete</button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Time off ─────────────────────────────────────────────────────────────────
+
+function TimeOffPanel({ S, techTimeOff, setTechTimeOff, techs, showToast }) {
+  const blank = { id:'', techId:'', startDate:'', endDate:'', reason:'' };
+  const [form, setForm] = useState(blank);
+  const set = (k,v) => setForm(Object.assign({}, form, {[k]:v}));
+
+  function save() {
+    if (!form.techId || !form.startDate || !form.endDate) { showToast('Technician and both dates are required', 'error'); return; }
+    if (form.endDate < form.startDate) { showToast('End date is before start date', 'error'); return; }
+    setTechTimeOff(techTimeOff.concat([Object.assign({}, form, { id: newId('to'), createdAt: Date.now() })]));
+    setForm(blank);
+  }
+
+  const sorted = techTimeOff.slice().sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:12}}>Add time off</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12}} className="mob-grid1">
+          <div>
+            <label style={S.label}>Technician</label>
+            <select value={form.techId} onChange={e => set('techId', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})}>
+              <option value="">— pick —</option>
+              {techs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div><label style={S.label}>Start</label>
+            <input type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})} /></div>
+          <div><label style={S.label}>End</label>
+            <input type="date" value={form.endDate} onChange={e => set('endDate', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})} /></div>
+          <div><label style={S.label}>Reason</label>
+            <input value={form.reason} onChange={e => set('reason', e.target.value)} placeholder="PTO" style={Object.assign({}, S.input, {width:'100%'})} /></div>
+        </div>
+        <button onClick={save} style={Object.assign({}, S.btnP, {marginTop:14})}>Add time off</button>
+      </div>
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div className="mob-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:520}}>
+            <thead><tr><th style={S.th}>Technician</th><th style={S.th}>Dates</th><th style={S.th}>Reason</th><th style={S.th}></th></tr></thead>
+            <tbody>
+              {sorted.length === 0 && <tr><td style={Object.assign({}, S.td,{color:'var(--text-muted)'})} colSpan={4}>No time off recorded.</td></tr>}
+              {sorted.map(v => {
+                const t = techs.find(x => x.id === v.techId);
+                return (
+                  <tr key={v.id}>
+                    <td style={Object.assign({}, S.td, {fontWeight:600})}>{t ? t.name : '(deleted tech)'}</td>
+                    <td style={S.td}>{v.startDate} → {v.endDate}</td>
+                    <td style={Object.assign({}, S.td, {color:'var(--text-muted)'})}>{v.reason || '—'}</td>
+                    <td style={S.td}><button onClick={() => setTechTimeOff(techTimeOff.filter(x => x.id !== v.id))} style={S.btnD}>Delete</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts, setTechContacts, notifyLog, showToast,
+                       dayLinks, linksLoading, loadDayLinks, rotateDayLink,
+                       selectedDate, setSelectedDate, sendDay, sendChanges, sendTest, sendInvite, sending,
+                       channelStatus, loadChannelStatus, reloadNotifyLog,
+                       invites, invitesLoading, loadInvites, botUsername, unreachable }) {
+  const set = (k,v) => setNotifySettings(Object.assign({}, notifySettings, {[k]:v}));
+
+  useEffect(() => { if (!channelStatus) loadChannelStatus(); }, []);
+  useEffect(() => { if (!Object.keys(invites).length) loadInvites(true); }, []);
+
+  const [qrFor, setQrFor] = useState(null);            // techId whose QR is open
+  const emailOn = !!(channelStatus && (channelStatus.configured || []).includes('email'));
+  const qrAvailable = typeof qrcode === 'function';
+
+  const [logDate, setLogDate] = useState(selectedDate);
+  const entry = notifyLog[logDate] || {};
+
+  // Flatten the day's attempts into one table. Every attempt is shown, including a
+  // Telegram failure that later fell through to email — hiding it would hide exactly
+  // what you need when someone says they never got the message.
+  const rows = [];
+  ['evening','morning'].forEach(kind => {
+    if (entry[kind] && entry[kind].results) {
+      entry[kind].results.forEach(r => rows.push(Object.assign({ kind, sentAt: entry[kind].sentAt }, r)));
+    }
+  });
+  (entry.changes || []).forEach((c, i) => {
+    (c.results || []).forEach(r => rows.push(Object.assign({ kind: 'change #' + (i+1), sentAt: c.at }, r)));
+  });
+  rows.sort((a,b) => (b.at||0) - (a.at||0));
+
+  const STATUS_STYLE = {
+    delivered:   { color:'#10b981', icon:'✓' },
+    opened:      { color:'#10b981', icon:'👁' },
+    queued:      { color:'#6b7280', icon:'…' },
+    failed:      { color:'#ef4444', icon:'✕' },
+    unreachable: { color:'#f59e0b', icon:'⚠' },
+    no_channel:  { color:'#f59e0b', icon:'—' },
+    not_configured:{ color:'#6b7280', icon:'—' },
+    no_target:   { color:'#f59e0b', icon:'—' },
+  };
+  const techName = id => (techs.find(t => t.id === id) || {}).name || id;
+  function setContact(techId, field, val) {
+    setTechContacts(Object.assign({}, techContacts, {
+      [techId]: Object.assign({}, techContacts[techId] || {}, { [field]: val })
+    }));
+  }
+  const hours = Array.from({length:24}, (_,i) => i);
+  function fmtHour(h) { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return `${hh}:00 ${ap}`; }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {channelStatus && (
+        <div style={Object.assign({}, S.card, {padding:14,
+              borderColor: (channelStatus.configured || []).length ? 'var(--border-subtle)' : '#b45309'})}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:0.6,color:'var(--text-muted)',marginBottom:8}}>
+            Channels
+          </div>
+          {(channelStatus.configured || []).length === 0 ? (
+            <div style={{fontSize:13,color:'#f59e0b',lineHeight:1.6}}>
+              ⚠️ No channel is configured on the server. Set <code>TELEGRAM_BOT_TOKEN</code> for Telegram
+              and/or <code>BREVO_API_KEY</code> + <code>EMAIL_FROM</code> for email in the Netlify environment.
+              Nothing can be sent until at least one is set.
+            </div>
+          ) : (
+            <div>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                {['telegram','email'].map(ch => {
+                  const on = (channelStatus.configured || []).includes(ch);
+                  return (
+                    <span key={ch} style={{fontSize:12,fontWeight:700,padding:'4px 11px',borderRadius:99,
+                            background: on ? 'rgba(16,185,129,0.12)' : 'var(--bg-elevated)',
+                            border:'1px solid ' + (on ? '#10b981' : 'var(--border-default)'),
+                            color: on ? '#10b981' : 'var(--text-dim)'}}>
+                      {on ? '✓' : '—'} {ch === 'telegram' ? '💬 Telegram' : '✉️ Email'}
+                    </span>
+                  );
+                })}
+                {channelStatus.botUsername && (
+                  <span style={{fontSize:12,color:'var(--text-muted)'}}>bot: @{channelStatus.botUsername}</span>
+                )}
+              </div>
+              {!emailOn && (
+                // Not an error — email is simply not switched on. But with one channel
+                // there is no fallback, so the consequence is worth stating plainly.
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8,lineHeight:1.6}}>
+                  Telegram is the only channel. Anyone who has not linked it receives nothing, and there is no
+                  fallback if a message fails. Adding email later needs three environment variables — no code change.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:10}}>Send now</div>
+        <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div>
+            <label style={S.label}>For the day</label>
+            <input type="date" value={logDate} onChange={e => e.target.value && setLogDate(e.target.value)}
+                   style={S.input} />
+          </div>
+          <button onClick={() => sendDay(logDate, 'evening')} disabled={!!sending} style={S.btnP}>
+            {sending === 'evening' ? 'Sending…' : '🌙 Send as night-before'}
+          </button>
+          <button onClick={() => sendDay(logDate, 'morning')} disabled={!!sending} style={S.btnP}>
+            {sending === 'morning' ? 'Sending…' : '☀️ Send as morning-of'}
+          </button>
+          <button onClick={() => sendChanges(logDate)} disabled={!!sending} style={S.btn}>
+            {sending === 'change' ? 'Sending…' : '🔔 Push changes only'}
+          </button>
+          <button onClick={reloadNotifyLog} style={S.btn}>↻ Refresh log</button>
+        </div>
+        <div style={{marginTop:10,fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          "Night-before" says <em>Tomorrow</em>, "morning-of" says <em>Today</em> — pick the one matching what the
+          technicians should read, not the clock. "Push changes only" messages just the people whose own assignment
+          moved since the last send.
+        </div>
+      </div>
+
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:12}}>Schedule</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12}} className="mob-grid1">
+          <div>
+            <label style={S.label}>Timezone</label>
+            <input value={notifySettings.timezone} onChange={e => set('timezone', e.target.value)} style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          <div>
+            <label style={S.label}>Night-before send</label>
+            <select value={notifySettings.eveningHour} onChange={e => set('eveningHour', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})}>
+              {hours.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Morning-of send</label>
+            <select value={notifySettings.morningHour} onChange={e => set('morningHour', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})}>
+              {hours.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:18,marginTop:14,flexWrap:'wrap'}}>
+          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={!!notifySettings.enabled} onChange={e => set('enabled', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
+            Automatic sends enabled
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={!!notifySettings.changeAlertsEnabled} onChange={e => set('changeAlertsEnabled', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
+            Alert on last-minute changes
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={!!notifySettings.fanout} onChange={e => set('fanout', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
+            Send on every channel (not just the first that works)
+          </label>
+        </div>
+      </div>
+
+      {unreachable.length > 0 && (
+        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'12px 14px'}}>
+          <div style={{fontSize:14,fontWeight:700,color:'#f59e0b',marginBottom:4}}>
+            ⚠️ {unreachable.length} technician{unreachable.length===1?'':'s'} cannot be reached
+          </div>
+          <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6}}>
+            {unreachable.map(t => t.name).join(', ')} {unreachable.length===1?'has':'have'} not linked Telegram
+            {emailOn ? ' and have no working email' : ''}. They will receive <strong>nothing</strong> — not the
+            night-before message, not the morning one, and not change alerts. Send them the invite below, or scan
+            them in person.
+          </div>
+        </div>
+      )}
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div style={{padding:'14px 16px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Technicians &amp; Telegram</span>
+          {botUsername && <span style={{fontSize:12,color:'var(--text-muted)'}}>@{botUsername}</span>}
+          <div style={{flex:1}} />
+          <button onClick={() => loadInvites(false)} disabled={invitesLoading} style={S.btn}>
+            {invitesLoading ? 'Loading…' : '↻ Refresh invites'}
+          </button>
+        </div>
+        <div style={{padding:'6px 16px 12px',fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          A Telegram bot cannot message someone first, so each technician has to open their own invite link once.
+          Show them the QR code in person, or send them the link however you already reach them.
+          {!qrAvailable && <span style={{color:'#f59e0b'}}> QR rendering is unavailable — use the copy-link button.</span>}
+        </div>
+        <div className="mob-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:620}}>
+            <thead><tr>
+              <th style={S.th}>Technician</th><th style={S.th}>Telegram</th>
+              {emailOn && <th style={S.th}>Email</th>}
+              <th style={S.th}>Invite</th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {techs.filter(t => t.active !== false).map(t => {
+                const c = techContacts[t.id] || {};
+                const chans = c.channels || notifySettings.defaultChannels || [];
+                const inv = invites[t.id];
+                const linked = !!c.telegramChatId || !!(inv && inv.linked);
+                return (
+                  <React.Fragment key={t.id}>
+                    <tr style={{background: linked ? 'transparent' : 'rgba(245,158,11,0.06)'}}>
+                      <td style={Object.assign({}, S.td, {fontWeight:600})}>{t.name}</td>
+                      <td style={Object.assign({}, S.td, {fontSize:13})}>
+                        {linked
+                          ? <span style={{color:'#10b981',fontWeight:700}}>✓ linked</span>
+                          : <span style={{color:'#f59e0b',fontWeight:700}}>⚠ not linked</span>}
+                      </td>
+                      {emailOn && (
+                        <td style={S.td}>
+                          <input value={c.email || ''} onChange={e => setContact(t.id, 'email', e.target.value.trim())}
+                                 placeholder="name@practice.com"
+                                 style={Object.assign({}, S.input, {width:'100%',minWidth:170,
+                                   borderColor: c.emailBounced ? '#b91c1c' : 'var(--border-default)'})} />
+                          {c.emailBounced && (
+                            <div style={{fontSize:11,color:'#ef4444',marginTop:3}}>
+                              ⚠ bounced ({c.emailBounceReason || 'undeliverable'})
+                              {' '}<button onClick={() => setContact(t.id,'emailBounced',false)}
+                                      style={{background:'none',border:'none',cursor:'pointer',fontSize:11,
+                                              color:'var(--text-muted)',textDecoration:'underline',fontFamily:'inherit',padding:0}}>clear</button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                      <td style={S.td}>
+                        {!inv ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>—</span>
+                        ) : linked ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>done</span>
+                        ) : (
+                          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                            <button onClick={() => setQrFor(qrFor === t.id ? null : t.id)}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>
+                              {qrFor === t.id ? 'Hide QR' : '📷 QR'}
+                            </button>
+                            <button onClick={() => {
+                                      navigator.clipboard.writeText(inv.url)
+                                        .then(() => showToast('Invite link copied', 'success'))
+                                        .catch(() => showToast('Copy failed — open the QR and read the link below it', 'error'));
+                                    }}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>Copy link</button>
+                            {emailOn && c.email && (
+                              <button onClick={() => sendInvite(t.id)} disabled={!!sending}
+                                      style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>Email it</button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td style={S.td}>
+                        <button onClick={() => sendTest(t.id)} disabled={!!sending || !linked}
+                                title={linked ? 'Send this technician a test message' : 'Not linked yet'}
+                                style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
+                                  opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                      </td>
+                    </tr>
+                    {qrFor === t.id && inv && (
+                      <tr>
+                        <td colSpan={emailOn ? 5 : 4} style={{padding:'14px 16px 18px',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-deep)'}}>
+                          <div style={{display:'flex',gap:18,alignItems:'flex-start',flexWrap:'wrap'}}>
+                            {(() => {
+                              const uri = qrDataUri(inv.url, 190);
+                              return uri
+                                ? <img src={uri} alt={'Telegram invite QR for ' + t.name}
+                                       style={{width:190,height:190,borderRadius:10,flexShrink:0,background:'#fff'}} />
+                                : <div style={{width:190,height:190,display:'flex',alignItems:'center',justifyContent:'center',
+                                               border:'1px dashed var(--border-default)',borderRadius:10,fontSize:12,
+                                               color:'var(--text-muted)',textAlign:'center',padding:12}}>
+                                    QR unavailable — use the link
+                                  </div>;
+                            })()}
+                            <div style={{flex:1,minWidth:220}}>
+                              <div style={{fontWeight:700,marginBottom:6}}>Onboarding {t.name}</div>
+                              <ol style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.8,paddingLeft:18,margin:'0 0 10px'}}>
+                                <li>They install Telegram and sign in</li>
+                                <li>They point their phone camera at this code</li>
+                                <li>Telegram opens — they tap <strong>Start</strong></li>
+                              </ol>
+                              <div style={{fontSize:11,fontFamily:'"Space Mono",monospace',color:'var(--text-muted)',
+                                           wordBreak:'break-all',background:'var(--input-bg)',padding:'7px 9px',borderRadius:6}}>
+                                {inv.url}
+                              </div>
+                              <div style={{fontSize:11,color:'var(--text-dim)',marginTop:8}}>
+                                This link is personal to {t.name} — it binds whoever opens it to their assignments, so don't post it anywhere shared.
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div style={{padding:'14px 16px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Day-view links</span>
+          <div style={{flex:1}} />
+          <button onClick={loadDayLinks} disabled={linksLoading} style={S.btn}>
+            {linksLoading ? 'Loading…' : (Object.keys(dayLinks).length ? 'Refresh' : 'Load links')}
+          </button>
+        </div>
+        <div style={{padding:'6px 16px 12px',fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          Each link opens that technician's day board with no login. It is signed and permanent, so the same link
+          works every day — rotate it if a phone is lost.
+        </div>
+        {Object.keys(dayLinks).length === 0 ? (
+          <div style={{padding:'0 16px 16px',fontSize:13,color:'var(--text-dim)'}}>
+            Not loaded yet.
+          </div>
+        ) : (
+          <div className="mob-scroll">
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:560}}>
+              <thead><tr><th style={S.th}>Technician</th><th style={S.th}>Link</th><th style={S.th}></th></tr></thead>
+              <tbody>
+                {techs.filter(t => t.active !== false && dayLinks[t.id]).map(t => (
+                  <tr key={t.id}>
+                    <td style={Object.assign({}, S.td, {fontWeight:600})}>{t.name}</td>
+                    <td style={Object.assign({}, S.td, {fontSize:11,fontFamily:'"Space Mono",monospace',
+                                                        maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'})}>
+                      {dayLinks[t.id].url}
+                    </td>
+                    <td style={S.td}>
+                      <div style={{display:'flex',gap:6}}>
+                        <button onClick={() => {
+                                  navigator.clipboard.writeText(dayLinks[t.id].url)
+                                    .then(() => showToast('Link copied', 'success'))
+                                    .catch(() => showToast('Copy failed — select the link manually', 'error'));
+                                }}
+                                style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>Copy</button>
+                        <a href={dayLinks[t.id].url} target="_blank" rel="noopener noreferrer"
+                           style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,textDecoration:'none'})}>Open</a>
+                        <button onClick={() => rotateDayLink(t.id)} style={S.btnD}>Rotate</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div style={{padding:'14px 16px 4px',display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Delivery log — {fmtDateShort(logDate)}</span>
+          <span style={{fontSize:12,color:'var(--text-muted)'}}>
+            {rows.length ? `${rows.length} attempt${rows.length===1?'':'s'}` : 'nothing sent for this day'}
+          </span>
+        </div>
+        <div style={{padding:'2px 16px 12px',fontSize:12,color:'var(--text-muted)'}}>
+          Every attempt is listed, including a channel that failed before a fallback succeeded.
+        </div>
+        {rows.length === 0 ? (
+          <div style={{padding:'0 16px 16px',fontSize:13,color:'var(--text-dim)'}}>
+            No messages have been sent for {fmtDateShort(logDate)}.
+          </div>
+        ) : (
+          <div className="mob-scroll">
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:620}}>
+              <thead><tr>
+                <th style={S.th}>Technician</th><th style={S.th}>Send</th><th style={S.th}>Channel</th>
+                <th style={S.th}>Status</th><th style={S.th}>When</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r,i) => {
+                  const st = STATUS_STYLE[r.status] || { color:'var(--text-muted)', icon:'?' };
+                  return (
+                    <tr key={i}>
+                      <td style={Object.assign({}, S.td, {fontWeight:600})}>{techName(r.techId)}</td>
+                      <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)'})}>{r.kind}</td>
+                      <td style={Object.assign({}, S.td, {fontSize:12})}>
+                        {r.channel === 'telegram' ? '💬 Telegram' : r.channel === 'email' ? '✉️ Email' : '—'}
+                      </td>
+                      <td style={Object.assign({}, S.td, {fontSize:13})}>
+                        <span style={{color:st.color,fontWeight:600}}>{st.icon} {r.status}</span>
+                        {r.error && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{r.error}</div>}
+                      </td>
+                      <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'})}>
+                        {r.at ? new Date(r.at).toLocaleTimeString() : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>
