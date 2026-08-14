@@ -817,6 +817,8 @@ window.ScheduleHelper = function StaffScheduler() {
   const [finalPlans, setFinalPlans] = useState({}); // { "2026-1": "A", ... }
   const [planHistory, setPlanHistory] = useState({}); // { [scheduleKey]: [{ts, desc}] }
   const [showHistory, setShowHistory] = useState(true);
+  const [accountAudit, setAccountAudit] = useState([]); // [{ts, desc, by}] — per-tenant account change log
+  const [showAccountAudit, setShowAccountAudit] = useState(false);
 
   // AI Agent chat
   const [chatMessages, setChatMessages] = useState([]);
@@ -1183,6 +1185,22 @@ window.ScheduleHelper = function StaffScheduler() {
     });
   }
 
+  // Account audit log — written by both index.html and techs.html, so it is always
+  // read-modify-write at append time (never persisted from state via saveData).
+  async function addAuditEntry(desc) {
+    const ns = user?.adminUsername || user?.username;
+    if (!ns) return;
+    const ts = new Date().toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+    const by = user?.username || null;
+    try {
+      let list = [];
+      try { const r = await window.storage.get(`${ns}:accountAudit`); if (r) list = JSON.parse(r.value) || []; } catch(e) {}
+      const next = [{ ts, desc, by }, ...list].slice(0, 200);
+      await window.storage.set(`${ns}:accountAudit`, JSON.stringify(next));
+      setAccountAudit(next);
+    } catch(e) {}
+  }
+
   function copyPlanTo(fromPlan, toPlan) {
     const fromKey = `schedule-${currentYear}-${currentMonth}-${fromPlan}`;
     const toKey = `schedule-${currentYear}-${currentMonth}-${toPlan}`;
@@ -1286,6 +1304,7 @@ window.ScheduleHelper = function StaffScheduler() {
   function resetAllUserState() {
     setStaff([]); setLocations([]); setRules([]); setVacations([]); setMedicalLeaves([]); setHolidays([]);
     setSchedules({}); setDayNotes({}); setFinalPlans({}); setPlanHistory({}); setChatMessages([]);
+    setAccountAudit([]);
     // Clear visibility + allow the init-once effects to run again for the next account (M5)
     setVisibleStaff(new Set()); setVisibleLocations(new Set());
     visStaffInitRef.current = false; visLocInitRef.current = false;
@@ -1345,6 +1364,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
       const dn = await d('dayNotes'); if (dn) setDayNotes(dn);
       const ph = await d('planHistory'); if (ph) setPlanHistory(ph);
+      const aa = await d('accountAudit'); if (aa) setAccountAudit(aa);
     } catch(e) {}
   }
 
@@ -1541,14 +1561,15 @@ window.ScheduleHelper = function StaffScheduler() {
       try { existing = await window.storage.get(`user:${username}`); } catch(e) {}
       if (existing) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,saving:false,msg:'❌ Username already taken.'}})); return; }
       // Create user record with staff type, linked to admin and this staff member.
-      // adminUsername is stored so staff always load live data from the admin's namespace.
-      const adminUsername = user.username;
+      // adminUsername is stored so staff always load live data from the TENANT's namespace.
+      const adminUsername = user.adminUsername || user.username;
       const newUser = { username, userType: 'staff', staffId: staffMember.id, adminUsername, created: Date.now() };
       await window.storage.set(`user:${username}`, JSON.stringify({ ...newUser, password: await hashPassword(password) }));
       // No data copy needed — staff load directly from admin namespace at runtime.
       // Store reverse lookup so we can find this account by staffId
       await window.storage.set('staffPortal:' + staffMember.id, JSON.stringify({ username }));
       setPortalAccounts(p=>({...p,[staffMember.id]:{ username }}));
+      addAuditEntry(`Created portal login "${username}" for ${staffMember.name}`);
       setStaffAccountForm(p=>({...p,[staffMember.id]:{username:'',password:'',saving:false,msg:'✅ Account created! Login: ' + username}}));
     } catch(e) { setStaffAccountForm(p=>({...p,[staffMember.id]:{...(staffAccountForm[staffMember.id]||{}),saving:false,msg:'❌ Failed to create account.'}})); }
   }
@@ -1566,7 +1587,7 @@ window.ScheduleHelper = function StaffScheduler() {
     // One-time migration: patch any staff user records missing adminUsername.
     // Runs silently on every admin load — is a no-op once all records are patched.
     if (user && (user.userType === 'admin' || user.isDev)) {
-      const adminUsername = user.username;
+      const adminUsername = user.adminUsername || user.username;
       for (const acct of Object.values(result)) {
         if (!acct || !acct.username) continue;
         try {
@@ -1600,6 +1621,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const parsed = JSON.parse(userData.value);
       parsed.password = await hashPassword(newPassword);
       await window.storage.set('user:' + acct.username, JSON.stringify(parsed));
+      addAuditEntry(`Reset portal password for ${staffMember.name} ("${acct.username}")`);
       setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,newPassword:'',changingPw:false,pwMsg:'✅ Password updated.'}}));
     } catch(e) {
       setStaffAccountForm(p=>({...p,[staffMember.id]:{...form,changingPw:false,pwMsg:'❌ Failed to update password.'}}));
@@ -1643,6 +1665,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const updatedList = [...managedUsers, { username, userType: resolvedType }];
       await window.storage.set(`managers:${adminUsername}`, JSON.stringify(updatedList));
       setManagedUsers(updatedList);
+      addAuditEntry(`Created managed user "${username}" (${resolvedType === 'admin' ? 'Full Editing' : 'Read Only'})`);
       setManagerForm({username:'',password:'',userType:'staff',msg:`✅ User "${username}" created successfully.`});
     } catch(e) { setManagerForm(p=>({...p,msg:'❌ Failed to create user.'})); }
   }
@@ -1655,6 +1678,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const updatedList = managedUsers.filter(mu => mu.username !== username);
       await window.storage.set(`managers:${adminUsername}`, JSON.stringify(updatedList));
       setManagedUsers(updatedList);
+      addAuditEntry(`Deleted managed user "${username}"`);
       setManagerPwForms(p => { const n={...p}; delete n[username]; return n; });
     } catch(e) { alert('Failed to delete user.'); }
   }
@@ -1671,6 +1695,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const updatedList = managedUsers.map(mu => mu.username === username ? { ...mu, userType: newType } : mu);
       await window.storage.set(`managers:${adminUsername}`, JSON.stringify(updatedList));
       setManagedUsers(updatedList);
+      addAuditEntry(`Changed "${username}" to ${newType === 'admin' ? 'Full Editing' : 'Read Only'}`);
     } catch(e) { alert('Failed to update role.'); }
   }
 
@@ -4949,6 +4974,42 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   </div>
                 );
               })()}
+
+              {/* Account Activity — admin only (top-level + managed admins) */}
+              {isAdmin && (
+                <div style={{marginBottom:16,border:'1px solid var(--border-subtle)',borderRadius:12,overflow:'hidden',background:'var(--bg-elevated)'}}>
+                  <div onClick={()=>setShowAccountAudit(p=>!p)}
+                    style={{padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',background:'linear-gradient(135deg,var(--bg-elevated),var(--bg-surface))',borderBottom:showAccountAudit&&accountAudit.length>0?'1px solid var(--border-subtle)':'none'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:15,fontWeight:700,color:'#a78bfa'}}>🔐 Account Activity</span>
+                      {accountAudit.length > 0 && <span style={{fontSize:13,background:'#6366f122',color:'#818cf8',borderRadius:8,padding:'1px 8px',fontWeight:600}}>{accountAudit.length}</span>}
+                      <span style={{fontSize:13,color:'var(--text-dim)'}}>Logins & user accounts</span>
+                    </div>
+                    <span style={{fontSize:13,color:'var(--text-dim)'}}>{showAccountAudit ? '▼' : '▶'}</span>
+                  </div>
+                  {showAccountAudit && (
+                    <div>
+                      {accountAudit.length === 0 ? (
+                        <div style={{padding:'14px 16px',fontSize:14,color:'var(--text-dim)',fontStyle:'italic'}}>
+                          No account changes recorded yet. Creating logins, resetting passwords, and role changes will appear here.
+                        </div>
+                      ) : (
+                        <div style={{maxHeight:220,overflowY:'auto'}}>
+                          {accountAudit.map((entry, i) => (
+                            <div key={i} style={{padding:'9px 16px',borderBottom:i<accountAudit.length-1?'1px solid var(--bg-surface)':'none',display:'flex',gap:14,alignItems:'baseline'}}>
+                              <div style={{display:'flex',flexDirection:'column',gap:2,flexShrink:0,minWidth:160}}>
+                                <span style={{fontSize:12,color:'var(--text-dim)',fontFamily:'"Space Mono",monospace'}}>{entry.ts}</span>
+                                {entry.by && <span style={{fontSize:11,color:'#6366f1',fontFamily:'"Space Mono",monospace',fontWeight:600}}>{entry.by}</span>}
+                              </div>
+                              <span style={{fontSize:14,color:'var(--text-primary)'}}>{entry.desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Developer Log Panel */}
               {isDev && (

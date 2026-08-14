@@ -749,6 +749,21 @@ function App() {
     setPortalAccounts(out);
   }
 
+  // Account audit log — shared with index.html, so always read-modify-write at
+  // append time (never held in state and flushed via saveData).
+  async function addAuditEntry(desc) {
+    const ns = dataNs;
+    if (!ns) return;
+    const ts = new Date().toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+    const by = user?.username || null;
+    try {
+      let list = [];
+      try { const r = await window.storage.get(`${ns}:accountAudit`); if (r) list = JSON.parse(r.value) || []; } catch(e) {}
+      const next = [{ ts, desc, by }, ...list].slice(0, 200);
+      await window.storage.set(`${ns}:accountAudit`, JSON.stringify(next));
+    } catch(e) {}
+  }
+
   async function createTechPortalAccount(tech) {
     const base = (tech.name || 'tech').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'tech';
     const username = base + Math.floor(100 + Math.random() * 900);
@@ -763,6 +778,7 @@ function App() {
       }));
       await window.storage.set('techPortal:' + tech.id, JSON.stringify({ username }));
       setPortalAccounts(prev => Object.assign({}, prev, { [tech.id]: { username } }));
+      addAuditEntry(`Created technician login "${username}" for ${tech.name}`);
       // Shown once and never stored in the clear — copy it before dismissing.
       window.prompt(`Portal login for ${tech.name} — copy this now, it is not stored:`, `${username} / ${password}`);
     } catch(e) {
@@ -779,6 +795,7 @@ function App() {
       const rec = JSON.parse(r.value);
       rec.password = await hashPassword(password);
       await window.storage.set('user:' + acct.username, JSON.stringify(rec));
+      addAuditEntry(`Reset technician password for ${tech.name}`);
       window.prompt(`New password for ${acct.username} — copy this now:`, password);
     } catch(e) {
       showToast('Could not reset password: ' + e.message, 'error');

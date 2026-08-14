@@ -189,6 +189,20 @@ async function checkUserKeyAccess(action, key, session, store, incomingValue) {
   if (session.type === 'dev') return true;      // dev is unrestricted
   if (session.type !== 'admin') return false;   // staff may only touch user:<self>
 
+  // Accounts belong to the TENANT (the practice), not to whichever admin happens to be
+  // acting. A managed "Full Editing" admin works inside the parent admin's namespace, so
+  // ownership is checked against the tenant rather than session.sub. Managed admins may
+  // manage portal logins (userType 'staff') but never admin-level accounts — that keeps
+  // control over who can edit with the top-level owner, and stops a managed admin from
+  // hijacking a peer or promoting themselves a colleague.
+  const tenant = session.adminUsername || session.sub;
+  const isTenantOwner = !session.adminUsername;
+  const permitted = (rec) => {
+    if (!rec || rec.adminUsername !== tenant) return false;
+    if (!isTenantOwner && rec.userType !== 'staff') return false;
+    return true;
+  };
+
   let existingRaw;
   try {
     existingRaw = await store.get(key);
@@ -196,19 +210,23 @@ async function checkUserKeyAccess(action, key, session, store, incomingValue) {
     return false;
   }
 
-  if (existingRaw == null) {
-    // No record yet: only account creation (a `set` whose value stamps this admin as
-    // owner) may proceed. get/delete on a missing record are denied.
-    if (action !== 'set') return false;
-    let parsed;
-    try { parsed = JSON.parse(incomingValue); } catch(e) { return false; }
-    return !!(parsed && parsed.adminUsername === session.sub);
+  // For writes, the INCOMING record must also be permitted — otherwise a managed admin
+  // could re-home an account to themselves or promote a portal login to admin.
+  let incoming = null;
+  if (action === 'set') {
+    try { incoming = JSON.parse(incomingValue); } catch(e) { return false; }
+    if (!permitted(incoming)) return false;
   }
 
-  // Record exists: allow only if this admin owns it.
+  if (existingRaw == null) {
+    // No record yet: only account creation may proceed (already validated above).
+    return action === 'set';
+  }
+
+  // Record exists: the caller must be permitted to touch it as it stands today.
   let parsed;
   try { parsed = JSON.parse(existingRaw); } catch(e) { return false; }
-  return !!(parsed && parsed.adminUsername === session.sub);
+  return permitted(parsed);
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────
