@@ -118,7 +118,7 @@ window.storage=(function(){
   }
   // Trigger migration on first storage call
   var migP=null;
-  function ensureMigrated(){if(!migP)migP=migrate();return migP;}
+  function ensureMigrated(){if(!localStorage.getItem('sessionToken'))return Promise.resolve();if(!migP)migP=migrate();return migP;}
   return{
     async get(key){await ensureMigrated();var d=await call({action:'get',key:key});return{key:d.key,value:d.value,shared:false};},
     async set(key,value){await ensureMigrated();await call({action:'set',key:key,value:value});return{key:key,value:value,shared:false};},
@@ -379,6 +379,9 @@ function isWeekend(year, month, day) {
   return [0, 6].includes(new Date(year, month, day).getDay());
 }
 
+// Escape user-supplied strings before interpolating into generated HTML (PDF XSS guard)
+function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
 // Get which week-of-month (1-5) a given day falls on
 function getWeekOfMonth(day) {
   return Math.max(1, Math.ceil(day / 7));
@@ -394,12 +397,23 @@ function useIsMobile() {
   return m;
 }
 
+function useEscapeClose(active, onClose) {
+  React.useEffect(() => {
+    if (!active) return;
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [active, onClose]);
+}
+
 function Modal({ open, onClose, title, children, wide, headerActions }) {
   const mob = useIsMobile();
+  useEscapeClose(open, onClose);
   if (!open) return null;
+  const dialogLabel = typeof title === 'string' ? title : undefined;
   if (mob) {
     return (
-      <div style={{position:'fixed',inset:0,zIndex:1000,background:'var(--bg-deep)',display:'flex',flexDirection:'column',overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
+      <div role="dialog" aria-modal="true" aria-label={dialogLabel} style={{position:'fixed',inset:0,zIndex:1000,background:'var(--bg-deep)',display:'flex',flexDirection:'column',overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
         <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0,position:'sticky',top:0,zIndex:10}}>
           <h3 style={{margin:0,fontSize:17,color:'var(--text-primary)',fontFamily:'"DM Sans",sans-serif',fontWeight:700,flex:1,paddingRight:12}}>{title}</h3>
           <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
@@ -415,7 +429,7 @@ function Modal({ open, onClose, title, children, wide, headerActions }) {
   }
   return (
     <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--overlay-bg)',backdropFilter:'blur(4px)'}} onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:32,minWidth:wide?700:420,maxWidth:wide?900:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+      <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label={dialogLabel} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:32,minWidth:wide?700:420,maxWidth:wide?900:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
           <h3 style={{margin:0,fontSize:20,color:'var(--text-primary)',fontFamily:'"DM Sans",sans-serif',fontWeight:600}}>{title}</h3>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
@@ -430,30 +444,33 @@ function Modal({ open, onClose, title, children, wide, headerActions }) {
 }
 
 function Input({ label, value, onChange, placeholder, type = "text", style: sx }) {
+  const id = React.useId();
   return (
     <div style={{marginBottom:16,...sx}}>
-      {label && <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      {label && <label htmlFor={id} style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <input id={id} type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         style={{width:'100%',padding:'10px 14px',background:'var(--input-bg)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}} />
     </div>
   );
 }
 
 function Textarea({ label, value, onChange, placeholder, rows=3 }) {
+  const id = React.useId();
   return (
     <div style={{marginBottom:16}}>
-      {label && <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
-      <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
+      {label && <label htmlFor={id} style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <textarea id={id} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
         style={{width:'100%',padding:'10px 14px',background:'var(--input-bg)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box',resize:'vertical'}} />
     </div>
   );
 }
 
 function Select({ label, value, onChange, options }) {
+  const id = React.useId();
   return (
     <div style={{marginBottom:16}}>
-      {label && <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
-      <select value={value} onChange={e => onChange(e.target.value)}
+      {label && <label htmlFor={id} style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:6,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>{label}</label>}
+      <select id={id} value={value} onChange={e => onChange(e.target.value)}
         style={{width:'100%',padding:'10px 14px',background:'var(--input-bg)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:15,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'}}>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -472,6 +489,10 @@ function Btn({ children, onClick, variant = "primary", style: sx, disabled }) {
     dev:{background:'linear-gradient(135deg,#b45309,#d97706)',color:'#fff'},
   };
   return <button onClick={onClick} disabled={disabled} style={{...base,...variants[variant]}}>{children}</button>;
+}
+
+function IconBtn({ label, onClick, children, style: sx }) {
+  return <button aria-label={label} title={label} onClick={onClick} style={{background:'none',border:'none',padding:0,cursor:'pointer',fontSize:15,lineHeight:1,fontFamily:'inherit',...sx}}>{children}</button>;
 }
 
 function Chip({ children, color }) {
@@ -509,7 +530,8 @@ function WeekOfMonthPicker({ value, onChange }) {
     <div style={{marginBottom:16}}>
       <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-        <div onClick={toggleAll}
+        <div onClick={toggleAll} role="button" tabIndex={0}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAll(); } }}
           style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
             background:isAll?'#6366f122':'var(--bg-surface)',color:isAll?'#818cf8':'var(--text-muted)',border:`1px solid ${isAll?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
           All Weeks
@@ -517,7 +539,8 @@ function WeekOfMonthPicker({ value, onChange }) {
         {weeks.map(w => {
           const active = selected.includes(w);
           return (
-            <div key={w} onClick={() => toggle(w)}
+            <div key={w} onClick={() => toggle(w)} role="button" tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(w); } }}
               style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
                 background:active?'#6366f122':'var(--bg-surface)',color:active?'#818cf8':'var(--text-muted)',border:`1px solid ${active?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
               {labels[w]}
@@ -669,10 +692,22 @@ window.ScheduleHelper = function StaffScheduler() {
   const [canRedo, setCanRedo] = useState(false);
   const [pendingUndoRedo, setPendingUndoRedo] = useState(null); // {type:'undo'|'redo', summary}
 
-  function pushScheduleHistory(prevSchedules) {
+  // Undo/redo stores per-entry deltas — only the single schedule key that was
+  // modified, not a full clone of every plan/month (M1). Each entry is
+  // { key, before, after }: `before` = that key's value prior to the change,
+  // `after` = its value once the change landed (captured lazily on first undo).
+  // A null value means "the key did not exist" (deleted-month case).
+  const cloneKeyVal = (v) => (v == null ? null : JSON.parse(JSON.stringify(v)));
+  function applyScheduleKey(obj, key, value) {
+    const next = { ...obj };
+    if (value == null) delete next[key]; else next[key] = value;
+    return next;
+  }
+
+  function pushScheduleHistory(prevSchedules, key) {
     // Trim any redo history beyond current index
     scheduleHistoryRef.current = scheduleHistoryRef.current.slice(0, scheduleHistoryIndexRef.current + 1);
-    scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(prevSchedules)));
+    scheduleHistoryRef.current.push({ key, before: cloneKeyVal(prevSchedules[key]), after: undefined });
     // Cap at 50 entries
     if (scheduleHistoryRef.current.length > 50) {
       scheduleHistoryRef.current.shift();
@@ -685,10 +720,13 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function undoSchedule() {
     if (scheduleHistoryIndexRef.current < 0) return;
-    // Restore the snapshot at current index, then step back
-    const prev = JSON.parse(JSON.stringify(scheduleHistoryRef.current[scheduleHistoryIndexRef.current]));
+    const entry = scheduleHistoryRef.current[scheduleHistoryIndexRef.current];
+    setSchedules(prev => {
+      // Capture the post-change value once so redo can restore it exactly
+      if (entry.after === undefined) entry.after = cloneKeyVal(prev[entry.key]);
+      return applyScheduleKey(prev, entry.key, entry.before);
+    });
     scheduleHistoryIndexRef.current -= 1;
-    setSchedules(prev);
     setCanUndo(scheduleHistoryIndexRef.current >= 0);
     setCanRedo(true);
     setRegenDiffSummary(null);
@@ -697,45 +735,47 @@ window.ScheduleHelper = function StaffScheduler() {
   function redoSchedule() {
     if (scheduleHistoryIndexRef.current >= scheduleHistoryRef.current.length - 1) return;
     scheduleHistoryIndexRef.current += 1;
-    const next = JSON.parse(JSON.stringify(scheduleHistoryRef.current[scheduleHistoryIndexRef.current]));
-    setSchedules(next);
+    const entry = scheduleHistoryRef.current[scheduleHistoryIndexRef.current];
+    setSchedules(prev => applyScheduleKey(prev, entry.key, entry.after));
     setCanUndo(true);
     setCanRedo(scheduleHistoryIndexRef.current < scheduleHistoryRef.current.length - 1);
     setRegenDiffSummary(null);
   }
 
-  function describeScheduleDiff(fromSchedules, toSchedules) {
-    const fromSched = fromSchedules[scheduleKey] || {};
-    const toSched   = toSchedules[scheduleKey]   || {};
-    const allDays   = new Set([...Object.keys(fromSched), ...Object.keys(toSched)]);
+  // Build the modal preview for a single history entry. `key` is the entry's
+  // schedule key; fromSched/toSched are that key's day maps (before/after the op).
+  // A day-by-day diff is only surfaced when the entry targets the plan currently
+  // in view; otherwise it's flagged as affecting a different plan/month (M1).
+  function describeScheduleDiff(key, fromSched, toSched) {
+    const inView = key === scheduleKey;
     const changedDays = [];
     let totalChanges = 0;
-    const resolveLoc = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
-    for (const dk of [...allDays].sort()) {
-      const fromDay = fromSched[dk] || {};
-      const toDay   = toSched[dk]   || {};
-      const allSids = new Set([...Object.keys(fromDay), ...Object.keys(toDay)]);
-      const changes = [];
-      for (const sid of allSids) {
-        const fp = fromDay[sid] || {}; const tp = toDay[sid] || {};
-        const fromAM = fp.am || 'OFF'; const toAM = tp.am || 'OFF';
-        const fromPM = fp.pm || 'OFF'; const toPM = tp.pm || 'OFF';
-        if (fromAM !== toAM || fromPM !== toPM) {
-          const staffMember = staff.find(s => s.id === sid);
-          const staffName = staffMember ? staffMember.name : sid;
-          changes.push({ sid, staffName, fromAM, toAM, fromPM, toPM,
-            fromAMName: resolveLoc(fromAM), toAMName: resolveLoc(toAM),
-            fromPMName: resolveLoc(fromPM), toPMName: resolveLoc(toPM) });
+    if (inView) {
+      const f = fromSched || {};
+      const t = toSched || {};
+      const allDays = new Set([...Object.keys(f), ...Object.keys(t)]);
+      const resolveLoc = id => id === 'OFF' ? 'OFF' : (locations.find(l => l.id === id)?.name || id);
+      for (const dk of [...allDays].sort()) {
+        const fromDay = f[dk] || {};
+        const toDay   = t[dk] || {};
+        const allSids = new Set([...Object.keys(fromDay), ...Object.keys(toDay)]);
+        const changes = [];
+        for (const sid of allSids) {
+          const fp = fromDay[sid] || {}; const tp = toDay[sid] || {};
+          const fromAM = fp.am || 'OFF'; const toAM = tp.am || 'OFF';
+          const fromPM = fp.pm || 'OFF'; const toPM = tp.pm || 'OFF';
+          if (fromAM !== toAM || fromPM !== toPM) {
+            const staffMember = staff.find(s => s.id === sid);
+            const staffName = staffMember ? staffMember.name : sid;
+            changes.push({ sid, staffName, fromAM, toAM, fromPM, toPM,
+              fromAMName: resolveLoc(fromAM), toAMName: resolveLoc(toAM),
+              fromPMName: resolveLoc(fromPM), toPMName: resolveLoc(toPM) });
+          }
         }
+        if (changes.length > 0) { changedDays.push({dk, count: changes.length, changes}); totalChanges += changes.length; }
       }
-      if (changes.length > 0) { changedDays.push({dk, count: changes.length, changes}); totalChanges += changes.length; }
     }
-    const allKeys = new Set([...Object.keys(fromSchedules), ...Object.keys(toSchedules)]);
-    allKeys.delete(scheduleKey);
-    let otherPlanChanges = 0;
-    for (const k of allKeys) {
-      if (JSON.stringify(fromSchedules[k]||{}) !== JSON.stringify(toSchedules[k]||{})) otherPlanChanges++;
-    }
+    const otherPlanChanges = inView ? 0 : 1;
     return { changedDays, totalChanges, otherPlanChanges };
   }
 
@@ -755,6 +795,9 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showUserLogs, setShowUserLogs] = useState(false);
   const [visibleStaff, setVisibleStaff] = useState(new Set());
   const [visibleLocations, setVisibleLocations] = useState(new Set());
+  // Init-once guards so an intentional hide-all isn't undone on later array changes (M5)
+  const visStaffInitRef = useRef(false);
+  const visLocInitRef = useRef(false);
   const [providersCollapsed, setProvidersCollapsed] = useState(false);
   const [locationsCollapsed, setLocationsCollapsed] = useState(false);
   const [confirmClearPlan, setConfirmClearPlan] = useState(false);
@@ -784,7 +827,6 @@ window.ScheduleHelper = function StaffScheduler() {
   // AI generation: pause/resume for critical ambiguities
   const [genAmbiguities, setGenAmbiguities] = useState(null); // [{question, options, id}]
   const [genAmbiguityAnswers, setGenAmbiguityAnswers] = useState({}); // {id: answer}
-  const [genPendingContext, setGenPendingContext] = useState(null); // saved context for resume
   const [showAmbiguityModal, setShowAmbiguityModal] = useState(false);
   const [ambiguityMinimized, setAmbiguityMinimized] = useState(false);
   const [ambiguityFocusIdx, setAmbiguityFocusIdx] = useState(0);
@@ -990,15 +1032,18 @@ window.ScheduleHelper = function StaffScheduler() {
     if (activeTab === 'managers' && isTopLevelAdmin) loadManagedUsers();
   }, [activeTab]);
 
-  // Initialize visibleStaff and visibleLocations to show all when data loads
+  // Initialize visibleStaff and visibleLocations to show all when data first loads.
+  // Guarded by init-once refs so a deliberate hide-all isn't undone later (M5).
   useEffect(() => {
-    if (staff.length > 0 && visibleStaff.size === 0) {
+    if (staff.length > 0 && !visStaffInitRef.current) {
+      visStaffInitRef.current = true;
       setVisibleStaff(new Set(staff.map(s => s.id)));
     }
   }, [staff]);
 
   useEffect(() => {
-    if (locations.length > 0 && visibleLocations.size === 0) {
+    if (locations.length > 0 && !visLocInitRef.current) {
+      visLocInitRef.current = true;
       setVisibleLocations(new Set(locations.map(l => l.id)));
     }
   }, [locations]);
@@ -1092,6 +1137,13 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showPartialRegenModal, setShowPartialRegenModal] = useState(false);
   const [partialRegenDays, setPartialRegenDays] = useState(new Set());
 
+  useEscapeClose(!!pendingFinalAction, () => setPendingFinalAction(null));
+  useEscapeClose(!!pendingUndoRedo, () => setPendingUndoRedo(null));
+  useEscapeClose(showRecheckInfoModal, () => setShowRecheckInfoModal(false));
+  useEscapeClose(pendingGenerate, () => setPendingGenerate(false));
+  useEscapeClose(showPartialRegenModal, () => setShowPartialRegenModal(false));
+  useEscapeClose(!!pendingRoleChange, () => setPendingRoleChange(null));
+
   const scheduleKey = `schedule-${currentYear}-${currentMonth}-${activePlan || 'A'}`;
   const monthKey = `${currentYear}-${currentMonth}`;
 
@@ -1137,7 +1189,13 @@ window.ScheduleHelper = function StaffScheduler() {
     const data = schedules[fromKey];
     if (!data) return;
     addHistoryEntry('Copied from Plan ' + fromPlan + ' → Plan ' + toPlan, toKey);
-    setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }; });
+    setSchedules(prev => { pushScheduleHistory(prev, toKey); return { ...prev, [toKey]: JSON.parse(JSON.stringify(data)) }; });
+    // Also copy the day notes (keyed by the same scheduleKey).
+    setDayNotes(prev => {
+      const fromNotes = prev[fromKey];
+      if (!fromNotes || Object.keys(fromNotes).length === 0) { const n = { ...prev }; delete n[toKey]; return n; }
+      return { ...prev, [toKey]: JSON.parse(JSON.stringify(fromNotes)) };
+    });
   }
 
   useEffect(() => {
@@ -1221,9 +1279,25 @@ window.ScheduleHelper = function StaffScheduler() {
     })();
   }, []);
 
+  // Reset all per-account state to initial shapes. Used on session expiry and
+  // before a fresh login/registration so state never bleeds across accounts.
+  // saveData effects guard on `if (user)`; user is null at both call sites so
+  // clearing does not trigger cloud writes.
+  function resetAllUserState() {
+    setStaff([]); setLocations([]); setRules([]); setVacations([]); setMedicalLeaves([]); setHolidays([]);
+    setSchedules({}); setDayNotes({}); setFinalPlans({}); setPlanHistory({}); setChatMessages([]);
+    // Clear visibility + allow the init-once effects to run again for the next account (M5)
+    setVisibleStaff(new Set()); setVisibleLocations(new Set());
+    visStaffInitRef.current = false; visLocInitRef.current = false;
+    // Clear undo history — entries hold cloned schedule data from the previous
+    // account; undoing after an account switch must never restore it (H1).
+    scheduleHistoryRef.current = []; scheduleHistoryIndexRef.current = -1;
+    setCanUndo(false); setCanRedo(false);
+  }
+
   // Global session-expired handler — fired by the storage wrapper when token is expired or 401
   useEffect(() => {
-    const handler = () => { setUser(null); setIsDev(false); };
+    const handler = () => { setUser(null); setIsDev(false); resetAllUserState(); };
     window.addEventListener('session-expired', handler);
     return () => window.removeEventListener('session-expired', handler);
   }, []);
@@ -1239,12 +1313,13 @@ window.ScheduleHelper = function StaffScheduler() {
       // Migration: consolidate Stockton LASIK (l3) and Stockton LAL (l4) → Stockton (l2)
       const deprecatedLocs = ['l3', 'l4'];
       if (l) {
-        l = l.filter(loc => !deprecatedLocs.includes(loc.id));
-        setLocations(l);
+        const filtered = l.filter(loc => !deprecatedLocs.includes(loc.id));
+        // Only use the migrated array if it actually differs; else keep original
+        setLocations(filtered.length !== l.length ? filtered : l);
       }
       if (r) {
-        r = r.map(rule => deprecatedLocs.includes(rule.locationId) ? { ...rule, locationId: 'l2' } : rule);
-        setRules(r);
+        const hadDeprecated = r.some(rule => deprecatedLocs.includes(rule.locationId));
+        setRules(hadDeprecated ? r.map(rule => deprecatedLocs.includes(rule.locationId) ? { ...rule, locationId: 'l2' } : rule) : r);
       }
       if (sc) {
         // Migrate schedule assignments
@@ -1293,6 +1368,9 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
   useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
   useEffect(() => { if (user) saveData('dayNotes', dayNotes); }, [dayNotes]);
+
+  // Clear any stale AI status banner when switching month/plan (L5)
+  useEffect(() => { if (!generating) setAiLog(''); }, [scheduleKey]);
 
   // Apply data-theme attribute to html element
   useEffect(() => {
@@ -1371,6 +1449,8 @@ window.ScheduleHelper = function StaffScheduler() {
   async function handleAuth() {
     const { username, password, email, isRegister } = loginForm;
     if (!username || !password) return;
+    // Reset any leftover state so a fresh login/registration starts clean (H1)
+    resetAllUserState();
     try {
       const action = isRegister ? 'register' : 'login';
       if (isRegister && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) { alert('Please enter a valid email address.'); return; }
@@ -1698,8 +1778,9 @@ window.ScheduleHelper = function StaffScheduler() {
       setStaff(prev => prev.map(s => s.id === editingStaff.id ? { ...s, ...staffFields } : s));
       setEditingStaff(null);
     } else {
-      const newId = 's' + Date.now();
+      const newId = 's' + Date.now() + Math.random().toString(36).slice(2,7);
       setStaff(prev => [...prev, { id: newId, name: staffForm.name, role: staffForm.role, color: staffForm.color }]);
+      setVisibleStaff(prev => new Set(prev).add(newId));
       if (staffForm.copyRulesFrom) {
         const copied = rules
           .filter(r => r.staffId === staffForm.copyRulesFrom)
@@ -1718,7 +1799,7 @@ window.ScheduleHelper = function StaffScheduler() {
   function addLocation() {
     if (!locationForm.name) return;
     if (editingLocation) { setLocations(prev => prev.map(l => l.id === editingLocation.id ? { ...l, ...locationForm } : l)); setEditingLocation(null); }
-    else { setLocations(prev => [...prev, { id: 'l' + Date.now(), ...locationForm }]); }
+    else { const newLocId = 'l' + Date.now() + Math.random().toString(36).slice(2,7); setLocations(prev => [...prev, { id: newLocId, ...locationForm }]); setVisibleLocations(prev => new Set(prev).add(newLocId)); }
     setLocationForm({ name:'', address:'' }); setShowLocationModal(false);
   }
   function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
@@ -1730,7 +1811,7 @@ window.ScheduleHelper = function StaffScheduler() {
     // Location-scoped rules don't belong to any staff member — clear staffId to avoid false associations
     const ruleData = isLocationRule ? { ...ruleForm, staffId: '' } : ruleForm;
     if (editingRule) { setRules(prev => prev.map(r => r.id === editingRule.id ? { ...r, ...ruleData } : r)); setEditingRule(null); }
-    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now, createdAt: now, createdBy: user?.username || null, ...ruleData }]); }
+    else { const now = Date.now(); setRules(prev => [...prev, { id: 'r' + now + Math.random().toString(36).slice(2,7), createdAt: now, createdBy: user?.username || null, ...ruleData }]); }
     resetRuleForm(); setShowRuleModal(false);
   }
   function resetRuleForm(overrides) {
@@ -1744,7 +1825,7 @@ window.ScheduleHelper = function StaffScheduler() {
       setVacations(prev => prev.map(v => v.id === editingVacation.id ? { ...v, ...vacationForm, editedAt: now, editedBy: user?.username || null } : v));
       setEditingVacation(null);
     } else {
-      setVacations(prev => [...prev, { id: 'v' + now, createdAt: now, createdBy: user?.username || null, ...vacationForm }]);
+      setVacations(prev => [...prev, { id: 'v' + now + Math.random().toString(36).slice(2,7), createdAt: now, createdBy: user?.username || null, ...vacationForm }]);
     }
     setVacationForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowVacationModal(false);
   }
@@ -1758,7 +1839,7 @@ window.ScheduleHelper = function StaffScheduler() {
       setMedicalLeaves(prev => prev.map(ml => ml.id === editingMedicalLeave.id ? { ...ml, ...medicalLeaveForm, editedAt: now, editedBy: user?.username || null } : ml));
       setEditingMedicalLeave(null);
     } else {
-      setMedicalLeaves(prev => [...prev, { id: 'ml' + now, createdAt: now, createdBy: user?.username || null, ...medicalLeaveForm }]);
+      setMedicalLeaves(prev => [...prev, { id: 'ml' + now + Math.random().toString(36).slice(2,7), createdAt: now, createdBy: user?.username || null, ...medicalLeaveForm }]);
     }
     setMedicalLeaveForm({ staffId:staff[0]?.id||'', startDate:'', endDate:'', reason:'' }); setShowMedicalLeaveModal(false);
   }
@@ -1776,7 +1857,7 @@ window.ScheduleHelper = function StaffScheduler() {
       }
       setEditingHoliday(null);
     } else {
-      setHolidays(prev => [...prev, { id: 'h' + Date.now(), type: 'fixed', ...holidayForm }]);
+      setHolidays(prev => [...prev, { id: 'h' + Date.now() + Math.random().toString(36).slice(2,7), type: 'fixed', ...holidayForm }]);
     }
     setHolidayForm({ name:'', month:0, day:1, halfDay:'closed', note:'', aiNote:'' }); setShowHolidayModal(false);
   }
@@ -1819,7 +1900,7 @@ window.ScheduleHelper = function StaffScheduler() {
     );
     setRegenDiffSummary(null);
     setSchedules(prev => {
-      pushScheduleHistory(prev);
+      pushScheduleHistory(prev, scheduleKey);
       const prevDay = prev[scheduleKey]?.[dk] || {};
       const prevStaff = prevDay[staffId] || {};
       const newStaff = { ...prevStaff };
@@ -1837,7 +1918,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function clearSchedule() {
     addHistoryEntry('Schedule cleared for ' + MONTHS[currentMonth] + ' ' + currentYear + ' Plan ' + activePlan);
-    setSchedules(prev => { pushScheduleHistory(prev); const s = { ...prev }; delete s[scheduleKey]; return s; });
+    setSchedules(prev => { pushScheduleHistory(prev, scheduleKey); const s = { ...prev }; delete s[scheduleKey]; return s; });
     setConfirmClearPlan(false);
   }
 
@@ -1847,6 +1928,7 @@ window.ScheduleHelper = function StaffScheduler() {
     rules.forEach(r => {
       const s = staff.find(x => x.id === r.staffId);
       if (!s) return;
+      if (!isStaffActive(s)) return; // skip rules of inactive doctors (location-scoped rules handled below)
       if (!grouped[s.name]) grouped[s.name] = [];
       const l = locations.find(x => x.id === r.locationId);
       const locName = r.locationId === 'OFF' ? 'OFF' : (l?.name || '?');
@@ -2018,7 +2100,14 @@ window.ScheduleHelper = function StaffScheduler() {
       if (!wasThereLastMonth) return; // Can't determine — skip, let AI use context
 
       // This month's turn is the other person
-      const thisMonthStaff = wasThereLastMonth.id === s.id ? rotateWith : s;
+      let thisMonthStaff = wasThereLastMonth.id === s.id ? rotateWith : s;
+      // If whose-turn-it-is is inactive, hand the turn to the active partner;
+      // if both partners are inactive, skip this rotation entirely (H2).
+      if (!isStaffActive(thisMonthStaff)) {
+        const other = thisMonthStaff.id === s.id ? rotateWith : s;
+        if (isStaffActive(other)) thisMonthStaff = other;
+        else return;
+      }
       const weekNums = r.weekOfMonth === 'all' ? null : new Set(r.weekOfMonth.split(',').map(w => w.trim()));
 
       for (let d = 1; d <= daysInMonth; d++) {
@@ -2077,11 +2166,14 @@ window.ScheduleHelper = function StaffScheduler() {
     // Pre-compute all sub-sections to avoid nested backticks (Babel in-browser parser limitation)
     const staffLines = genStaff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
     const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
-    const vacationLines = vacations.length > 0
-      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
+    // Only include vacation/leave for active doctors — inactive ones aren't scheduled (H2)
+    const activeVacations = vacations.filter(v => { const sv = staff.find(x => x.id === v.staffId); return sv && isStaffActive(sv); });
+    const activeMedicalLeaves = medicalLeaves.filter(ml => { const sv = staff.find(x => x.id === ml.staffId); return sv && isStaffActive(sv); });
+    const vacationLines = activeVacations.length > 0
+      ? activeVacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
       : 'None.';
-    const medicalLeaveLines = medicalLeaves.length > 0
-      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
+    const medicalLeaveLines = activeMedicalLeaves.length > 0
+      ? activeMedicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
       : 'None.';
     const holidayLines = (()=>{
       const hols = [];
@@ -2221,7 +2313,14 @@ window.ScheduleHelper = function StaffScheduler() {
           else throw e;
         }
 
-        const dayData = parsed.assignments || parsed;
+        let dayData;
+        if (parsed.assignments) { dayData = parsed.assignments; }
+        else {
+          // Wrapper missing — strip known non-date keys so they aren't treated as days (L4)
+          const { ambiguities: _ignore, ...rest } = parsed;
+          dayData = rest;
+          addLog('warn', 'Response missing "assignments" wrapper — using top-level keys as day data');
+        }
         Object.assign(allAssignments, dayData);
         totalDays += Object.keys(dayData).length;
 
@@ -2327,7 +2426,7 @@ window.ScheduleHelper = function StaffScheduler() {
     }
     if (invalidIdEdits > 0) addLog('warn', `Invalid location IDs replaced with OFF: ${[...invalidIdsFound].join(', ')} (${invalidIdEdits} slots corrected)`);
 
-    setSchedules(prev => { pushScheduleHistory(prev); return { ...prev, [scheduleKey]: allAssignments }; });
+    setSchedules(prev => { pushScheduleHistory(prev, scheduleKey); return { ...prev, [scheduleKey]: allAssignments }; });
     addLog('success', `Schedule complete: ${totalDays} days in ${batches.length} batches`);
     addHistoryEntry('AI generated schedule · ' + totalDays + ' days · ' + batches.length + ' batches');
 
@@ -2335,7 +2434,6 @@ window.ScheduleHelper = function StaffScheduler() {
     const criticals = allAmbiguities.filter(a => a.severity === 'critical');
     if (criticals.length > 0 && !userDecisions) {
       setGenAmbiguities(criticals);
-      setGenPendingContext({ allAssignments, allAmbiguities, totalDays, holidayEdits });
       setAmbiguityMinimized(false);
       setShowAmbiguityModal(true);
       setAiLog(`⚠️ ${criticals.length} critical ambiguit${criticals.length > 1 ? 'ies' : 'y'} need${criticals.length === 1 ? 's' : ''} your input. Resolve below to finalize.`);
@@ -2376,11 +2474,14 @@ window.ScheduleHelper = function StaffScheduler() {
 
     const staffLines = genStaff.map(s => '- ' + s.name + ' (ID: ' + s.id + ', Role: ' + s.role + ')').join('\n');
     const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
-    const vacationLines = vacations.length > 0
-      ? vacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
+    // Only include vacation/leave for active doctors — inactive ones aren't scheduled (H2)
+    const activeVacations = vacations.filter(v => { const sv = staff.find(x => x.id === v.staffId); return sv && isStaffActive(sv); });
+    const activeMedicalLeaves = medicalLeaves.filter(ml => { const sv = staff.find(x => x.id === ml.staffId); return sv && isStaffActive(sv); });
+    const vacationLines = activeVacations.length > 0
+      ? activeVacations.map(v => { const sv = staff.find(x => x.id === v.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + v.startDate + ' to ' + v.endDate; }).join('\n')
       : 'None.';
-    const medicalLeaveLines = medicalLeaves.length > 0
-      ? medicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
+    const medicalLeaveLines = activeMedicalLeaves.length > 0
+      ? activeMedicalLeaves.map(ml => { const sv = staff.find(x => x.id === ml.staffId); return '- ' + (sv ? sv.name : '?') + ': ' + ml.startDate + ' to ' + ml.endDate + (ml.reason ? ' (' + ml.reason + ')' : ''); }).join('\n')
       : 'None.';
     const holidayLinesP = (()=>{
       const hols = [];
@@ -2490,7 +2591,14 @@ window.ScheduleHelper = function StaffScheduler() {
         else throw e;
       }
 
-      const newDayData = partialParsed.assignments || partialParsed;
+      let newDayData;
+      if (partialParsed.assignments) { newDayData = partialParsed.assignments; }
+      else {
+        // Wrapper missing — strip known non-date keys so they aren't treated as days (L4)
+        const { ambiguities: _ignore, ...rest } = partialParsed;
+        newDayData = rest;
+        addLog('warn', 'Response missing "assignments" wrapper — using top-level keys as day data');
+      }
 
       // Post-process: enforce holidays
       let pHolidayEdits = 0;
@@ -2604,7 +2712,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
       // Merge into existing schedule
       setSchedules(prev => {
-        pushScheduleHistory(prev);
+        pushScheduleHistory(prev, scheduleKey);
         const merged = { ...(prev[scheduleKey] || {}), ...newDayData };
         return { ...prev, [scheduleKey]: merged };
       });
@@ -2648,7 +2756,7 @@ window.ScheduleHelper = function StaffScheduler() {
 
       for (const [staffId, periods] of Object.entries(dayAssignments)) {
         const s = staff.find(x => x.id === staffId);
-        if (!s) continue;
+        if (!s || !isStaffActive(s)) continue; // skip inactive doctors (H2)
 
         // Vacation
         if (isOnVacation(staffId, dk)) {
@@ -2772,7 +2880,7 @@ window.ScheduleHelper = function StaffScheduler() {
     for (const rule of negativeRules) {
       const s = staff.find(x => x.id === rule.staffId);
       const loc = locations.find(l => l.id === rule.locationId);
-      if (!s || !loc) continue;
+      if (!s || !loc || !isStaffActive(s)) continue; // skip negative rules of inactive doctors (H2)
       const weekNums = rule.weekOfMonth === 'all' ? null : new Set(rule.weekOfMonth.split(',').map(w => w.trim()));
       const occurrences = [];
       for (const [dk, dayAssignments] of Object.entries(assignments)) {
@@ -2838,7 +2946,13 @@ window.ScheduleHelper = function StaffScheduler() {
     const codeConflicts = detectRuleConflicts(schedule);
 
     // ── 2) Only conditional / exception / complex free-text rules need the AI. ──
-    const flexRules = rules.filter(r => ['conditional','exception','complex'].includes(r.ruleType || ''));
+    // Exclude free-text rules owned by inactive doctors; keep location-scoped rules (H2).
+    const flexRules = rules.filter(r => {
+      if (!['conditional','exception','complex'].includes(r.ruleType || '')) return false;
+      if (r.ruleScope === 'location') return true;
+      const s = staff.find(x => x.id === r.staffId);
+      return !s || isStaffActive(s);
+    });
 
     // Merge code + AI conflicts, consolidate multi-day leave into one entry each, dedupe, set report.
     const finalizeRecheck = (aiConflicts, truncated) => {
@@ -2933,8 +3047,9 @@ window.ScheduleHelper = function StaffScheduler() {
 
     const unavailLines = (() => {
       const out = [];
-      vacations.forEach(v => { const sv = staff.find(x => x.id === v.staffId); out.push(`- ${sv?.name||'?'}: VACATION ${v.startDate} to ${v.endDate}`); });
-      medicalLeaves.forEach(ml => { const sv = staff.find(x => x.id === ml.staffId); out.push(`- ${sv?.name||'?'}: MEDICAL LEAVE ${ml.startDate} to ${ml.endDate}`); });
+      // Only list unavailability for active doctors — inactive ones aren't scheduled (H2)
+      vacations.forEach(v => { const sv = staff.find(x => x.id === v.staffId); if (sv && !isStaffActive(sv)) return; out.push(`- ${sv?.name||'?'}: VACATION ${v.startDate} to ${v.endDate}`); });
+      medicalLeaves.forEach(ml => { const sv = staff.find(x => x.id === ml.staffId); if (sv && !isStaffActive(sv)) return; out.push(`- ${sv?.name||'?'}: MEDICAL LEAVE ${ml.startDate} to ${ml.endDate}`); });
       holidays.forEach(h => { const dt = getHolidayDate(h, currentYear); if (!dt || dt.getMonth() !== currentMonth) return; out.push(`- ${dateKey(dt.getFullYear(),dt.getMonth(),dt.getDate())}: HOLIDAY ${h.name} (${h.halfDay==='am'?'AM only':'closed'})`); });
       return out.length ? out.join('\n') : 'None.';
     })();
@@ -3070,7 +3185,7 @@ window.ScheduleHelper = function StaffScheduler() {
   // multi-day fixes ({dates: [...], ...}) used for vacation/medical-leave ranges.
   function applyConflictFix(fix) {
     setSchedules(prev => {
-      pushScheduleHistory(prev);
+      pushScheduleHistory(prev, scheduleKey);
       const sched = { ...(prev[scheduleKey] || {}) };
       const dates = (fix.dates && fix.dates.length) ? fix.dates : [fix.date];
       for (const dk of dates) {
@@ -3089,7 +3204,7 @@ window.ScheduleHelper = function StaffScheduler() {
   function applyAllConflictFixes(fixes) {
     if (!fixes || fixes.length === 0) return;
     setSchedules(prev => {
-      pushScheduleHistory(prev);
+      pushScheduleHistory(prev, scheduleKey);
       const sched = { ...(prev[scheduleKey] || {}) };
       for (const fix of fixes) {
         if (!fix) continue;
@@ -3339,7 +3454,7 @@ window.ScheduleHelper = function StaffScheduler() {
           const targetKey = `schedule-${targetYear}-${targetMonth}-${activePlan || 'A'}`;
           const isCrossMonth = (targetYear !== currentYear || targetMonth !== currentMonth);
           setSchedules(prev => {
-            pushScheduleHistory(prev);
+            pushScheduleHistory(prev, targetKey);
             const prevDay = prev[targetKey]?.[action.date] || {};
             const prevStaff = prevDay[s.id] || { am: 'OFF', pm: 'OFF' };
             const newStaff = { ...prevStaff };
@@ -3601,9 +3716,9 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       const ds = schedule[dk] || {};
       if (isWeekend(currentYear, currentMonth, day)) return '<td class="wk"><div class="dn">' + day + '</div></td>';
       const holiday = getHolidayForDate(currentYear, currentMonth, day);
-      if (holiday && holiday.halfDay === 'closed') return '<td><div class="dn">' + day + '</div><div class="hol">' + holiday.name + '</div></td>';
+      if (holiday && holiday.halfDay === 'closed') return '<td><div class="dn">' + day + '</div><div class="hol">' + escapeHtml(holiday.name) + '</div></td>';
       let c = '<td><div class="dn">' + day + '</div>';
-      if (holiday && holiday.halfDay === 'am') c += '<div class="holam">AM Only — ' + holiday.name + '</div>';
+      if (holiday && holiday.halfDay === 'am') c += '<div class="holam">AM Only — ' + escapeHtml(holiday.name) + '</div>';
       const allDay = [], splitAm = [], splitPm = [];
       filteredStaff.forEach((s,si) => {
         const p = ds[s.id]; if (!p) return;
@@ -3618,9 +3733,9 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       }
       function renderGroup(g) {
         const isOff = g.locId === 'OFF';
-        const tags = g.items.map(e => '<span class="tag" style="color:' + e.staff.color + '">' + e.init + '</span>').join(' ');
+        const tags = g.items.map(e => '<span class="tag" style="color:' + e.staff.color + '">' + escapeHtml(e.init) + '</span>').join(' ');
         if (isOff) return '<div class="grp off"><span class="tags">' + tags + '</span> <i>OFF</i></div>';
-        return '<div class="grp"><span class="loc">' + (locAbbrev[g.locId]||'?') + '</span> <span class="tags">' + tags + '</span></div>';
+        return '<div class="grp"><span class="loc">' + escapeHtml(locAbbrev[g.locId]||'?') + '</span> <span class="tags">' + tags + '</span></div>';
       }
       groupByLoc(allDay).forEach(g => { c += renderGroup(g); });
       if (splitAm.length > 0 || splitPm.length > 0) {
@@ -3630,7 +3745,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         groupByLoc(splitPm).forEach(g => { c += renderGroup(g); });
         c += '</div></div>';
       }
-      if (pdfNotes[dk]) c += '<div class="note">📝 ' + pdfNotes[dk].replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+      if (pdfNotes[dk]) c += '<div class="note">📝 ' + escapeHtml(pdfNotes[dk]) + '</div>';
       return c + '</td>';
     }
 
@@ -3666,7 +3781,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     html += '<span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> ';
     html += '<span class="sub">Generated ' + new Date().toLocaleDateString() + '</span></div></div>';
     html += '<div class="legend">';
-    filteredStaff.forEach((s,i) => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div><b>' + initials[i] + '</b> = ' + getLastName(s.name) + '</div>'; });
+    filteredStaff.forEach((s,i) => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div><b>' + escapeHtml(initials[i]) + '</b> = ' + escapeHtml(getLastName(s.name)) + '</div>'; });
     html += '</div><table><thead><tr>';
     DAYS_OF_WEEK.forEach(d => { html += '<th>' + d + '</th>'; });
     html += '</tr></thead><tbody><tr>';
@@ -3683,6 +3798,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
+    if (w) w.opener = null;
     if (w) { w.onload = () => { setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 600); }; }
     else { URL.revokeObjectURL(url); alert('Pop-up was blocked. Please allow pop-ups for this site and try again.'); }
   }
@@ -3741,8 +3857,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
 
     // For vertical text: split abbreviation into single chars stacked
     function vertLoc(abbr) {
-      if (abbr.length <= 1) return abbr;
-      return abbr.split('').join('<br>');
+      if (abbr.length <= 1) return escapeHtml(abbr);
+      return abbr.split('').map(escapeHtml).join('<br>');
     }
 
     let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[currentMonth] + ' ' + currentYear + ' Classic</title>';
@@ -3794,11 +3910,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         const hol = getHolidayForDate(currentYear, currentMonth, slot.day);
         html += '<td>';
         html += '<div class="daynum">' + slot.day + '</div>';
-        if (hol && hol.halfDay === 'closed') { html += '<div class="hol">CLOSED — ' + hol.name + '</div></td>'; return; }
+        if (hol && hol.halfDay === 'closed') { html += '<div class="hol">CLOSED — ' + escapeHtml(hol.name) + '</div></td>'; return; }
 
         // Initials row
         html += '<div class="irow"><div class="row-spacer"></div>';
-        filteredStaff.forEach((s,i) => { html += '<div class="row-cell">' + initials[i] + '</div>'; });
+        filteredStaff.forEach((s,i) => { html += '<div class="row-cell">' + escapeHtml(initials[i]) + '</div>'; });
         html += '</div>';
 
         if (hol && hol.halfDay === 'am') html += '<div class="holam">AM Only</div>';
@@ -3820,7 +3936,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
         });
         html += '</div>';
-        if (classicNotes[dk]) html += '<div class="note">📝 ' + classicNotes[dk].replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+        if (classicNotes[dk]) html += '<div class="note">📝 ' + escapeHtml(classicNotes[dk]) + '</div>';
         html += '</td>';
       });
       html += '</tr>';
@@ -3831,10 +3947,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     // Legend at bottom
     html += '<div class="foot">';
     html += '<span><b>Staff:</b> ';
-    html += filteredStaff.map((s,i) => initials[i] + '=' + getLastName(s.name)).join(', ');
+    html += filteredStaff.map((s,i) => escapeHtml(initials[i]) + '=' + escapeHtml(getLastName(s.name))).join(', ');
     html += '</span>';
     html += '<span><b>Locations:</b> ';
-    html += locLegend.map(ll => ll.abbr + '=' + ll.name).join(', ');
+    html += locLegend.map(ll => escapeHtml(ll.abbr) + '=' + escapeHtml(ll.name)).join(', ');
     html += '</span>';
     html += '</div>';
 
@@ -3843,6 +3959,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
+    if (w) w.opener = null;
     if (w) { w.onload = () => { setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 600); }; }
     else { URL.revokeObjectURL(url); alert('Pop-up was blocked. Please allow pop-ups for this site and try again.'); }
   }
@@ -4003,6 +4120,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           </span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
+          <a href="techs.html" title="Technician scheduler"
+            style={{background:'none',border:`1px solid var(--border-interactive)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',textDecoration:'none',display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
+            🩺 {isMobile ? 'Techs' : 'Technicians'}
+          </a>
           {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
           <button onClick={toggleTheme}
             style={{background:'none',border:`1px solid var(--border-interactive)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',display:'flex',alignItems:'center',gap:5}}>
@@ -4503,15 +4624,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 }} style={{padding:isMobile?'8px 12px':'8px 14px',fontSize:12}}>Today</Btn>
                 {isAdmin && <Btn variant="ghost" onClick={()=>{
                   if(!canUndo) return;
-                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current];
-                  setPendingUndoRedo({type:'undo', summary: describeScheduleDiff(schedules, target)});
+                  const entry = scheduleHistoryRef.current[scheduleHistoryIndexRef.current];
+                  setPendingUndoRedo({type:'undo', summary: describeScheduleDiff(entry.key, schedules[entry.key], entry.before)});
                 }} disabled={!canUndo}
                   style={{padding:isMobile?'8px 10px':'8px 14px',fontSize:13,opacity:canUndo?1:0.35,cursor:canUndo?'pointer':'default',display:'flex',alignItems:'center',gap:5}}
                   title="Undo">↩{!isMobile && <span>Undo</span>}</Btn>}
                 {isAdmin && <Btn variant="ghost" onClick={()=>{
                   if(!canRedo) return;
-                  const target = scheduleHistoryRef.current[scheduleHistoryIndexRef.current + 1];
-                  setPendingUndoRedo({type:'redo', summary: describeScheduleDiff(schedules, target)});
+                  const entry = scheduleHistoryRef.current[scheduleHistoryIndexRef.current + 1];
+                  setPendingUndoRedo({type:'redo', summary: describeScheduleDiff(entry.key, schedules[entry.key], entry.after)});
                 }} disabled={!canRedo}
                   style={{padding:isMobile?'8px 10px':'8px 14px',fontSize:13,opacity:canRedo?1:0.35,cursor:canRedo?'pointer':'default',display:'flex',alignItems:'center',gap:5}}
                   title="Redo">↪{!isMobile && <span>Redo</span>}</Btn>}
@@ -4951,8 +5072,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                             title={isStaffActive(s)?'Click to exclude from AI-generated schedules':'Click to include in AI-generated schedules'}>
                             {isStaffActive(s)?'● Active':'○ Inactive'}
                           </button>}
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{cursor:'pointer',fontSize:15}}>✏️</span>}
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
+                          {isAdmin && <IconBtn label="Edit doctor" onClick={e=>{e.stopPropagation();setEditingStaff(s);setStaffForm({name:s.name,role:s.role,color:s.color});setShowStaffModal(true)}} style={{fontSize:15}}>✏️</IconBtn>}
+                          {isAdmin && <IconBtn label="Delete doctor" onClick={e=>{e.stopPropagation();removeStaff(s.id)}} style={{fontSize:15}}>🗑️</IconBtn>}
                           <span style={{color:'var(--text-muted)',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
@@ -5045,8 +5166,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                         {r.description&&<div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>{r.description}</div>}
                                       </div>
                                       {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                        <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
-                                        {isAdmin && <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                                        <IconBtn label="Edit rule" onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{fontSize:14}}>✏️</IconBtn>
+                                        {isAdmin && <IconBtn label="Delete rule" onClick={()=>removeRule(r.id)} style={{fontSize:14}}>🗑️</IconBtn>}
                                       </div>}
                                     </div>
                                   );
@@ -5150,8 +5271,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                       {v.editedAt&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,fontStyle:'italic'}}>Edited {new Date(v.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}{v.editedBy&&' by '+v.editedBy}</div>}
                                     </div>
                                     {isAdmin && <div style={{display:'flex',gap:6,marginLeft:8,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{cursor:'pointer',fontSize:13}} title="Edit">✏️</span>
-                                      <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:13}} title="Delete">🗑️</span>
+                                      <IconBtn label="Edit vacation" onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{fontSize:13}}>✏️</IconBtn>
+                                      <IconBtn label="Delete vacation" onClick={()=>removeVacation(v.id)} style={{fontSize:13}}>🗑️</IconBtn>
                                     </div>}
                                   </div>
                                 ))}
@@ -5177,8 +5298,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                       {ml.editedAt&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,fontStyle:'italic'}}>Edited {new Date(ml.editedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}{ml.editedBy&&' by '+ml.editedBy}</div>}
                                     </div>
                                     {isAdmin && <div style={{display:'flex',gap:6,marginLeft:8,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{cursor:'pointer',fontSize:13}} title="Edit">✏️</span>
-                                      <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:13}} title="Delete">🗑️</span>
+                                      <IconBtn label="Edit medical leave" onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{fontSize:13}}>✏️</IconBtn>
+                                      <IconBtn label="Delete medical leave" onClick={()=>removeMedicalLeave(ml.id)} style={{fontSize:13}}>🗑️</IconBtn>
                                     </div>}
                                   </div>
                                 ))}
@@ -5283,8 +5404,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           <Chip color={lc.text}>{lr.length} rule{lr.length!==1?'s':''}</Chip>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>}
-                          {isAdmin && <span onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{cursor:'pointer',fontSize:14}}>🗑️</span>}
+                          {isAdmin && <IconBtn label="Edit location" onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{fontSize:14}}>✏️</IconBtn>}
+                          {isAdmin && <IconBtn label="Delete location" onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{fontSize:14}}>🗑️</IconBtn>}
                           <span style={{color:'var(--text-muted)',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
                         </div>
                       </div>
@@ -5329,8 +5450,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                       )}
                                     </div>
                                     {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                      <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer',fontSize:14}}>✏️</span>
-                                      <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer',fontSize:14}}>🗑️</span>
+                                      <IconBtn label="Edit rule" onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{fontSize:14}}>✏️</IconBtn>
+                                      <IconBtn label="Delete rule" onClick={()=>removeRule(r.id)} style={{fontSize:14}}>🗑️</IconBtn>
                                     </div>}
                                   </div>
                                 );
@@ -5427,8 +5548,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           </div>
                         </div>
                         {isAdmin && <div style={{display:'flex',gap:6,flexShrink:0}}>
-                          <span onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}} style={{cursor:'pointer'}}>✏️</span>
-                          <span onClick={()=>removeRule(r.id)} style={{cursor:'pointer'}}>🗑️</span>
+                          <IconBtn label="Edit rule" onClick={()=>{setEditingRule(r);setRuleForm({...r,weekOfMonth:r.weekOfMonth||'all',ruleType:r.ruleType||'standard',ruleScope:r.ruleScope||'staff',conditionText:r.conditionText||'',exceptionText:r.exceptionText||'',negativeText:r.negativeText||'',rotateWithStaffId:r.rotateWithStaffId||'',rotateAtLocationId:r.rotateAtLocationId||''});setShowRuleModal(true)}}>✏️</IconBtn>
+                          <IconBtn label="Delete rule" onClick={()=>removeRule(r.id)}>🗑️</IconBtn>
                         </div>}
                       </div>
                     </div>
@@ -5487,8 +5608,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                   </div>}
                                 </div>
                                 {isAdmin && <div style={{display:'flex',gap:8,alignItems:'center',marginLeft:12,flexShrink:0}}>
-                                  <span onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{cursor:'pointer',fontSize:14}} title="Edit">✏️</span>
-                                  <span onClick={()=>removeVacation(v.id)} style={{cursor:'pointer',fontSize:14}} title="Delete">🗑️</span>
+                                  <IconBtn label="Edit vacation" onClick={()=>{setEditingVacation(v);setVacationForm({staffId:v.staffId,startDate:v.startDate,endDate:v.endDate,reason:v.reason||''});setShowVacationModal(true);}} style={{fontSize:14}}>✏️</IconBtn>
+                                  <IconBtn label="Delete vacation" onClick={()=>removeVacation(v.id)} style={{fontSize:14}}>🗑️</IconBtn>
                                 </div>}
                               </div>
                             );
@@ -5550,8 +5671,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                   </div>}
                                 </div>
                                 {isAdmin && <div style={{display:'flex',gap:8,alignItems:'center',marginLeft:12,flexShrink:0}}>
-                                  <span onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{cursor:'pointer',fontSize:14}} title="Edit">✏️</span>
-                                  <span onClick={()=>removeMedicalLeave(ml.id)} style={{cursor:'pointer',fontSize:14}} title="Delete">🗑️</span>
+                                  <IconBtn label="Edit medical leave" onClick={()=>{setEditingMedicalLeave(ml);setMedicalLeaveForm({staffId:ml.staffId,startDate:ml.startDate,endDate:ml.endDate,reason:ml.reason||''});setShowMedicalLeaveModal(true);}} style={{fontSize:14}}>✏️</IconBtn>
+                                  <IconBtn label="Delete medical leave" onClick={()=>removeMedicalLeave(ml.id)} style={{fontSize:14}}>🗑️</IconBtn>
                                 </div>}
                               </div>
                             );
@@ -5599,12 +5720,12 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           {h.note&&<div style={{fontSize:13,color:'var(--text-muted)',marginTop:4}}>{h.note}</div>}
                         </div>
                         <div style={{display:'flex',gap:8,flexShrink:0}}>
-                          <span onClick={()=>{
+                          {isAdmin && <IconBtn label="Edit holiday" onClick={()=>{
                             setEditingHoliday(h);
                             setHolidayForm({name:h.name, month:h.month, day:h.day||1, halfDay:h.halfDay||'closed', note:h.note||'', aiNote:h.aiNote||''});
                             setShowHolidayModal(true);
-                          }} style={{cursor:'pointer',fontSize:15}}>✏️</span>
-                          {isAdmin && <span onClick={()=>removeHoliday(h.id)} style={{cursor:'pointer',fontSize:15}}>🗑️</span>}
+                          }} style={{fontSize:15}}>✏️</IconBtn>}
+                          {isAdmin && <IconBtn label="Delete holiday" onClick={()=>removeHoliday(h.id)} style={{fontSize:15}}>🗑️</IconBtn>}
                         </div>
                       </div>
                     );
@@ -5693,7 +5814,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {pendingFinalAction && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingFinalAction(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             {pendingFinalAction.type === 'set' ? (<>
               <div style={{fontSize:22,marginBottom:10}}>📢</div>
               <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Publish Plan {pendingFinalAction.plan} as Final?</div>
@@ -5752,7 +5873,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {pendingUndoRedo && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingUndoRedo(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:460,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:460,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             <div style={{fontSize:22,marginBottom:10}}>{pendingUndoRedo.type==='undo'?'↩':'↪'}</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>
               {pendingUndoRedo.type==='undo'?'Undo Last Change?':'Redo Change?'}
@@ -5819,7 +5940,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {showRecheckInfoModal && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setShowRecheckInfoModal(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:28,maxWidth:480,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:16,padding:28,maxWidth:480,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             <div style={{fontSize:20,marginBottom:10}}>🔍</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Recheck Rules</div>
             <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
@@ -5851,7 +5972,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {pendingGenerate && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingGenerate(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:520,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:520,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             <div style={{fontSize:22,marginBottom:10}}>✨</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Generate Plan {activePlan}?</div>
             <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
@@ -5879,7 +6000,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 <span style={{fontSize:13,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Doctors to include</span>
                 <span style={{fontSize:12,color:'var(--text-muted)'}}>{staff.filter(isStaffActive).length} of {staff.length} active</span>
               </div>
-              <div style={{maxHeight:200,overflowY:'auto'}}>
+              <div style={{maxHeight: isMobile ? 'none' : 200, overflowY: isMobile ? 'visible' : 'auto'}}>
                 {staff.map(s => (
                   <div key={s.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'8px 14px',borderTop:'1px solid var(--border-subtle)'}}>
                     <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
@@ -5905,7 +6026,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {showPartialRegenModal && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setShowPartialRegenModal(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:24,maxWidth:460,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)',maxHeight:'90vh',overflowY:'auto'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:24,maxWidth:460,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)',maxHeight:'90vh',overflowY:'auto'}}>
             <div style={{fontSize:20,marginBottom:8}}>🗓</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:4}}>Regenerate Selected Days</div>
             <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.5}}>
@@ -5983,7 +6104,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
       {pendingRoleChange && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>setPendingRoleChange(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:420,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:420,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
             <div style={{fontSize:22,marginBottom:10}}>🔐</div>
             <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Change Access Level?</div>
             <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
@@ -6162,7 +6283,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           </div>
         ))}
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
-          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAmbiguityMinimized(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
+          <Btn variant="ghost" onClick={()=>{setGenAmbiguities(null);setGenAmbiguityAnswers({});setShowAmbiguityModal(false);setAmbiguityMinimized(false);setAiLog('');}}>Dismiss (keep current schedule)</Btn>
 
           <Btn variant="success" onClick={()=>{
             const decisions = {};
@@ -6171,7 +6292,6 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               decisions[amb.question] = genAmbiguityAnswers[key] || amb.chose;
             });
             setGenAmbiguities(null);
-            setGenPendingContext(null);
             setGenAmbiguityAnswers({});
             setShowAmbiguityModal(false);
             generateWithAI(decisions);
@@ -6232,7 +6352,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 <button onClick={()=>{
                   const decisions={};
                   genAmbiguities.forEach((a,ai)=>{decisions[a.question]=genAmbiguityAnswers[a.id||ai]||a.chose;});
-                  setGenAmbiguities(null);setGenPendingContext(null);setGenAmbiguityAnswers({});setAmbiguityMinimized(false);generateWithAI(decisions);
+                  setGenAmbiguities(null);setGenAmbiguityAnswers({});setAmbiguityMinimized(false);generateWithAI(decisions);
                 }} style={{marginTop:10,width:'100%',padding:'8px',borderRadius:8,background:'#10b981',color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>
                   ✓ Re-generate with My Decisions
                 </button>
@@ -6300,7 +6420,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         <p style={{fontSize:11,color:'var(--text-dim)',marginTop:2}}>These instructions are sent to the AI when generating schedules for months that include this holiday.</p>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
           <Btn variant="ghost" onClick={()=>{setShowHolidayModal(false);setEditingHoliday(null);setHolidayForm({name:'',month:0,day:1,halfDay:'closed',note:'',aiNote:''});}}>Cancel</Btn>
-          <Btn onClick={addHoliday}>{editingHoliday?'Save':'Add Holiday'}</Btn>
+          <Btn onClick={addHoliday} disabled={!isAdmin}>{editingHoliday?'Save':'Add Holiday'}</Btn>
         </div>
       </Modal>
 
@@ -6335,7 +6455,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                             const dk = editCell.dk;
                             const locId = e.target.value;
                             setSchedules(prev => {
-                              pushScheduleHistory(prev);
+                              pushScheduleHistory(prev, ecKey);
                               const prevDay = prev[ecKey]?.[dk] || {};
                               const prevStaff = prevDay[s.id] || {};
                               const newStaff = { ...prevStaff };

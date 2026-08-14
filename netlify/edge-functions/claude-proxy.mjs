@@ -46,6 +46,25 @@ async function verifyToken(token, secret) {
   return payload;
 }
 
+// ── Per-user rate limiting (in-memory, cost-control only — not auth) ─────────
+// Sliding 1-minute window keyed by token `sub`. In-memory is acceptable here: the
+// goal is to cap AI spend per user, not to enforce security. Kept allocation-light —
+// a short array of timestamps per user, pruned on each access.
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 20; // max requests per user per minute
+const rateBuckets = new Map(); // sub -> number[] of request timestamps (ms)
+
+function isRateLimited(sub) {
+  const now = Date.now();
+  let arr = rateBuckets.get(sub);
+  if (!arr) { arr = []; rateBuckets.set(sub, arr); }
+  // Drop timestamps older than the window (from the front — array is chronological).
+  while (arr.length && now - arr[0] > RATE_WINDOW_MS) arr.shift();
+  if (arr.length >= RATE_MAX) return true;
+  arr.push(now);
+  return false;
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req) {
@@ -60,10 +79,16 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: 'Server misconfigured — SESSION_SECRET not set' }), { status: 500, headers: JSON_HEADERS });
   }
   const sessionToken = req.headers.get('x-session-token') || '';
+  let session;
   try {
-    await verifyToken(sessionToken, SESSION_SECRET);
+    session = await verifyToken(sessionToken, SESSION_SECRET);
   } catch(e) {
     return new Response(JSON.stringify({ error: 'Unauthorized — ' + e.message }), { status: 401, headers: JSON_HEADERS });
+  }
+
+  // Per-user cost-control rate limit — cap AI requests per minute.
+  if (isRateLimited(session.sub)) {
+    return new Response(JSON.stringify({ error: 'Too many AI requests. Please wait a moment and try again.' }), { status: 429, headers: JSON_HEADERS });
   }
 
   const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');

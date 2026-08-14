@@ -35,6 +35,31 @@ function checkRateLimit(ip, action) {
   return entry.count > limit.max;
 }
 
+// Blobs-backed rate limit — survives cold starts / multiple instances, unlike the
+// in-memory Map above (which stays as a cheap first line of defense). Only used for
+// the sensitive auth actions. MUST fail-open: any storage error returns false so a
+// blob outage can never lock users out of login/registration/password reset.
+async function checkRateLimitBlob(store, ip, action) {
+  const limit = RATE_LIMITS[action];
+  if (!limit) return false; // no limit for this action
+  try {
+    const minuteBucket = Math.floor(Date.now() / RATE_LIMIT_WINDOW_MS);
+    const key = `ratelimit:${action}:${ip}:${minuteBucket}`;
+    const raw = await store.get(key);
+    let count = 0;
+    if (raw != null) {
+      const n = parseInt(raw, 10);
+      if (!isNaN(n)) count = n;
+    }
+    count++;
+    await store.set(key, String(count));
+    return count > limit.max;
+  } catch(e) {
+    // Fail open — never block auth on a storage error.
+    return false;
+  }
+}
+
 // ── JWT / crypto helpers ─────────────────────────────────────────────────────
 // NOTE: exp is stored as milliseconds (Date.now() + ms), not JWT standard seconds.
 // This is consistent throughout this file and the edge function — do not change.
@@ -95,7 +120,13 @@ function issueToken(username, userType, adminUsername, secret) {
 // ── Key authorization helpers ─────────────────────────────────────────────────
 // isKeyReadable: can this session READ the given key?
 // isKeyWritable: can this session WRITE (set/delete) the given key?
-// Staff users may read admin data but can only write their own user: record.
+//
+// IMPORTANT: these functions decide access for NON-`user:` keys purely from the key
+// prefix. For cross-account `user:X` keys (X !== self) ownership cannot be decided
+// from the key alone, so these functions deny them (returning `user:<self>` only).
+// The get/set/delete handlers route `user:` keys through checkUserKeyAccess() instead,
+// which fetches the record and enforces ownership. Because `list` filters with
+// isKeyReadable, cross-account `user:*` keys are automatically excluded from listings.
 
 function isKeyReadable(key, session) {
   if (!key || typeof key !== 'string') return false;
@@ -103,32 +134,81 @@ function isKeyReadable(key, session) {
   if (userType === 'dev') return true;
   if (userType === 'staff') {
     const adminNs = adminUsername || username;
-    return (
-      key === `user:${username}` ||
-      key.startsWith(`${adminNs}:`) ||
-      key.startsWith('staffPortal:')
-    );
+    // Staff may read only their own user record, the portal reverse-lookups,
+    // and a strict allowlist of NON-sensitive sub-keys in the admin namespace.
+    // DENIED (fall through to false): rules, vacations, medicalLeaves, planHistory,
+    // and anything else under the admin namespace.
+    if (key === `user:${username}`) return true;
+    if (key.startsWith('staffPortal:')) return true;
+    if (key.startsWith('techPortal:')) return true;
+    const STAFF_READABLE = ['staff', 'locations', 'holidays', 'schedules', 'finalPlans', 'dayNotes'];
+    // Technician portal keys. techContacts is DELIBERATELY EXCLUDED — it holds every
+    // tech's email address and Telegram chat ID, which a read-only portal user has no
+    // business enumerating. techRules / techTimeOff are excluded for the same reason
+    // vacations and medicalLeaves are: they are admin-only scheduling context.
+    const TECH_READABLE = ['techs', 'techSchedules', 'techStaffing'];
+    return STAFF_READABLE.some(sub => key === `${adminNs}:${sub}`)
+        || TECH_READABLE.some(sub => key === `${adminNs}:${sub}`);
   }
-  // Admin
-  return (
-    key === `user:${username}` ||
-    key.startsWith(`${username}:`) ||
-    key.startsWith('user:') ||
-    key.startsWith('staffPortal:') ||
-    key.startsWith('managers:')
-  );
+  // Admin — scoped to their own tenant. NOTE: blanket `user:` access has been removed;
+  // cross-account user records are handled by checkUserKeyAccess() in the handler.
+  if (key === `user:${username}`) return true;
+  if (key.startsWith(`${username}:`)) return true;
+  // Managed "Full Editing" (admin-type) users carry the parent admin's name in
+  // adminUsername and operate inside the parent's `<parentAdmin>:*` data namespace.
+  if (adminUsername && key.startsWith(`${adminUsername}:`)) return true;
+  if (key.startsWith('staffPortal:')) return true;
+  if (key.startsWith('techPortal:')) return true;
+  if (key.startsWith('managers:')) return true;
+  return false;
 }
 
 function isKeyWritable(key, session) {
   if (!key || typeof key !== 'string') return false;
-  const { sub: username, type: userType, adminUsername } = session;
+  const { sub: username, type: userType } = session;
   if (userType === 'dev') return true;
   // Staff users can ONLY write their own user record (e.g. password change)
   if (userType === 'staff') {
     return key === `user:${username}`;
   }
-  // Admin: same as read permissions — admins can write anything they can read
+  // Admin: same as read permissions — admins can write anything they can read.
+  // (Cross-account `user:X` writes are handled by checkUserKeyAccess() in the handler.)
   return isKeyReadable(key, session);
+}
+
+// Ownership-scoped access for `user:` keys (get/set/delete). Called only for keys that
+// start with `user:`. Returns true only when the session may touch this record:
+//   - `user:<self>`                     → always allowed
+//   - dev                               → allowed
+//   - admin, existing record owned by me (existing.adminUsername === session.sub)
+//   - admin, no record yet + `set` whose value declares me as owner (account creation)
+// Everything else (incl. non-admins, other admins' records, parse failures) is denied.
+async function checkUserKeyAccess(action, key, session, store, incomingValue) {
+  const target = key.slice('user:'.length);
+  if (target === session.sub) return true;      // own record
+  if (session.type === 'dev') return true;      // dev is unrestricted
+  if (session.type !== 'admin') return false;   // staff may only touch user:<self>
+
+  let existingRaw;
+  try {
+    existingRaw = await store.get(key);
+  } catch(e) {
+    return false;
+  }
+
+  if (existingRaw == null) {
+    // No record yet: only account creation (a `set` whose value stamps this admin as
+    // owner) may proceed. get/delete on a missing record are denied.
+    if (action !== 'set') return false;
+    let parsed;
+    try { parsed = JSON.parse(incomingValue); } catch(e) { return false; }
+    return !!(parsed && parsed.adminUsername === session.sub);
+  }
+
+  // Record exists: allow only if this admin owns it.
+  let parsed;
+  try { parsed = JSON.parse(existingRaw); } catch(e) { return false; }
+  return !!(parsed && parsed.adminUsername === session.sub);
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────
@@ -164,7 +244,7 @@ export default async (req) => {
   // ── Public actions — no session required ──────────────────────────────────
 
   if (action === 'login') {
-    if (checkRateLimit(clientIp, 'login')) {
+    if (checkRateLimit(clientIp, 'login') || await checkRateLimitBlob(store, clientIp, 'login')) {
       return new Response(JSON.stringify({ error: "Too many login attempts. Please wait a minute." }), { status: 429, headers: cors });
     }
     const { username, password } = body;
@@ -202,7 +282,7 @@ export default async (req) => {
   }
 
   if (action === 'register') {
-    if (checkRateLimit(clientIp, 'register')) {
+    if (checkRateLimit(clientIp, 'register') || await checkRateLimitBlob(store, clientIp, 'register')) {
       return new Response(JSON.stringify({ error: "Too many registration attempts. Please wait a minute." }), { status: 429, headers: cors });
     }
     const { username, password, email, userType } = body;
@@ -262,7 +342,7 @@ export default async (req) => {
   }
 
   if (action === 'forgot-password') {
-    if (checkRateLimit(clientIp, 'forgot-password')) {
+    if (checkRateLimit(clientIp, 'forgot-password') || await checkRateLimitBlob(store, clientIp, 'forgot-password')) {
       return new Response(JSON.stringify({ error: "Too many requests. Please wait a minute." }), { status: 429, headers: cors });
     }
     const { email } = body;
@@ -305,7 +385,7 @@ export default async (req) => {
   }
 
   if (action === 'reset-password') {
-    if (checkRateLimit(clientIp, 'reset-password')) {
+    if (checkRateLimit(clientIp, 'reset-password') || await checkRateLimitBlob(store, clientIp, 'reset-password')) {
       return new Response(JSON.stringify({ error: "Too many requests. Please wait a minute." }), { status: 429, headers: cors });
     }
     const { resetToken, newPassword } = body;
@@ -364,7 +444,10 @@ export default async (req) => {
     switch (action) {
       case "get": {
         if (!key) return new Response(JSON.stringify({ error: "Key required" }), { status: 400, headers: cors });
-        if (!isKeyReadable(key, session)) {
+        const getAllowed = key.startsWith('user:')
+          ? await checkUserKeyAccess('get', key, session, store, null)
+          : isKeyReadable(key, session);
+        if (!getAllowed) {
           return new Response(JSON.stringify({ error: "Forbidden — you do not have access to this key" }), { status: 403, headers: cors });
         }
         const data = await store.get(key);
@@ -376,7 +459,14 @@ export default async (req) => {
 
       case "set": {
         if (!key) return new Response(JSON.stringify({ error: "Key required" }), { status: 400, headers: cors });
-        if (!isKeyWritable(key, session)) {
+        // Size cap (mirrors set-batch) — reject oversized single writes.
+        if (value && typeof value === 'string' && value.length > 512 * 1024) {
+          return new Response(JSON.stringify({ error: "Value too large (max 512KB)" }), { status: 400, headers: cors });
+        }
+        const setAllowed = key.startsWith('user:')
+          ? await checkUserKeyAccess('set', key, session, store, value)
+          : isKeyWritable(key, session);
+        if (!setAllowed) {
           return new Response(JSON.stringify({ error: "Forbidden — you do not have write access to this key" }), { status: 403, headers: cors });
         }
         await store.set(key, value);
@@ -385,7 +475,10 @@ export default async (req) => {
 
       case "delete": {
         if (!key) return new Response(JSON.stringify({ error: "Key required" }), { status: 400, headers: cors });
-        if (!isKeyWritable(key, session)) {
+        const deleteAllowed = key.startsWith('user:')
+          ? await checkUserKeyAccess('delete', key, session, store, null)
+          : isKeyWritable(key, session);
+        if (!deleteAllowed) {
           return new Response(JSON.stringify({ error: "Forbidden — you do not have write access to this key" }), { status: 403, headers: cors });
         }
         await store.delete(key);
