@@ -3,3 +3,8 @@ node_modules/
 .env
 *.log
 .DS_Store
+# Staff rosters and contact lists — personal data, never belongs in git history.
+*.xlsx
+*.xls
+*.csv
+roster*

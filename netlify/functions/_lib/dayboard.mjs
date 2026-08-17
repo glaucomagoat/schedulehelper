@@ -43,9 +43,19 @@ function groupBySite(ctx, dk) {
   // from the doctor plan too rather than only from tech assignments.
   Object.keys(cov).forEach(lid => { if (!sites[lid]) sites[lid] = { am: [], pm: [] }; });
 
+  // A sub-room borrows its parent's doctors — someone assigned to "Stockton - Suite 2"
+  // should see the Stockton doctors, not "no doctor".
+  const byId = {};
+  (ctx.allSites || ctx.locations || []).forEach(s => { byId[s.id] = s; });
+  const doctorsFor = lid => {
+    const site = byId[lid];
+    const sourceId = (site && site.parentLocationId) ? site.parentLocationId : lid;
+    return cov[sourceId] || { am: [], pm: [] };
+  };
+
   return Object.keys(sites)
     .sort((a, b) => locationName(ctx, a).localeCompare(locationName(ctx, b)))
-    .map(lid => ({ id: lid, name: locationName(ctx, lid), techs: sites[lid], doctors: cov[lid] || { am: [], pm: [] } }));
+    .map(lid => ({ id: lid, name: locationName(ctx, lid), techs: sites[lid], doctors: doctorsFor(lid) }));
 }
 
 function chip(text, highlight) {

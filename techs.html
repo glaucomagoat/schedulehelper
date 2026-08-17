@@ -173,6 +173,9 @@ const PRESET_HOLIDAYS = [
 ];
 
 const TECH_LEVELS = ['Tech', 'COA', 'COT', 'COMT', 'Scribe', 'Front Desk'];
+// Optional duties, separate from certification level. A COT can also be a scribe;
+// "Scribe" as a level answers a different question than "scribes for Dr. Kim".
+const TECH_ROLES  = ['Scribe', 'Testing Tech', 'Workup', 'Surgical', 'Float'];
 const TECH_SKILLS  = ['refraction','workup','VF','OCT','A-scan','photos','scribe','surgical','contact lens'];
 
 const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
@@ -428,6 +431,11 @@ function App() {
   const [techStaffing, setTechStaffing]   = useState({});
   const [techSchedules, setTechSchedules] = useState({});
   const [techTimeOff, setTechTimeOff]     = useState([]);
+  // Tech-only sub-rooms (e.g. "Stockton - Suite 2"). Deliberately NOT added to
+  // {admin}:locations, which the doctor scheduler shares — doctors are only ever
+  // recorded at the parent site, so a sub-room resolves its doctor count through
+  // parentLocationId instead of having its own.
+  const [techSites, setTechSites]         = useState([]);
   const [notifySettings, setNotifySettings] = useState(DEFAULT_NOTIFY_SETTINGS);
   const [notifyLog, setNotifyLog]         = useState({});
 
@@ -491,6 +499,7 @@ function App() {
   useEffect(() => { if (user) saveData('techStaffing', techStaffing); }, [techStaffing]);
   useEffect(() => { if (user) saveData('techSchedules', techSchedules); }, [techSchedules]);
   useEffect(() => { if (user) saveData('techTimeOff', techTimeOff); }, [techTimeOff]);
+  useEffect(() => { if (user) saveData('techSites', techSites); }, [techSites]);
   useEffect(() => { if (user) saveData('techNotifySettings', notifySettings); }, [notifySettings]);
 
   // MUST stay declared after every save effect above. loadAll's setState calls and
@@ -531,13 +540,14 @@ function App() {
       catch(e) { return null; }
     };
     const [
-      tk, tc, tr, ts, tsch, tto, tns, tnl,
+      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi,
       st, loc, fp, sch, hol
     ] = await Promise.all([
       d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
-      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'),
+      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'),
     ]);
+    if (tsi) setTechSites(tsi);
     if (tk)  setTechs(tk);
     if (tc)  setTechContacts(tc);
     if (tr)  setTechRules(tr);
@@ -566,8 +576,22 @@ function App() {
 
   // ── Derived data ───────────────────────────────────────────────────────────
   const activeTechs = useMemo(() => techs.filter(t => t.active !== false), [techs]);
-  const locById = useMemo(() => { const m = {}; locations.forEach(l => m[l.id] = l); return m; }, [locations]);
+
+  // Everywhere a technician can be ASSIGNED is a real location plus any tech-only
+  // sub-room. Everywhere a DOCTOR can be is `locations` alone — the two lists are
+  // deliberately different, which is what keeps the doctor scheduler untouched.
+  const allSites = useMemo(() => locations.concat(techSites || []), [locations, techSites]);
+  const locById = useMemo(() => { const m = {}; allSites.forEach(l => m[l.id] = l); return m; }, [allSites]);
   function locName(id) { return id === 'OFF' ? 'OFF' : (locById[id] ? locById[id].name : id); }
+
+  // A sub-room borrows its parent's doctors. Stockton - Suite 2 is staffed because
+  // Stockton has clinic that day, not because anyone is scheduled to Suite 2.
+  function doctorsAtSite(cov, siteId, period) {
+    if (!cov) return [];
+    const site = locById[siteId];
+    const sourceId = (site && site.parentLocationId) ? site.parentLocationId : siteId;
+    return (cov[sourceId] && cov[sourceId][period]) || [];
+  }
 
   // Holiday lookup for the selected year, keyed by dateKey.
   const holidayMap = useMemo(() => {
@@ -622,13 +646,13 @@ function App() {
     const cov = getDoctorCoverage(dk);
     const hol = holidayFor(dk);
     const targets = {};
-    locations.forEach(l => {
+    allSites.forEach(l => {
       const st = techStaffing[l.id];
       if (!st) return;
       const cfg = Object.assign({}, DEFAULT_STAFFING, st);
       targets[l.id] = { am: 0, pm: 0 };
       ['am','pm'].forEach(period => {
-        const docs = (cov && cov[l.id] && cov[l.id][period]) ? cov[l.id][period].length : 0;
+        const docs = doctorsAtSite(cov, l.id, period).length;
         let need = 0;
         if (docs > 0) {
           need = Math.ceil(docs * (Number(cfg.techsPerDoctor) || 0));
@@ -644,6 +668,83 @@ function App() {
     });
     return targets;
   }
+
+  // ── Doctor-pinned scribes ──────────────────────────────────────────────────
+  // A scribe attached to a doctor goes wherever that doctor goes. This is resolved
+  // HERE, in JavaScript, and handed to the model as a fixed answer — the same
+  // technique the doctor scheduler uses for rotations, and for the same reason: it
+  // is a lookup, not a judgement call, and models get lookups wrong often enough
+  // to matter. Post-processing re-applies it so a stray answer cannot survive.
+  //
+  // Returns { [techId]: { am: siteId|null, pm: siteId|null, doctorName, reason } }.
+  // A null half-day means "float" — the doctor is at surgery, on leave or off, so
+  // the scribe rejoins the general pool rather than being stranded.
+  function primaryDoctorsOf(t) {
+    if (Array.isArray(t.pinnedDoctorIds)) return t.pinnedDoctorIds.filter(Boolean);
+    return t.pinnedDoctorId ? [t.pinnedDoctorId] : [];   // legacy single-value records
+  }
+  function backupDoctorsOf(t) {
+    return Array.isArray(t.backupForDoctorIds) ? t.backupForDoctorIds.filter(Boolean) : [];
+  }
+
+  function computePinnedAssignments(dk) {
+    const p = parseDateKey(dk);
+    const plan = finalPlans[`${p.year}-${p.month0}`];
+    const daySchedule = plan
+      ? ((docSchedules[`schedule-${p.year}-${p.month0}-${plan}`] || {})[dk] || {})
+      : {};
+    const hol = holidayFor(dk);
+    const out = {};
+
+    // A back-up scribe only steps in when that doctor's primary is unavailable —
+    // otherwise Dr Choi would get both Judy and Melissa every single day.
+    const primaryCovering = {};   // doctorId -> true when a primary scribe is available
+    activeTechs.forEach(t => {
+      if (isTechOff(t.id, dk)) return;
+      primaryDoctorsOf(t).forEach(docId => { primaryCovering[docId] = true; });
+    });
+
+    activeTechs.forEach(t => {
+      const primaries = primaryDoctorsOf(t);
+      const standIns  = backupDoctorsOf(t).filter(docId => !primaryCovering[docId]);
+      const candidates = primaries.concat(standIns);
+      if (candidates.length === 0) return;
+
+      const label = candidates
+        .map(id => (doctors.find(d => d.id === id) || {}).name)
+        .filter(Boolean).join(' / ');
+      const entry = { am: null, pm: null, doctorName: label || 'unknown doctor',
+                      reason: '', viaBackup: primaries.length === 0 && standIns.length > 0 };
+
+      if (isTechOff(t.id, dk) || isWeekendDk(dk) || (hol && hol.halfDay === 'closed')) {
+        entry.reason = 'tech unavailable';
+        out[t.id] = entry;
+        return;
+      }
+
+      // Walk the doctors in priority order and take the first one who is somewhere
+      // technicians are actually staffed. This is what lets one person scribe for
+      // two doctors who are never in clinic at the same time.
+      ['am','pm'].forEach(period => {
+        if (hol && hol.halfDay === 'am' && period === 'pm') return;
+        for (const docId of candidates) {
+          const site = (daySchedule[docId] || {})[period];
+          if (!site || site === 'OFF') continue;
+          // A doctor at a surgery center does not drag their scribe along unless
+          // that site is configured for technicians.
+          if (!techStaffing[site]) continue;
+          entry[period] = site;
+          return;
+        }
+        entry.reason = entry.reason || 'doctor off or at a non-tech site';
+      });
+      out[t.id] = entry;
+    });
+    return out;
+  }
+
+  const pinnedToday = useMemo(() => computePinnedAssignments(selectedDate),
+    [selectedDate, activeTechs, doctors, docSchedules, finalPlans, techStaffing, techTimeOff, holidays]);
 
   function getAssignment(dk, techId) {
     const sk = techScheduleKeyFor(dk);
@@ -677,7 +778,7 @@ function App() {
 
   // Sites that matter today: anything with a doctor, a target, or an assigned tech.
   const activeSites = useMemo(() => {
-    return locations.filter(l => {
+    return allSites.filter(l => {
       const t = targets[l.id];
       if (t && (t.am > 0 || t.pm > 0)) return true;
       if (coverage && coverage[l.id]) return true;
@@ -948,7 +1049,7 @@ function App() {
     Object.keys(assignments).sort().forEach(dk => {
       const tgt = computeCoverageTargets(dk);
       const day = assignments[dk] || {};
-      locations.forEach(l => {
+      allSites.forEach(l => {
         const cfg = techStaffing[l.id];
         if (!cfg) return;
         ['am','pm'].forEach(period => {
@@ -1018,7 +1119,8 @@ function App() {
       (t.homeLocationId && locById[t.homeLocationId] ? ', Home: ' + locById[t.homeLocationId].name : '') + ')'
     ).join('\n');
 
-    const locationLines = locations.map(l => '- ' + l.name + ' (ID: ' + l.id + ')').join('\n');
+    const locationLines = allSites.map(l => '- ' + l.name + ' (ID: ' + l.id + ')' +
+      (l.parentLocationId ? ' [sub-room of ' + ((locById[l.parentLocationId]||{}).name || l.parentLocationId) + ']' : '')).join('\n');
 
     // Which doctors are where — the input that makes this a *technician* schedule
     // rather than a generic assignment problem.
@@ -1031,8 +1133,8 @@ function App() {
       const cov = getDoctorCoverage(dk);
       const tgt = computeCoverageTargets(dk);
       const dParts = [], tParts = [];
-      locations.forEach(l => {
-        const c = cov && cov[l.id];
+      allSites.forEach(l => {
+        const c = doctorsAtSite(cov, l.id, 'am').length || doctorsAtSite(cov, l.id, 'pm').length ? { am: doctorsAtSite(cov, l.id, 'am'), pm: doctorsAtSite(cov, l.id, 'pm') } : null;
         const need = tgt[l.id] || {};
         if (c && (c.am.length || c.pm.length)) {
           dParts.push(l.id + '{AM:' + (c.am.join('+') || '-') + ' PM:' + (c.pm.join('+') || '-') + '}');
@@ -1043,6 +1145,15 @@ function App() {
       });
       doctorLines.push('  ' + dk + '(' + dow + ',W' + wk + '): ' + (dParts.join(' | ') || 'no doctors'));
       targetLines.push('  ' + dk + ': ' + (tParts.join(' ') || 'none — no site needs techs'));
+    });
+
+    // Scribes pinned to a doctor are resolved here, not by the model — it is a lookup,
+    // and the model is told the answer. Re-enforced in post-processing regardless.
+    const pinnedByDay = {};
+    allWeekdays.forEach(d => {
+      const dk = dateKey(genYear, genMonth, d);
+      const pins = computePinnedAssignments(dk);
+      if (Object.keys(pins).length) pinnedByDay[dk] = pins;
     });
 
     const ruleLines = (() => {
@@ -1097,7 +1208,7 @@ function App() {
       'The 1st falls on ' + DAYS_OF_WEEK[new Date(genYear, genMonth, 1).getDay()] + '.\n\n' +
       'TECHNICIANS:\n' + techLines + '\n\n' +
       'LOCATIONS:\n' + locationLines + '\n' +
-      'VALID LOCATION IDs (exhaustive list): ' + locations.map(l => l.id).join(', ') + ', OFF\n' +
+      'VALID LOCATION IDs (exhaustive list): ' + allSites.map(l => l.id).join(', ') + ', OFF\n' +
       'CRITICAL: assign ONLY location IDs from the list above. NEVER invent, guess or approximate an ID. If nothing applies, assign "OFF".\n\n' +
       'DOCTOR COVERAGE BY DAY (siteId{AM:doctors PM:doctors}):\n' + doctorLines.join('\n') + '\n\n' +
       'REQUIRED TECH COVERAGE (siteId=AMcount/PMcount) — THESE NUMBERS ARE AUTHORITATIVE:\n' + targetLines.join('\n') + '\n' +
@@ -1152,7 +1263,34 @@ function App() {
           priorBlock += 'Use this to count monthly constraint occurrences and keep site assignments stable week to week.\n\n';
         }
 
-        const batchPrompt = priorBlock +
+        // Pins for just this batch's days, phrased as non-negotiable.
+        let pinBlock = '';
+        const pinRows = [];
+        batchDays.forEach(d => {
+          const dk = dateKey(genYear, genMonth, d);
+          const pins = pinnedByDay[dk];
+          if (!pins) return;
+          Object.keys(pins).forEach(tid => {
+            const pin = pins[tid];
+            const tech = activeTechs.find(x => x.id === tid);
+            if (!tech) return;
+            if (pin.am || pin.pm) {
+              pinRows.push('  - ' + dk + ': ' + tid + ' (' + tech.name + ', scribes for ' + pin.doctorName + ') MUST be '
+                + (pin.am ? 'AM=' + pin.am : 'AM=free')
+                + ' ' + (pin.pm ? 'PM=' + pin.pm : 'PM=free'));
+            } else {
+              pinRows.push('  - ' + dk + ': ' + tid + ' (' + tech.name + ') is FREE all day — '
+                + pin.doctorName + ' is ' + (pin.reason || 'unavailable') + '. Assign them wherever coverage is short.');
+            }
+          });
+        });
+        if (pinRows.length) {
+          pinBlock = 'PRE-COMPUTED SCRIBE ASSIGNMENTS (already resolved from the doctor schedule — follow exactly, do not override):\n'
+            + pinRows.join('\n') + '\n'
+            + 'Where a half-day says "free", that scribe is available for general assignment and SHOULD be used to fill a short site.\n\n';
+        }
+
+        const batchPrompt = pinBlock + priorBlock +
           'TASK: Generate technician assignments for ONLY these days: ' + daysList + '\n\n' +
           'Assign EVERY technician an AM and PM location (or "OFF") for each listed day.\n' +
           '{\n' +
@@ -1216,7 +1354,26 @@ function App() {
         });
       });
 
-      const validLocIds = new Set(locations.map(l => l.id).concat(['OFF']));
+      // Re-apply every pin. The model is told these up front, but telling is not
+      // enforcing — a scribe silently moved off their doctor is exactly the kind of
+      // error nobody notices until the doctor is standing there without them.
+      let pinFix = 0;
+      generatedDays.forEach(dk => {
+        const pins = pinnedByDay[dk];
+        if (!pins) return;
+        const day = allAssignments[dk];
+        Object.keys(pins).forEach(tid => {
+          if (!day[tid]) return;
+          const pin = pins[tid];
+          ['am','pm'].forEach(period => {
+            if (!pin[period]) return;                       // free half-day: model's choice stands
+            if (day[tid][period] !== pin[period]) { day[tid][period] = pin[period]; pinFix++; }
+          });
+        });
+      });
+      if (pinFix) addLog('info', `Scribe pins enforced: ${pinFix} slot${pinFix===1?'':'s'} corrected`);
+
+      const validLocIds = new Set(allSites.map(l => l.id).concat(['OFF']));
       generatedDays.forEach(dk => {
         const day = allAssignments[dk];
         Object.keys(day).forEach(tid => {
@@ -1349,7 +1506,7 @@ function App() {
           <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,
                          activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
-                         finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab}} />
+                         finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors}} />
         )}
         {activeTab === 'generate' && isAdmin && (
           <GeneratePanel {...{S,genYear,setGenYear,genMonth,setGenMonth,generating,aiLog,genLog,coverageReport,
@@ -1357,14 +1514,14 @@ function App() {
                               locName,locColor,setActiveTab,setSelectedDate,techs}} />
         )}
         {activeTab === 'techs' && isAdmin && (
-          <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations,showToast,
+          <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
                            portalAccounts,createTechPortalAccount,resetTechPortalPassword}} />
         )}
         {activeTab === 'staffing' && isAdmin && (
-          <StaffingPanel {...{S,locations,techStaffing,setTechStaffing,locColor}} />
+          <StaffingPanel {...{S,allSites,locations,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast}} />
         )}
         {activeTab === 'rules' && isAdmin && (
-          <RulesPanel {...{S,techRules,setTechRules,techs,locations,showToast}} />
+          <RulesPanel {...{S,techRules,setTechRules,techs,locations:allSites,showToast}} />
         )}
         {activeTab === 'timeoff' && isAdmin && (
           <TimeOffPanel {...{S,techTimeOff,setTechTimeOff,techs,showToast}} />
@@ -1396,7 +1553,8 @@ function DayBoard(p) {
   const { S, locColor, isMobile, isAdmin, selectedDate, setSelectedDate, boardView, setBoardView,
           activeTechs, locations, activeSites, targets, coverage, coverageIssues, getAssignment, setAssignment,
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
-          lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab } = p;
+          lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
+          allSites, pinnedToday, doctors } = p;
 
   const unreachableIds = new Set((unreachable || []).map(t => t.id));
   const changedUnreachable = unnotifiedChanges.filter(c => unreachableIds.has(c.tech.id));
@@ -1406,7 +1564,7 @@ function DayBoard(p) {
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
   const weekend = isWeekendDk(selectedDate);
 
-  const locOptions = [{ id:'', name:'— unassigned —' }, { id:'OFF', name:'OFF' }].concat(locations);
+  const locOptions = [{ id:'', name:'— unassigned —' }, { id:'OFF', name:'OFF' }].concat(allSites);
 
   function shift(n) { setSelectedDate(addDays(selectedDate, n)); }
 
@@ -1500,6 +1658,7 @@ function DayBoard(p) {
                 {activeTechs.map(t => {
                   const a = getAssignment(selectedDate, t.id);
                   const off = timeOffFor(t.id, selectedDate);
+                  const pin = (pinnedToday || {})[t.id];
                   const changed = lastSnapshot && (() => {
                     const o = lastSnapshot[t.id] || { am:'', pm:'' };
                     return o.am !== a.am || o.pm !== a.pm;
@@ -1508,7 +1667,17 @@ function DayBoard(p) {
                     <tr key={t.id} style={{background: changed ? 'rgba(79,70,229,0.07)' : 'transparent'}}>
                       <td style={S.td}>
                         <div style={{fontWeight:600}}>{t.name} {changed && <span title="Changed since last notification" style={{color:'#818cf8'}}>•</span>}</div>
-                        <div style={{fontSize:11,color:'var(--text-muted)'}}>{t.level}{t.skills && t.skills.length ? ' · ' + t.skills.join(', ') : ''}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)'}}>
+                          {t.level}
+                          {t.roles && t.roles.length ? ' · ' + t.roles.join(', ') : ''}
+                          {t.skills && t.skills.length ? ' · ' + t.skills.join(', ') : ''}
+                        </div>
+                        {pin && (
+                          <div style={{fontSize:11,marginTop:2,color: (pin.am || pin.pm) ? '#818cf8' : 'var(--text-dim)'}}>
+                            📌 {pin.doctorName}
+                            {!(pin.am || pin.pm) && <span> — floating ({pin.reason})</span>}
+                          </div>
+                        )}
                       </td>
                       {['am','pm'].map(period => (
                         <td key={period} style={S.td}>
@@ -1759,9 +1928,10 @@ function Pre({ ok, label }) {
 
 // ── Technicians ──────────────────────────────────────────────────────────────
 
-function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, showToast,
+function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, doctors, showToast,
                       portalAccounts, createTechPortalAccount, resetTechPortalPassword }) {
-  const blank = { id:'', name:'', level:'Tech', skills:[], homeLocationId:'', active:true };
+  const blank = { id:'', name:'', level:'Tech', roles:[], skills:[], homeLocationId:'',
+                  pinnedDoctorIds:[], backupForDoctorIds:[], notes:'', active:true };
   const [form, setForm] = useState(blank);
   const [editing, setEditing] = useState(false);
 
@@ -1785,8 +1955,126 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
     setForm(Object.assign({}, form, { skills: has ? form.skills.filter(x => x !== sk) : (form.skills||[]).concat([sk]) }));
   }
 
+  // ── Bulk import ────────────────────────────────────────────────────────────
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const parsed = useMemo(
+    () => (importText.trim() ? parseRoster(importText, doctors, locations) : []),
+    [importText, doctors, locations]);
+
+  function applyImport() {
+    if (!parsed.length) return;
+    const existing = {};
+    techs.forEach(t => { existing[t.name.trim().toLowerCase()] = t; });
+    let added = 0, updated = 0;
+    const next = techs.slice();
+    parsed.forEach(row => {
+      const key = row.name.trim().toLowerCase();
+      const fields = {
+        name: row.name,
+        roles: row.roles,
+        homeLocationId: row.homeLocationId,
+        pinnedDoctorIds: row.pinnedDoctorIds,
+        backupForDoctorIds: row.backupForDoctorIds,
+        notes: row.notes,
+      };
+      if (existing[key]) {
+        // Match on name so re-importing an updated sheet edits people in place
+        // rather than creating duplicates.
+        const i = next.findIndex(t => t.id === existing[key].id);
+        next[i] = Object.assign({}, next[i], fields);
+        updated++;
+      } else {
+        next.push(Object.assign({ id: newId('t'), level: 'Tech', skills: [], active: true }, fields));
+        added++;
+      }
+    });
+    setTechs(next);
+    setImportText(''); setShowImport(false);
+    showToast(`Imported ${added} new, updated ${updated}`, 'success');
+  }
+
+  const importProblems = parsed.filter(r => r.unmatchedDoctors.length || r.unmatchedSite);
+
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Import from your roster</span>
+          <div style={{flex:1}} />
+          <button onClick={() => setShowImport(v => !v)} style={S.btn}>
+            {showImport ? 'Close' : '📋 Paste roster'}
+          </button>
+        </div>
+        {showImport && (
+          <div style={{marginTop:12}}>
+            <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6,marginBottom:8}}>
+              Select the rows in Excel and paste here. Columns:
+              {' '}<code>Name · Preferred Location · Preferred Role · Occasional</code>.
+              Scribe pairings like "Dr Choi's Primary Scribe" are matched to your doctor list automatically,
+              and back-ups are kept separate from primaries. Importing again updates people by name instead of duplicating them.
+            </div>
+            <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={7}
+                      placeholder={'Victoria Archuleta\nDiana Carbajal\t\tDr Kim’s Primary Scribe\nLupe Cortes\tModesto'}
+                      style={Object.assign({}, S.input, {width:'100%',resize:'vertical',fontFamily:'"Space Mono",monospace',fontSize:12})} />
+            {parsed.length > 0 && (
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:12,fontWeight:700,marginBottom:6}}>
+                  {parsed.length} row{parsed.length===1?'':'s'} parsed
+                  {importProblems.length > 0 && <span style={{color:'#f59e0b'}}> · {importProblems.length} need attention</span>}
+                </div>
+                <div style={{maxHeight:220,overflowY:'auto',border:'1px solid var(--border-subtle)',borderRadius:8}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead><tr>
+                      <th style={S.th}>Name</th><th style={S.th}>Scribes for</th>
+                      <th style={S.th}>Home</th><th style={S.th}>Notes</th>
+                    </tr></thead>
+                    <tbody>
+                      {parsed.map((r,i) => (
+                        <tr key={i} style={{background: (r.unmatchedDoctors.length || r.unmatchedSite) ? 'rgba(245,158,11,0.07)' : 'transparent'}}>
+                          <td style={Object.assign({}, S.td, {fontWeight:600})}>{r.name}</td>
+                          <td style={S.td}>
+                            {r.pinnedDoctorIds.map(id => (
+                              <span key={id} style={{color:'#818cf8',fontWeight:600}}>
+                                {((doctors||[]).find(d=>d.id===id)||{}).name}{' '}
+                              </span>
+                            ))}
+                            {r.backupForDoctorIds.map(id => (
+                              <span key={id} style={{color:'#f59e0b'}}>
+                                (backup: {((doctors||[]).find(d=>d.id===id)||{}).name}){' '}
+                              </span>
+                            ))}
+                            {r.unmatchedDoctors.map((n,j) => (
+                              <span key={j} style={{color:'#ef4444',fontWeight:600}}>⚠ no doctor named "{n}" </span>
+                            ))}
+                          </td>
+                          <td style={S.td}>
+                            {r.homeLocationId
+                              ? r.homeLocationLabel
+                              : (r.unmatchedSite ? <span style={{color:'#f59e0b'}}>⚠ "{r.unmatchedSite}"</span> : '—')}
+                          </td>
+                          <td style={Object.assign({}, S.td, {color:'var(--text-muted)'})}>{r.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {importProblems.length > 0 && (
+                  <div style={{marginTop:8,fontSize:12,color:'#f59e0b',lineHeight:1.6}}>
+                    Rows flagged above will still import — the unmatched doctor or site is simply left blank,
+                    and you can set it by hand afterwards. A missing doctor usually means they aren't in the
+                    doctor scheduler's roster yet.
+                  </div>
+                )}
+                <button onClick={applyImport} style={Object.assign({}, S.btnP, {marginTop:12})}>
+                  Import {parsed.length} technician{parsed.length===1?'':'s'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div style={Object.assign({}, S.card, {padding:16})}>
         <div style={{fontWeight:700,marginBottom:12}}>{editing ? 'Edit technician' : 'Add technician'}</div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}} className="mob-grid1">
@@ -1807,6 +2095,60 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
               <option value="">— none —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
+          </div>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:12}} className="mob-grid1">
+          <div>
+            <label style={S.label}>Primary scribe for</label>
+            <DoctorPicker doctors={doctors} S={S} accent="#4f46e5"
+              value={form.pinnedDoctorIds || []}
+              onChange={v => setForm(Object.assign({}, form, {pinnedDoctorIds:v}))} />
+            <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>
+              Pick more than one if they cover several doctors — the first one in clinic that half-day wins.
+            </div>
+          </div>
+          <div>
+            <label style={S.label}>Back-up scribe for</label>
+            <DoctorPicker doctors={doctors} S={S} accent="#f59e0b"
+              value={form.backupForDoctorIds || []}
+              onChange={v => setForm(Object.assign({}, form, {backupForDoctorIds:v}))} />
+            <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>
+              Only steps in when that doctor's primary scribe is on time off.
+            </div>
+          </div>
+        </div>
+
+        {(form.pinnedDoctorIds || []).length > 0 && (
+          <div style={{marginTop:10,fontSize:12,color:'var(--text-secondary)',background:'rgba(79,70,229,0.09)',
+                       border:'1px solid #4f46e5',borderRadius:8,padding:'8px 11px',lineHeight:1.6}}>
+            📌 Follows {(form.pinnedDoctorIds || []).map(id => ((doctors||[]).find(d => d.id === id)||{}).name).filter(Boolean).join(' then ')} automatically.
+            The generator cannot move them. On half-days when none of those doctors is in a tech-staffed clinic,
+            they float back into the pool and fill wherever coverage is short.
+          </div>
+        )}
+
+        <div style={{marginTop:12}}>
+          <label style={S.label}>Notes (shown to the generator)</label>
+          <input value={form.notes || ''} onChange={e => setForm(Object.assign({}, form, {notes:e.target.value}))}
+                 placeholder="e.g. occasionally covers LASIK" style={Object.assign({}, S.input, {width:'100%'})} />
+        </div>
+        <div style={{marginTop:12}}>
+          <label style={S.label}>Roles</label>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {TECH_ROLES.map(rl => {
+              const on = (form.roles||[]).includes(rl);
+              return (
+                <button key={rl}
+                  onClick={() => setForm(Object.assign({}, form, {
+                    roles: on ? (form.roles||[]).filter(x => x !== rl) : (form.roles||[]).concat([rl])
+                  }))}
+                  style={{fontSize:12,fontWeight:600,padding:'5px 11px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
+                          background:on?'rgba(16,185,129,0.16)':'var(--bg-elevated)',
+                          border:'1px solid '+(on?'#10b981':'var(--border-default)'),
+                          color:on?'#10b981':'var(--text-muted)'}}>{rl}</button>
+              );
+            })}
           </div>
         </div>
         <div style={{marginTop:12}}>
@@ -1886,9 +2228,118 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
   );
 }
 
+// Ordered multi-select. Order is meaningful: it is the priority in which a scribe
+// follows their doctors when more than one is in clinic.
+function DoctorPicker({ doctors, value, onChange, S, accent }) {
+  const list = (doctors || []).filter(d => d.active !== false);
+  function toggle(id) {
+    onChange(value.includes(id) ? value.filter(x => x !== id) : value.concat([id]));
+  }
+  return (
+    <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+      {list.length === 0 && <span style={{fontSize:12,color:'var(--text-dim)'}}>No doctors loaded</span>}
+      {list.map(d => {
+        const idx = value.indexOf(d.id);
+        const on = idx >= 0;
+        return (
+          <button key={d.id} onClick={() => toggle(d.id)}
+            style={{fontSize:11,fontWeight:600,padding:'4px 9px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
+                    background: on ? accent + '28' : 'var(--bg-elevated)',
+                    border:'1px solid ' + (on ? accent : 'var(--border-default)'),
+                    color: on ? accent : 'var(--text-dim)'}}>
+            {on && value.length > 1 ? (idx + 1) + '. ' : ''}{d.name.replace(/\s+(MD|OD)$/,'')}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Roster import ────────────────────────────────────────────────────────────
+// Takes a paste straight out of the practice's spreadsheet. Deliberately NOT a
+// hardcoded list: employee names would then live in the git history of a repo on
+// GitHub, and the roster changes over time anyway.
+//
+// Expected columns (tab- or pipe-separated, header row optional):
+//   Name | Preferred Location | Preferred Role | Occasional Roles / Locations
+
+function matchDoctor(doctors, text) {
+  // Strip the title and the possessive. Excel autocorrects apostrophes to curly
+  // ones, so both forms have to go — otherwise "Dr Choi's" never matches "Choi".
+  const t = String(text || '').trim()
+    .replace(/^dr\.?\s+/i, '')
+    .replace(/[’'`]s\b/i, '')
+    .replace(/[’'`]$/, '');
+  if (!t) return null;
+  const lower = t.toLowerCase();
+  const active = (doctors || []).filter(d => d.active !== false);
+  // Exact, then surname — "Dr Kim" must find "Steve Kim MD".
+  let hit = active.find(d => d.name.toLowerCase() === lower);
+  if (hit) return hit;
+  hit = active.find(d => d.name.toLowerCase().replace(/\s+(md|od)$/,'').split(/\s+/).pop() === lower);
+  if (hit) return hit;
+  hit = active.find(d => d.name.toLowerCase().includes(lower));
+  return hit || null;
+}
+
+function matchSite(sites, text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return null;
+  return (sites || []).find(l => l.name.toLowerCase() === t)
+      || (sites || []).find(l => l.name.toLowerCase().includes(t) || t.includes(l.name.toLowerCase()))
+      || null;
+}
+
+// Pulls "Dr Choi's Primary Scribe, Dr Vahedi's Primary Scribe" apart into
+// { primary: [...], backup: [...], unmatched: [...] }.
+function parseScribeRoles(roleText, doctors) {
+  const out = { primary: [], backup: [], unmatched: [] };
+  String(roleText || '').split(/[,;]|\band\b/i).forEach(chunk => {
+    const c = chunk.trim();
+    if (!c) return;
+    const m = c.match(/dr\.?\s*([A-Za-z-]+)/i);          // stop before the possessive
+    if (!m) return;
+    const isBackup = /back\s*-?\s*up/i.test(c);
+    const doc = matchDoctor(doctors, m[1]);
+    if (!doc) { out.unmatched.push(m[1]); return; }
+    (isBackup ? out.backup : out.primary).push(doc.id);
+  });
+  return out;
+}
+
+function parseRoster(text, doctors, sites) {
+  const rows = [];
+  String(text || '').split(/\r?\n/).forEach(line => {
+    if (!line.trim()) return;
+    const cols = line.split(/\t|\s*\|\s*/).map(c => c.trim());
+    const name = cols[0];
+    if (!name) return;
+    if (/^name$/i.test(name)) return;                       // header row
+    const prefLoc = cols[1] || '', roleText = cols[2] || '', occasional = cols[3] || '';
+    const scribe = parseScribeRoles(roleText, doctors);
+    const site = matchSite(sites, prefLoc);
+    const roles = [];
+    if (scribe.primary.length || scribe.backup.length) roles.push('Scribe');
+    if (/testing/i.test(roleText + ' ' + occasional)) roles.push('Testing Tech');
+    const notes = [occasional, (prefLoc && !site) ? 'Preferred: ' + prefLoc : '']
+      .filter(Boolean).join(' · ');
+    rows.push({
+      name, roles,
+      homeLocationId: site ? site.id : '',
+      homeLocationLabel: site ? site.name : (prefLoc || ''),
+      pinnedDoctorIds: scribe.primary,
+      backupForDoctorIds: scribe.backup,
+      notes,
+      unmatchedDoctors: scribe.unmatched,
+      unmatchedSite: prefLoc && !site ? prefLoc : null,
+    });
+  });
+  return rows;
+}
+
 // ── Staffing targets ─────────────────────────────────────────────────────────
 
-function StaffingPanel({ S, locations, techStaffing, setTechStaffing, locColor }) {
+function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techStaffing, setTechStaffing, locColor, showToast }) {
   function upd(locId, field, val) {
     setTechStaffing(Object.assign({}, techStaffing, {
       [locId]: Object.assign({}, DEFAULT_STAFFING, techStaffing[locId] || {}, { [field]: val })
@@ -1899,6 +2350,33 @@ function StaffingPanel({ S, locations, techStaffing, setTechStaffing, locColor }
     if (on) next[locId] = Object.assign({}, DEFAULT_STAFFING);
     else delete next[locId];
     setTechStaffing(next);
+  }
+
+  const [subName, setSubName] = useState('');
+  const [subParent, setSubParent] = useState('');
+
+  function addSubRoom() {
+    const name = subName.trim();
+    if (!name) { showToast('Give the room a name', 'error'); return; }
+    if (!subParent) { showToast('Pick which site it belongs to', 'error'); return; }
+    if (allSites.some(s => s.name.toLowerCase() === name.toLowerCase())) {
+      showToast('A site with that name already exists', 'error'); return;
+    }
+    const id = newId('ts');
+    setTechSites((techSites || []).concat([{ id, name, parentLocationId: subParent }]));
+    // Enabled with a flat minimum and no per-doctor ratio: a sub-room is usually
+    // "put N people in that room when the parent has clinic", not a ratio.
+    setTechStaffing(Object.assign({}, techStaffing, {
+      [id]: Object.assign({}, DEFAULT_STAFFING, { techsPerDoctor: 0, minimum: 1 })
+    }));
+    setSubName(''); setSubParent('');
+  }
+
+  function removeSubRoom(id) {
+    const site = (techSites || []).find(s => s.id === id);
+    if (!confirm(`Remove "${site ? site.name : id}"? Existing assignments to it stay in the schedule but will show as an unknown site.`)) return;
+    setTechSites((techSites || []).filter(s => s.id !== id));
+    const next = Object.assign({}, techStaffing); delete next[id]; setTechStaffing(next);
   }
 
   return (
@@ -1912,8 +2390,47 @@ function StaffingPanel({ S, locations, techStaffing, setTechStaffing, locColor }
         </p>
       </div>
 
+      <div style={Object.assign({}, S.card, {padding:16})}>
+        <div style={{fontWeight:700,marginBottom:6}}>Sub-rooms</div>
+        <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
+          A room technicians staff separately, inside a site the doctor schedule already knows about — like a second
+          suite at Stockton. Doctors are still recorded at the parent site, so a sub-room borrows the parent's doctor
+          count. It exists only here; the doctor scheduler's location list is untouched.
+        </p>
+        <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div>
+            <label style={S.label}>Room name</label>
+            <input value={subName} onChange={e => setSubName(e.target.value)}
+                   placeholder="Stockton - Suite 2" style={Object.assign({}, S.input, {minWidth:200})} />
+          </div>
+          <div>
+            <label style={S.label}>Inside which site</label>
+            <select value={subParent} onChange={e => setSubParent(e.target.value)} style={Object.assign({}, S.input, {minWidth:160})}>
+              <option value="">— pick —</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <button onClick={addSubRoom} style={S.btnP}>Add sub-room</button>
+        </div>
+        {(techSites || []).length > 0 && (
+          <div style={{marginTop:14,display:'flex',flexDirection:'column',gap:6}}>
+            {techSites.map(s => (
+              <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,
+                                      padding:'7px 0',borderTop:'1px solid var(--border-subtle)'}}>
+                <strong>{s.name}</strong>
+                <span style={{color:'var(--text-muted)',fontSize:12}}>
+                  inside {(locations.find(l => l.id === s.parentLocationId) || {}).name || s.parentLocationId}
+                </span>
+                <div style={{flex:1}} />
+                <button onClick={() => removeSubRoom(s.id)} style={S.btnD}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:12}} className="mob-grid1">
-        {locations.map(l => {
+        {allSites.map(l => {
           const on = !!techStaffing[l.id];
           const cfg = Object.assign({}, DEFAULT_STAFFING, techStaffing[l.id] || {});
           const c = locColor(l.id);

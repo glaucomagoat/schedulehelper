@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       readJson(store, ns + "techContacts", {}),
@@ -53,10 +53,14 @@ export async function loadContext(store) {
       readJson(store, ns + "techNotifySettings", {}),
       readJson(store, ns + "techNotifyLog", {}),
       readJson(store, ns + "techTimeOff", []),
+      readJson(store, ns + "techSites", []),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
-    finalPlans, docSchedules, timeOff, notifyLog,
+    finalPlans, docSchedules, timeOff, notifyLog, techSites,
+    // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
+    // Doctors only ever appear at real locations, which is why the two differ.
+    allSites: (locations || []).concat(techSites || []),
     settings: Object.assign({}, DEFAULT_SETTINGS, settings || {}),
   };
 }
@@ -118,7 +122,8 @@ export function assignmentsFor(ctx, dk) {
 
 export function locationName(ctx, id) {
   if (!id || id === "OFF") return "OFF";
-  const l = ctx.locations.find(x => x.id === id);
+  const all = ctx.allSites || ctx.locations || [];
+  const l = all.find(x => x.id === id);
   return l ? l.name : id;
 }
 
