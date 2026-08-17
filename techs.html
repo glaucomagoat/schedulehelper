@@ -257,9 +257,15 @@ function fmtDateShort(dk) {
   const p = parseDateKey(dk); const dt = dkToDate(dk);
   return `${DAYS_OF_WEEK[dt.getDay()]} ${p.month0+1}/${p.day}`;
 }
-function techScheduleKeyFor(dk) {
+// Plan-aware. The legacy shape (tech-YYYY-M, no plan) is migrated to plan A on load,
+// so nothing written before plans existed is stranded.
+function techScheduleKeyFor(dk, plan) {
   const p = parseDateKey(dk);
-  return `tech-${p.year}-${p.month0}`;
+  return `tech-${p.year}-${p.month0}-${plan || 'A'}`;
+}
+function techMonthKeyFor(dk) {
+  const p = parseDateKey(dk);
+  return `${p.year}-${p.month0}`;
 }
 function getWeekOfMonth(day) { return Math.min(Math.floor((day-1)/7)+1, 4); }
 
@@ -517,6 +523,8 @@ function App() {
   // recorded at the parent site, so a sub-room resolves its doctor count through
   // parentLocationId instead of having its own.
   const [techSites, setTechSites]         = useState([]);
+  const [techFinalPlans, setTechFinalPlans] = useState({});  // { "2026-7": "A" }
+  const [activeTechPlan, setActiveTechPlan] = useState('A'); // which plan is being edited
   const [notifySettings, setNotifySettings] = useState(DEFAULT_NOTIFY_SETTINGS);
   const [notifyLog, setNotifyLog]         = useState({});
   // Free-text note per date ("YYYY-MM-DD" -> text), shown on the Day Board and
@@ -589,6 +597,7 @@ function App() {
   useEffect(() => { if (user) saveData('techSchedules', techSchedules); }, [techSchedules]);
   useEffect(() => { if (user) saveData('techTimeOff', techTimeOff); }, [techTimeOff]);
   useEffect(() => { if (user) saveData('techSites', techSites); }, [techSites]);
+  useEffect(() => { if (user) saveData('techFinalPlans', techFinalPlans); }, [techFinalPlans]);
   useEffect(() => { if (user) saveData('techNotifySettings', notifySettings); }, [notifySettings]);
   useEffect(() => { if (user) saveData('techDayNotes', techDayNotes); }, [techDayNotes]);
 
@@ -630,11 +639,11 @@ function App() {
       catch(e) { return null; }
     };
     const [
-      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn,
+      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp,
       st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
       d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
-      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'),
+      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
@@ -642,7 +651,25 @@ function App() {
     if (tc)  setTechContacts(tc);
     if (tr)  setTechRules(tr);
     if (ts)  setTechStaffing(ts);
-    if (tsch) setTechSchedules(tsch);
+    if (tfp) setTechFinalPlans(tfp);
+    if (tsch) {
+      // One-time migration: keys written before plans existed (tech-YYYY-M) become
+      // plan A. Done in memory and saved back, so it only ever happens once.
+      let migrated = false;
+      const next = {};
+      Object.keys(tsch).forEach(k => {
+        if (/^tech-\d{4}-\d{1,2}$/.test(k)) { next[k + '-A'] = tsch[k]; migrated = true; }
+        else next[k] = tsch[k];
+      });
+      setTechSchedules(next);
+      // Written directly rather than through saveData: that path is deliberately
+      // inert until hydration finishes, so a migration routed through it would repair
+      // memory on every load and never actually persist.
+      if (migrated) {
+        window.storage.set(`${ns}:techSchedules`, JSON.stringify(next))
+          .catch(e => console.warn('techSchedules migration could not be saved:', e.message));
+      }
+    }
     if (tto) setTechTimeOff(tto);
     if (tns) setNotifySettings(Object.assign({}, DEFAULT_NOTIFY_SETTINGS, tns));
     if (tnl) setNotifyLog(tnl);
@@ -761,6 +788,56 @@ function App() {
     return targets;
   }
 
+  // Which sites occupy the four print quadrants. Falls back to the first four
+  // configured sites so a cell is never blank before anyone configures it.
+  const quadSiteIds = useMemo(() => {
+    const cfg = (notifySettings.quadrantSiteIds || []).filter(id => !!techStaffing[id]);
+    if (cfg.length) return cfg.slice(0,4);
+    return Object.keys(techStaffing).slice(0,4);
+  }, [notifySettings, techStaffing]);
+
+  // ── Plans ──────────────────────────────────────────────────────────────────
+  // Same model as the doctor scheduler: three drafts per month, one optionally marked
+  // FINAL. Everything technicians actually see — day links, Telegram messages — reads
+  // the FINAL plan only, so a half-finished draft can never reach anyone.
+  const techMonthKey = techMonthKeyFor(selectedDate);
+  const finalTechPlanForMonth = techFinalPlans[techMonthKey] || null;
+
+  function techPlanHasData(plan) {
+    const k = techScheduleKeyFor(selectedDate, plan);
+    return !!(techSchedules[k] && Object.keys(techSchedules[k]).length > 0);
+  }
+  function setTechFinalPlan(plan) {
+    setTechFinalPlans(prev => Object.assign({}, prev, { [techMonthKey]: plan }));
+  }
+  function clearTechFinalPlan() {
+    setTechFinalPlans(prev => { const n = Object.assign({}, prev); delete n[techMonthKey]; return n; });
+  }
+  function copyTechPlanTo(fromPlan, toPlan) {
+    const fromKey = techScheduleKeyFor(selectedDate, fromPlan);
+    const toKey   = techScheduleKeyFor(selectedDate, toPlan);
+    const data = techSchedules[fromKey];
+    if (!data) { showToast('Plan ' + fromPlan + ' is empty — nothing to copy', 'error'); return; }
+    if (techPlanHasData(toPlan) && !confirm('Plan ' + toPlan + ' already has assignments. Overwrite it with Plan ' + fromPlan + '?')) return;
+    setTechSchedules(prev => Object.assign({}, prev, { [toKey]: JSON.parse(JSON.stringify(data)) }));
+    showToast('Copied Plan ' + fromPlan + ' → Plan ' + toPlan, 'success');
+  }
+  function clearTechPlan() {
+    const k = techScheduleKeyFor(selectedDate, activeTechPlan);
+    if (!techPlanHasData(activeTechPlan)) { showToast('Plan ' + activeTechPlan + ' is already empty', 'info'); return; }
+    if (!confirm('Clear every assignment in Plan ' + activeTechPlan + ' for ' + MONTHS[parseDateKey(selectedDate).month0] + '? This cannot be undone.')) return;
+    setTechSchedules(prev => { const n = Object.assign({}, prev); delete n[k]; return n; });
+    showToast('Plan ' + activeTechPlan + ' cleared', 'success');
+  }
+  const [refreshing, setRefreshing] = useState(false);
+  async function refreshTechData() {
+    if (!dataNs) return;
+    setRefreshing(true);
+    try { await loadAll(dataNs); showToast('Refreshed', 'success'); }
+    catch(e) { showToast('Refresh failed: ' + e.message, 'error'); }
+    finally { setRefreshing(false); }
+  }
+
   // ── Doctor-pinned scribes ──────────────────────────────────────────────────
   // A scribe attached to a doctor goes wherever that doctor goes. This is resolved
   // HERE, in JavaScript, and handed to the model as a fixed answer — the same
@@ -839,13 +916,13 @@ function App() {
     [selectedDate, activeTechs, doctors, docSchedules, finalPlans, techStaffing, techTimeOff, holidays]);
 
   function getAssignment(dk, techId) {
-    const sk = techScheduleKeyFor(dk);
+    const sk = techScheduleKeyFor(dk, activeTechPlan);
     const day = (techSchedules[sk] || {})[dk] || {};
     return day[techId] || { am: '', pm: '' };
   }
 
   function setAssignment(dk, techId, period, locId) {
-    const sk = techScheduleKeyFor(dk);
+    const sk = techScheduleKeyFor(dk, activeTechPlan);
     setTechSchedules(prev => {
       const next = Object.assign({}, prev);
       const month = Object.assign({}, next[sk] || {});
@@ -1491,7 +1568,7 @@ function App() {
       if (badFix)  addLog('warn', `Invalid location IDs replaced with OFF: ${Array.from(badIds).join(', ')} (${badFix} slot${badFix===1?'':'s'})`);
       if (ghostTechs) addLog('warn', `Removed ${ghostTechs} assignment${ghostTechs===1?'':'s'} for unknown technician IDs`);
 
-      const sk = `tech-${genYear}-${genMonth}`;
+      const sk = `tech-${genYear}-${genMonth}-${activeTechPlan}`;   // generate into the plan being edited
       setTechSchedules(prev => {
         const next = Object.assign({}, prev);
         next[sk] = Object.assign({}, next[sk] || {}, allAssignments);
@@ -1543,7 +1620,8 @@ function App() {
   // offscreen measuring iframe in generateMonthPDF() below.
   function buildMonthPdfHtml(year, month0, fs) {
     const daysInMonth = new Date(year, month0 + 1, 0).getDate();
-    const sk = `tech-${year}-${month0}`;
+    // Print whichever plan is FINAL for that month, falling back to the one on screen.
+    const sk = `tech-${year}-${month0}-${techFinalPlans[year + '-' + month0] || activeTechPlan}`;
     const monthSchedule = techSchedules[sk] || {};
 
     // Quadrant sites (admin-configured, else first 4 staffed sites) and the
@@ -1839,7 +1917,10 @@ function App() {
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
                          finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,
                          techDayNotes,setTechDayNotes,generateMonthPDF,
-                         docDayNotes,docSchedules,theme,siteAbbr}} />
+                         docDayNotes,docSchedules,theme,siteAbbr,
+                         activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
+                         setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
+                         refreshTechData,refreshing,quadSiteIds}} />
         )}
         {activeTab === 'generate' && isAdmin && (
           <GeneratePanel {...{S,genYear,setGenYear,genMonth,setGenMonth,generating,aiLog,genLog,coverageReport,
@@ -1890,7 +1971,10 @@ function DayBoard(p) {
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
           lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
           allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF,
-          docDayNotes, docSchedules, theme, siteAbbr } = p;
+          docDayNotes, docSchedules, theme, siteAbbr,
+          activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
+          setTechFinalPlan, clearTechFinalPlan, copyTechPlanTo, clearTechPlan,
+          refreshTechData, refreshing, quadSiteIds } = p;
 
   const dp = parseDateKey(selectedDate);
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
@@ -1900,14 +1984,6 @@ function DayBoard(p) {
   const staffedSites = useMemo(
     () => allSites.filter(l => !!techStaffing[l.id]),
     [allSites, techStaffing]);
-
-  // Which sites occupy the four quadrants, matching the printout. Falls back to the
-  // first four configured sites so the cell is never blank before it is configured.
-  const quadSiteIds = useMemo(() => {
-    const cfg = (notifySettings.quadrantSiteIds || []).filter(id => !!techStaffing[id]);
-    if (cfg.length) return cfg.slice(0,4);
-    return Object.keys(techStaffing).slice(0,4);
-  }, [notifySettings, techStaffing]);
 
   function shiftDay(n) { setSelectedDate(addDays(selectedDate, n)); }
   function openDay(dk) { setSelectedDate(dk); setEditDate(dk); setBoardView('week'); }
@@ -1928,6 +2004,60 @@ function DayBoard(p) {
           <button onClick={() => generateMonthPDF(dp.year, dp.month0)} style={S.btn}>🖨 Print month</button>
         )}
       </div>
+
+      {/* Plans — same model as the doctor scheduler. Only the FINAL plan is ever
+          shown to technicians, so drafts can be worked on without leaking. */}
+      {isAdmin && (
+        <div style={Object.assign({}, S.card, {padding:'10px 12px',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'})}>
+          <span style={{fontSize:11,fontWeight:800,letterSpacing:0.8,color:'var(--text-muted)'}}>PLANS:</span>
+          {['A','B','C'].map(pl => {
+            const active = activeTechPlan === pl;
+            const isFinal = finalTechPlanForMonth === pl;
+            const hasData = techPlanHasData(pl);
+            return (
+              <button key={pl} onClick={() => setActiveTechPlan(pl)}
+                style={{background: active ? (isFinal ? 'rgba(16,185,129,0.13)' : 'var(--bg-active)') : 'var(--bg-elevated)',
+                        border:'2px solid ' + (active ? (isFinal ? '#10b981' : '#4f46e5') : 'var(--border-default)'),
+                        borderRadius:8,padding:'6px 13px',cursor:'pointer',fontFamily:'inherit',
+                        fontSize:13,fontWeight:700,
+                        color: active ? (isFinal ? '#10b981' : 'var(--text-primary)') : 'var(--text-muted)',
+                        display:'flex',alignItems:'center',gap:6}}>
+                Plan {pl}
+                {hasData && !isFinal && <span title="has assignments" style={{width:6,height:6,borderRadius:'50%',background:'#818cf8'}} />}
+                {isFinal && <span style={{fontSize:10,fontWeight:800,letterSpacing:0.6}}>● FINAL</span>}
+              </button>
+            );
+          })}
+
+          {finalTechPlanForMonth === activeTechPlan
+            ? <button onClick={clearTechFinalPlan} style={Object.assign({}, S.btn, {borderColor:'#b45309',color:'#f59e0b'})}>↩ Unset Final</button>
+            : <button onClick={() => setTechFinalPlan(activeTechPlan)} disabled={!techPlanHasData(activeTechPlan)}
+                title={techPlanHasData(activeTechPlan) ? 'Publish this plan to technicians' : 'Plan is empty'}
+                style={Object.assign({}, S.btn, {borderColor:'#10b981',color:'#10b981',
+                  opacity: techPlanHasData(activeTechPlan) ? 1 : 0.45,
+                  cursor: techPlanHasData(activeTechPlan) ? 'pointer' : 'not-allowed'})}>✓ Set Final</button>}
+
+          <select value="" onChange={e => { if (e.target.value) { copyTechPlanTo(activeTechPlan, e.target.value); e.target.value=''; } }}
+                  style={Object.assign({}, S.input, {padding:'7px 9px'})}>
+            <option value="">Copy to…</option>
+            {['A','B','C'].filter(pl => pl !== activeTechPlan).map(pl => <option key={pl} value={pl}>Plan {pl}</option>)}
+          </select>
+
+          <button onClick={clearTechPlan} style={Object.assign({}, S.btn, {borderColor:'#b91c1c',color:'#ef4444'})}>🗑 Clear Plan</button>
+          <button onClick={refreshTechData} disabled={refreshing} style={S.btn}>
+            {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+          </button>
+
+          <div style={{flex:1}} />
+          {finalTechPlanForMonth
+            ? <span style={{fontSize:12,color:'#10b981',fontWeight:600}}>
+                Plan {finalTechPlanForMonth} is live for {MONTHS[dp.month0]}
+              </span>
+            : <span style={{fontSize:12,color:'#f59e0b',fontWeight:600}}>
+                ⚠ No final plan for {MONTHS[dp.month0]} — technicians see nothing
+              </span>}
+        </div>
+      )}
 
       {!published && (
         <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'10px 14px',fontSize:13,color:'#f59e0b'}}>
@@ -1951,7 +2081,8 @@ function DayBoard(p) {
 
       {boardView === 'month'
         ? <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,openDay,staffedSites,
-                          activeTechs,getAssignment,locName,holidayFor,isTechOff,targets,holidays}} />
+                          activeTechs,getAssignment,locName,holidayFor,isTechOff,targets,holidays,
+                          quadSiteIds,siteAbbr,techDayNotes}} />
         : <WeekView  {...{S,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,editDate,setEditDate,
                           staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
@@ -1967,7 +2098,8 @@ function DayBoard(p) {
 // with that day loaded for editing.
 
 function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
-                     activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays }) {
+                     activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays,
+                     quadSiteIds, siteAbbr, techDayNotes }) {
   const dp = parseDateKey(selectedDate);
   const first = new Date(dp.year, dp.month0, 1);
   const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
@@ -1985,18 +2117,6 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
     setSelectedDate(dateKey(dt.getFullYear(), dt.getMonth(), 1));
   }
 
-  // Sites a tech is at that day, grouped. Weekends collapse to nothing.
-  function daySummary(dk) {
-    const bySite = {};
-    activeTechs.forEach(t => {
-      const a = getAssignment(dk, t.id);
-      const site = a.am || a.pm;
-      if (!site || site === 'OFF') return;
-      (bySite[site] = bySite[site] || []).push(t);
-    });
-    return bySite;
-  }
-
   return (
     <div style={Object.assign({}, S.card, {padding:isMobile?8:14})}>
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
@@ -2008,7 +2128,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
       </div>
 
       <div className="mob-scroll">
-        <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed',minWidth:isMobile?640:0}}>
+        <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed',minWidth: 980}}>
           <thead><tr>
             {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i) => (
               <th key={d} style={{fontSize:11,fontWeight:800,letterSpacing:0.8,textTransform:'uppercase',
@@ -2021,40 +2141,21 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
             {weeks.map((w,wi) => (
               <tr key={wi}>
                 {w.map((d,di) => {
-                  if (d === null) return <td key={di} style={{border:'1px solid var(--border-subtle)',background:'var(--cell-offmonth)',height:78}} />;
+                  if (d === null) return <td key={di} style={{border:'1px solid var(--border-subtle)',background:'var(--cell-offmonth)'}} />;
                   const dk = dateKey(dp.year, dp.month0, d);
-                  const hol = holidayFor(dk);
-                  const bySite = daySummary(dk);
                   const isSel = dk === selectedDate;
                   const wknd = di===0 || di===6;
-                  const closed = hol && hol.halfDay === 'closed';
+                  const anyWork = activeTechs.some(t => { const a = getAssignment(dk,t.id); const st = a.am||a.pm; return st && st !== 'OFF'; });
                   return (
                     <td key={di} onClick={() => openDay(dk)}
                       style={{border:'2px solid ' + (isSel ? '#4f46e5' : 'var(--border-subtle)'),
                               background: isSel ? 'rgba(79,70,229,0.07)' : (wknd ? 'var(--cell-weekend)' : 'var(--bg-surface)'),
-                              verticalAlign:'top',padding:'3px 5px',height:78,cursor:'pointer'}}>
-                      <div style={{fontSize:12,fontWeight:800,color: wknd ? 'var(--text-dim)' : 'var(--text-primary)'}}>{d}</div>
-                      {closed ? (
-                        <div style={{fontSize:10,color:'#ef4444',fontWeight:700,marginTop:3,lineHeight:1.3}}>
-                          {hol.name}<br/>CLOSED
-                        </div>
-                      ) : (
-                        <div style={{marginTop:2}}>
-                          {hol && hol.halfDay === 'am' && (
-                            <div style={{fontSize:9,color:'#f59e0b',fontWeight:700,marginBottom:2}}>{hol.name} · AM only</div>
-                          )}
-                          {Object.keys(bySite).length === 0
-                            ? <span style={{fontSize:10,color:'var(--text-dim)'}}>{wknd ? '' : '—'}</span>
-                            : Object.keys(bySite).map(sid => {
-                                const c = locColor(sid);
-                                return (
-                                  <div key={sid} style={{fontSize:10,lineHeight:1.35,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                                    <span style={{fontWeight:800,color:c.text}}>{locName(sid)}</span>
-                                    <span style={{color:'var(--text-muted)'}}> {bySite[sid].length}</span>
-                                  </div>
-                                );
-                              })}
-                        </div>
+                              verticalAlign:'top',padding:'3px 4px',cursor:'pointer'}}>
+                      <div style={{fontSize:12,fontWeight:800,marginBottom:2,
+                                   color: wknd ? 'var(--text-dim)' : 'var(--text-primary)'}}>{d}</div>
+                      {(!wknd || anyWork) && (
+                        <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
+                                           siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true}} />
                       )}
                     </td>
                   );

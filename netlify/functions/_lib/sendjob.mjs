@@ -3,7 +3,7 @@
 // 6pm automatic send and a manual send produce the same message and the same
 // log entry — if they drifted, the delivery log would stop being trustworthy.
 
-import { activeTechs, todayIn } from "./techdata.mjs";
+import { activeTechs, todayIn, assignmentsFor } from "./techdata.mjs";
 import { makeTechToken, dayLinkFor } from "./links.mjs";
 import { composeDayMessage } from "./compose.mjs";
 import { sendToMany, summarize } from "./notify.mjs";
@@ -30,15 +30,11 @@ async function linkFor(tech, contact, base, secret, dk) {
 // Is anyone actually working? Used to suppress a weekend/holiday send — mailing the
 // whole roster to say "OFF" is the fastest way to teach people to ignore these.
 export function anyoneWorking(ctx, dk) {
-  const day = (ctx.techSchedules[techKey(dk)] || {})[dk] || {};
+  const day = assignmentsFor(ctx, dk);
   return activeTechs(ctx).some(t => {
     const a = day[t.id];
     return a && ((a.am && a.am !== "OFF") || (a.pm && a.pm !== "OFF"));
   });
-}
-function techKey(dk) {
-  const [y, m] = dk.split("-").map(Number);
-  return "tech-" + y + "-" + (m - 1);
 }
 
 async function buildRecipients(ctx, dk, kind, base, secret, onlyTechIds, prevSummaries) {

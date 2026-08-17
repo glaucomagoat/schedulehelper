@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       readJson(store, ns + "techContacts", {}),
@@ -54,10 +54,11 @@ export async function loadContext(store) {
       readJson(store, ns + "techNotifyLog", {}),
       readJson(store, ns + "techTimeOff", []),
       readJson(store, ns + "techSites", []),
+      readJson(store, ns + "techFinalPlans", {}),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
-    finalPlans, docSchedules, timeOff, notifyLog, techSites,
+    finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans,
     // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
     // Doctors only ever appear at real locations, which is why the two differ.
     allSites: (locations || []).concat(techSites || []),
@@ -109,15 +110,21 @@ export function dayOfWeek(dk) {
 export function fmtLong(dk)  { const p = parseDateKey(dk); return DAY_NAMES[dayOfWeek(dk)] + ", " + MONTHS[p.month0] + " " + p.day; }
 export function fmtShort(dk) { const p = parseDateKey(dk); return DAY_SHORT[dayOfWeek(dk)] + " " + (p.month0 + 1) + "/" + p.day; }
 
-export function techScheduleKeyFor(dk) {
+// Technicians only ever see the FINAL plan. A month with no final plan resolves to
+// null, and assignmentsFor returns {} — nothing half-finished can reach anyone.
+export function techScheduleKeyFor(dk, ctx) {
   const p = parseDateKey(dk);
-  return "tech-" + p.year + "-" + p.month0;
+  const plan = ctx && ctx.techFinalPlans ? ctx.techFinalPlans[p.year + "-" + p.month0] : null;
+  if (!plan) return null;
+  return "tech-" + p.year + "-" + p.month0 + "-" + plan;
 }
 
 // ── Domain lookups ───────────────────────────────────────────────────────────
 
 export function assignmentsFor(ctx, dk) {
-  return (ctx.techSchedules[techScheduleKeyFor(dk)] || {})[dk] || {};
+  const key = techScheduleKeyFor(dk, ctx);
+  if (!key) return {};
+  return (ctx.techSchedules[key] || {})[dk] || {};
 }
 
 export function locationName(ctx, id) {
