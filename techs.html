@@ -510,7 +510,10 @@ function App() {
   const [holidays, setHolidays]       = useState(PRESET_HOLIDAYS);
 
   const [selectedDate, setSelectedDate] = useState(() => todayKeyIn(DEFAULT_NOTIFY_SETTINGS.timezone));
-  const [boardView, setBoardView] = useState('tech'); // 'tech' | 'site'
+  // Month is the default landing view — it's how the practice thinks about the
+  // schedule. Clicking a day drops into the week, which is where editing happens.
+  const [boardView, setBoardView] = useState('month'); // 'month' | 'week'
+  const [editDate, setEditDate]   = useState(null);    // day being edited in week view
 
   const isDev  = !!(user && user.isDev);
   const isAdmin = isDev || (user && user.userType === 'admin');
@@ -1807,7 +1810,7 @@ function App() {
 
       <div style={{flex:1,padding:isMobile?12:20,maxWidth:1400,width:'100%',margin:'0 auto'}}>
         {activeTab === 'board' && (
-          <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,
+          <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,editDate,setEditDate,techStaffing,holidays,
                          activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
                          finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,
@@ -1857,235 +1860,444 @@ function App() {
 
 function DayBoard(p) {
   const { S, locColor, isMobile, isAdmin, selectedDate, setSelectedDate, boardView, setBoardView,
+          editDate, setEditDate, techStaffing, holidays,
           activeTechs, locations, activeSites, targets, coverage, coverageIssues, getAssignment, setAssignment,
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
           lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
           allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF } = p;
 
-  const [printing, setPrinting] = useState(false);
-
-  const unreachableIds = new Set((unreachable || []).map(t => t.id));
-  const changedUnreachable = unnotifiedChanges.filter(c => unreachableIds.has(c.tech.id));
-
-  const hol = holidayFor(selectedDate);
   const dp = parseDateKey(selectedDate);
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
-  const weekend = isWeekendDk(selectedDate);
 
-  const locOptions = [{ id:'', name:'— unassigned —' }, { id:'OFF', name:'OFF' }].concat(allSites);
+  // Sites technicians actually staff. Everything else is doctor-only and never a
+  // drop target — dragging someone to a surgery centre would be a silent error.
+  const staffedSites = useMemo(
+    () => allSites.filter(l => !!techStaffing[l.id]),
+    [allSites, techStaffing]);
 
-  function shift(n) { setSelectedDate(addDays(selectedDate, n)); }
-
-  async function printMonth() {
-    setPrinting(true);
-    try { await generateMonthPDF(dp.year, dp.month0); }
-    finally { setPrinting(false); }
-  }
+  function shiftDay(n) { setSelectedDate(addDays(selectedDate, n)); }
+  function openDay(dk) { setSelectedDate(dk); setEditDate(dk); setBoardView('week'); }
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
-      {/* Date navigation */}
       <div style={Object.assign({}, S.card, {padding:12,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'})}>
-        <button onClick={() => shift(-1)} style={S.btn}>←</button>
-        <div style={{minWidth:180}}>
-          <div style={{fontWeight:800,fontSize:17}}>{fmtDateLong(selectedDate)}</div>
-          <div style={{fontSize:12,color:'var(--text-muted)'}}>
-            {selectedDate} · W{getWeekOfMonth(dp.day)}
-            {hol && <span style={{color:'#f59e0b'}}> · {hol.name}{hol.halfDay==='am'?' (AM only)':' (closed)'}</span>}
-            {weekend && <span style={{color:'var(--text-dim)'}}> · weekend</span>}
-          </div>
-        </div>
-        <button onClick={() => shift(1)} style={S.btn}>→</button>
-        <input type="date" value={selectedDate} onChange={e => e.target.value && setSelectedDate(e.target.value)} style={S.input} />
-        <button onClick={() => setSelectedDate(todayKeyIn(notifySettings.timezone))} style={S.btn}>Today</button>
-        {isAdmin && (
-          <button onClick={printMonth} disabled={printing} style={Object.assign({}, S.btn, {opacity: printing ? 0.6 : 1})}>
-            {printing ? 'Preparing…' : '🖨 Print month'}
-          </button>
-        )}
-        <div style={{flex:1}} />
         <div style={{display:'flex',border:'1px solid var(--border-default)',borderRadius:8,overflow:'hidden'}}>
-          {['tech','site'].map(v => (
+          {[['month','🗓 Month'],['week','📆 Week']].map(([v,lbl]) => (
             <button key={v} onClick={() => setBoardView(v)}
               style={{background:boardView===v?'var(--bg-active)':'transparent',border:'none',padding:'8px 14px',
-                      color:boardView===v?'var(--text-primary)':'var(--text-muted)',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
-              {v==='tech'?'By tech':'By site'}
-            </button>
+                      color:boardView===v?'var(--text-primary)':'var(--text-muted)',fontSize:13,fontWeight:600,
+                      cursor:'pointer',fontFamily:'inherit'}}>{lbl}</button>
           ))}
         </div>
+        <div style={{flex:1}} />
+        {isAdmin && (
+          <button onClick={() => generateMonthPDF(dp.year, dp.month0)} style={S.btn}>🖨 Print month</button>
+        )}
       </div>
 
-      {/* Per-day note, shown on the printed month PDF's notes strip */}
-      {isAdmin && (
-        <div style={Object.assign({}, S.card, {padding:12})}>
-          <label style={S.label}>Note for this day (appears on the printout)</label>
-          <input type="text" value={techDayNotes[selectedDate] || ''}
-            onChange={e => {
-              const v = e.target.value;
-              setTechDayNotes(prev => {
-                const next = Object.assign({}, prev);
-                if (v) next[selectedDate] = v; else delete next[selectedDate];
-                return next;
-              });
-            }}
-            placeholder="e.g. Staff meeting 12:30, all sites"
-            style={Object.assign({}, S.input, {width:'100%'})} />
+      {!published && (
+        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'10px 14px',fontSize:13,color:'#f59e0b'}}>
+          ⚠ No doctor plan is published for {MONTHS[dp.month0]} {dp.year}. Staffing targets and the doctor
+          reference below can't be computed until one is published in the doctor scheduler.
         </div>
       )}
 
-      {/* Warnings */}
-      {!published && (
-        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'10px 14px',fontSize:13,color:'#f59e0b'}}>
-          ⚠ No doctor plan is published for {MONTHS[dp.month0]} {dp.year}. Staffing targets can't be computed without it —
-          publish a final plan in the doctor scheduler first.
-        </div>
-      )}
       {isAdmin && unnotifiedChanges.length > 0 && (
         <div style={{background:'rgba(79,70,229,0.12)',border:'1px solid #4f46e5',borderRadius:10,padding:'10px 14px',
                      display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <span style={{fontSize:13,flex:1,minWidth:200}}>
-            🔔 <strong>{unnotifiedChanges.length}</strong> assignment{unnotifiedChanges.length===1?'':'s'} changed since techs were last notified:
+            🔔 <strong>{unnotifiedChanges.length}</strong> assignment{unnotifiedChanges.length===1?'':'s'} changed on {fmtDateShort(selectedDate)} since techs were last notified:
             {' '}{unnotifiedChanges.slice(0,3).map(c => c.tech.name).join(', ')}{unnotifiedChanges.length>3?` +${unnotifiedChanges.length-3} more`:''}
-            {changedUnreachable.length > 0 && (
-              <div style={{marginTop:5,color:'#f59e0b',fontWeight:600}}>
-                ⚠️ {changedUnreachable.length} of them cannot be reached ({changedUnreachable.map(c => c.tech.name).join(', ')}) — tell them in person.
-                {' '}<button onClick={() => setActiveTab('notify')}
-                        style={{background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit',
-                                fontSize:13,fontWeight:700,color:'#f59e0b',textDecoration:'underline'}}>Fix</button>
-              </div>
-            )}
           </span>
           <button onClick={() => sendChanges(selectedDate)} disabled={sending === 'change'} style={S.btnP}>
             {sending === 'change' ? 'Sending…' : 'Push changes now'}
           </button>
         </div>
       )}
-      {coverageIssues.length > 0 && (
-        <div style={Object.assign({}, S.card, {padding:12,borderColor:'#b45309'})}>
-          <div style={{fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:0.6,color:'#f59e0b',marginBottom:8}}>Coverage issues</div>
-          <div style={{display:'flex',flexDirection:'column',gap:5}}>
-            {coverageIssues.map((c,i) => (
-              <div key={i} style={{fontSize:13,color:'var(--text-secondary)'}}>
-                <strong style={{color:'var(--text-primary)'}}>{locName(c.locId)}</strong> {c.period.toUpperCase()} —
-                {c.kind === 'under' && <span style={{color:'#ef4444'}}> understaffed: {c.have} of {c.need} needed</span>}
-                {c.kind === 'over' && <span style={{color:'#f59e0b'}}> {c.have} assigned, only {c.need} needed</span>}
-                {c.kind === 'nodoctor' && <span style={{color:'#f59e0b'}}> {c.have} tech{c.have===1?'':'s'} assigned but no doctor scheduled</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {boardView === 'tech' ? (
-        <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
-          <div className="mob-scroll">
-            <table style={{width:'100%',borderCollapse:'collapse',minWidth:520}}>
-              <thead><tr>
-                <th style={S.th}>Technician</th>
-                <th style={S.th}>AM</th>
-                <th style={S.th}>PM</th>
-                <th style={S.th}>Note</th>
-              </tr></thead>
-              <tbody>
-                {activeTechs.length === 0 && (
-                  <tr><td style={Object.assign({}, S.td, {color:'var(--text-muted)'})} colSpan={4}>
-                    No technicians yet — add them in the Technicians tab.
-                  </td></tr>
-                )}
-                {activeTechs.map(t => {
-                  const a = getAssignment(selectedDate, t.id);
-                  const off = timeOffFor(t.id, selectedDate);
-                  const pin = (pinnedToday || {})[t.id];
-                  const changed = lastSnapshot && (() => {
-                    const o = lastSnapshot[t.id] || { am:'', pm:'' };
-                    return o.am !== a.am || o.pm !== a.pm;
-                  })();
+      {boardView === 'month'
+        ? <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,openDay,staffedSites,
+                          activeTechs,getAssignment,locName,holidayFor,isTechOff,targets,holidays}} />
+        : <WeekView  {...{S,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,editDate,setEditDate,
+                          staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
+                          isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
+                          techDayNotes,setTechDayNotes,shiftDay}} />}
+    </div>
+  );
+}
+
+// ── Month view ───────────────────────────────────────────────────────────────
+// Read-only overview mirroring the printed calendar, so what you see on screen and
+// what comes out of the printer are the same shape. Clicking a day opens the week
+// with that day loaded for editing.
+
+function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
+                     activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays }) {
+  const dp = parseDateKey(selectedDate);
+  const first = new Date(dp.year, dp.month0, 1);
+  const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
+
+  // Sunday-first grid, same as the printout.
+  const cells = [];
+  for (let i = 0; i < first.getDay(); i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  function shiftMonth(n) {
+    const dt = new Date(dp.year, dp.month0 + n, 1);
+    setSelectedDate(dateKey(dt.getFullYear(), dt.getMonth(), 1));
+  }
+
+  // Sites a tech is at that day, grouped. Weekends collapse to nothing.
+  function daySummary(dk) {
+    const bySite = {};
+    activeTechs.forEach(t => {
+      const a = getAssignment(dk, t.id);
+      const site = a.am || a.pm;
+      if (!site || site === 'OFF') return;
+      (bySite[site] = bySite[site] || []).push(t);
+    });
+    return bySite;
+  }
+
+  return (
+    <div style={Object.assign({}, S.card, {padding:isMobile?8:14})}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+        <button onClick={() => shiftMonth(-1)} style={S.btn}>←</button>
+        <div style={{fontWeight:800,fontSize:17,minWidth:150}}>{MONTHS[dp.month0]} {dp.year}</div>
+        <button onClick={() => shiftMonth(1)} style={S.btn}>→</button>
+        <button onClick={() => setSelectedDate(todayKeyIn('America/Los_Angeles'))} style={S.btn}>Today</button>
+        <span style={{fontSize:12,color:'var(--text-muted)'}}>Click any day to edit it in the week view</span>
+      </div>
+
+      <div className="mob-scroll">
+        <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed',minWidth:isMobile?640:0}}>
+          <thead><tr>
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i) => (
+              <th key={d} style={{fontSize:11,fontWeight:800,letterSpacing:0.8,textTransform:'uppercase',
+                                  color: (i===0||i===6) ? 'var(--text-dim)' : 'var(--text-muted)',
+                                  padding:'4px 6px',borderBottom:'2px solid var(--border-default)',textAlign:'left',
+                                  width:(i===0||i===6)?'8%':'16.8%'}}>{d}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {weeks.map((w,wi) => (
+              <tr key={wi}>
+                {w.map((d,di) => {
+                  if (d === null) return <td key={di} style={{border:'1px solid var(--border-subtle)',background:'var(--cell-offmonth)',height:78}} />;
+                  const dk = dateKey(dp.year, dp.month0, d);
+                  const hol = holidayFor(dk);
+                  const bySite = daySummary(dk);
+                  const isSel = dk === selectedDate;
+                  const wknd = di===0 || di===6;
+                  const closed = hol && hol.halfDay === 'closed';
                   return (
-                    <tr key={t.id} style={{background: changed ? 'rgba(79,70,229,0.07)' : 'transparent'}}>
-                      <td style={S.td}>
-                        <div style={{fontWeight:600}}>{t.name} {changed && <span title="Changed since last notification" style={{color:'#818cf8'}}>•</span>}</div>
-                        <div style={{fontSize:11,color:'var(--text-muted)'}}>
-                          {t.level}
-                          {t.roles && t.roles.length ? ' · ' + t.roles.join(', ') : ''}
-                          {t.skills && t.skills.length ? ' · ' + t.skills.join(', ') : ''}
+                    <td key={di} onClick={() => openDay(dk)}
+                      style={{border:'2px solid ' + (isSel ? '#4f46e5' : 'var(--border-subtle)'),
+                              background: isSel ? 'rgba(79,70,229,0.07)' : (wknd ? 'var(--cell-weekend)' : 'var(--bg-surface)'),
+                              verticalAlign:'top',padding:'3px 5px',height:78,cursor:'pointer'}}>
+                      <div style={{fontSize:12,fontWeight:800,color: wknd ? 'var(--text-dim)' : 'var(--text-primary)'}}>{d}</div>
+                      {closed ? (
+                        <div style={{fontSize:10,color:'#ef4444',fontWeight:700,marginTop:3,lineHeight:1.3}}>
+                          {hol.name}<br/>CLOSED
                         </div>
-                        {pin && (
-                          <div style={{fontSize:11,marginTop:2,color: (pin.am || pin.pm) ? '#818cf8' : 'var(--text-dim)'}}>
-                            📌 {pin.doctorName}
-                            {!(pin.am || pin.pm) && <span> — floating ({pin.reason})</span>}
-                          </div>
-                        )}
-                      </td>
-                      {['am','pm'].map(period => (
-                        <td key={period} style={S.td}>
-                          {isAdmin ? (
-                            <select value={a[period] || ''} onChange={e => setAssignment(selectedDate, t.id, period, e.target.value)}
-                              style={Object.assign({}, S.input, {minWidth:130,
-                                borderColor: a[period] && a[period]!=='OFF' ? locColor(a[period]).border : 'var(--border-default)',
-                                color: a[period] && a[period]!=='OFF' ? locColor(a[period]).text : 'var(--text-primary)'})}>
-                              {locOptions.map(l => <option key={l.id||'none'} value={l.id}>{l.name}</option>)}
-                            </select>
-                          ) : (
-                            <Chip locId={a[period]} locColor={locColor} label={a[period] ? locName(a[period]) : '—'} />
+                      ) : (
+                        <div style={{marginTop:2}}>
+                          {hol && hol.halfDay === 'am' && (
+                            <div style={{fontSize:9,color:'#f59e0b',fontWeight:700,marginBottom:2}}>{hol.name} · AM only</div>
                           )}
-                        </td>
-                      ))}
-                      <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)'})}>
-                        {off ? `🏖 ${off.reason || 'Time off'} (${off.startDate} → ${off.endDate})` : ''}
-                      </td>
-                    </tr>
+                          {Object.keys(bySite).length === 0
+                            ? <span style={{fontSize:10,color:'var(--text-dim)'}}>{wknd ? '' : '—'}</span>
+                            : Object.keys(bySite).map(sid => {
+                                const c = locColor(sid);
+                                return (
+                                  <div key={sid} style={{fontSize:10,lineHeight:1.35,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                                    <span style={{fontWeight:800,color:c.text}}>{locName(sid)}</span>
+                                    <span style={{color:'var(--text-muted)'}}> {bySite[sid].length}</span>
+                                  </div>
+                                );
+                              })}
+                        </div>
+                      )}
+                    </td>
                   );
                 })}
-              </tbody>
-            </table>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Week view ────────────────────────────────────────────────────────────────
+// The editing surface. Shows the published doctor schedule for the week as
+// reference, and lets a coordinator drag technician chips between sites.
+
+function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDate, editDate, setEditDate,
+                    staffedSites, activeTechs, getAssignment, setAssignment, locName, holidayFor,
+                    isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
+                    techDayNotes, setTechDayNotes, shiftDay }) {
+
+  // Monday-first working week; Saturday appears only when something is scheduled.
+  const weekDays = useMemo(() => {
+    const d = dkToDate(selectedDate);
+    const dow = d.getDay();                       // 0=Sun
+    const monday = addDays(selectedDate, dow === 0 ? -6 : 1 - dow);
+    return [0,1,2,3,4,5].map(i => addDays(monday, i));
+  }, [selectedDate]);
+
+  const satHasWork = useMemo(() => {
+    const sat = weekDays[5];
+    return activeTechs.some(t => { const a = getAssignment(sat, t.id); return (a.am && a.am !== 'OFF') || (a.pm && a.pm !== 'OFF'); });
+  }, [weekDays, activeTechs, getAssignment]);
+  const shownDays = satHasWork ? weekDays : weekDays.slice(0,5);
+
+  const day = editDate && shownDays.indexOf(editDate) >= 0 ? editDate : shownDays[0];
+  useEffect(() => { if (!editDate) setEditDate(shownDays[0]); }, []);
+
+  // ── Drag and drop ──────────────────────────────────────────────────────────
+  // HTML5 DnD for mouse, plus a tap-to-select fallback: touch devices do not fire
+  // dragstart, and a coordinator on an iPad would otherwise be unable to edit.
+  const [held, setHeld] = useState(null);         // drives the visual "picked up" state
+  // Mirrored in a ref because a drop handler closes over the `held` value from the
+  // render that bound it. In a real drag React re-renders in between, but relying on
+  // that is a race — the ref is correct no matter when the drop lands.
+  const heldRef = useRef(null);
+  function pick(techId)  { heldRef.current = techId; setHeld(techId); }
+  function release()     { heldRef.current = null;   setHeld(null); }
+
+  function place(techId, siteId) {
+    if (!isAdmin) return;
+    setAssignment(day, techId, 'both', siteId);   // techs stay at one site all day
+    release();
+  }
+  function dragProps(techId) {
+    if (!isAdmin) return {};
+    return {
+      draggable: true,
+      onDragStart: e => {
+        if (e.dataTransfer) { e.dataTransfer.setData('text/plain', techId); e.dataTransfer.effectAllowed='move'; }
+        pick(techId);
+      },
+      onDragEnd: () => release(),
+      onClick: () => { if (heldRef.current === techId) release(); else pick(techId); },
+    };
+  }
+  function dropProps(siteId) {
+    if (!isAdmin) return {};
+    return {
+      onDragOver: e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='move'; },
+      // dataTransfer is the normal path, but it comes back empty in some browsers and
+      // whenever the drag did not originate from a real pointer. dragstart already
+      // recorded who was picked up, so fall back to that rather than dropping silently.
+      onDrop: e => {
+        e.preventDefault();
+        let id = '';
+        try { id = (e.dataTransfer && e.dataTransfer.getData('text/plain')) || ''; } catch(err) {}
+        const techId = id || heldRef.current;
+        if (techId) place(techId, siteId);
+      },
+      onClick: () => { if (heldRef.current) place(heldRef.current, siteId); },
+    };
+  }
+
+  const hol = holidayFor(day);
+  const dayAssign = {};
+  activeTechs.forEach(t => { dayAssign[t.id] = getAssignment(day, t.id); });
+  const siteOf = tid => { const a = dayAssign[tid] || {}; return a.am || a.pm || ''; };
+
+  const unassigned = activeTechs.filter(t => !isTechOff(t.id, day) && !siteOf(t.id));
+  const offToday   = activeTechs.filter(t => isTechOff(t.id, day));
+  const markedOff  = activeTechs.filter(t => !isTechOff(t.id, day) && siteOf(t.id) === 'OFF');
+
+  function TechChip({ t, dim }) {
+    const pin = (pinnedToday || {})[t.id];
+    const isHeld = held === t.id;
+    return (
+      <span {...dragProps(t.id)}
+        title={pin ? 'Scribes for ' + pin.doctorName : (isAdmin ? 'Drag to a site, or tap then tap a site' : '')}
+        style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:12,fontWeight:600,
+                padding:'4px 9px',margin:'0 5px 5px 0',borderRadius:99,
+                background: isHeld ? '#4f46e5' : (dim ? 'var(--bg-elevated)' : 'var(--bg-active)'),
+                color: isHeld ? '#fff' : (dim ? 'var(--text-dim)' : 'var(--text-primary)'),
+                border:'1px solid ' + (isHeld ? '#4f46e5' : 'var(--border-default)'),
+                cursor: isAdmin ? 'grab' : 'default', userSelect:'none'}}>
+        {t.name.split(' ')[0]}
+        {pin && <span style={{fontSize:9,color:isHeld?'#c7d2fe':'#818cf8',fontWeight:800}}>📌</span>}
+        {(t.roles||[]).includes('Testing Tech') && <span style={{fontSize:9,opacity:0.7}}>(T)</span>}
+      </span>
+    );
+  }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {/* Week strip — click a day to edit it */}
+      <div style={Object.assign({}, S.card, {padding:12})}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,flexWrap:'wrap'}}>
+          <button onClick={() => shiftDay(-7)} style={S.btn}>← Prev week</button>
+          <div style={{fontWeight:700,fontSize:15}}>
+            Week of {fmtDateShort(shownDays[0])} – {fmtDateShort(shownDays[shownDays.length-1])}
           </div>
+          <button onClick={() => shiftDay(7)} style={S.btn}>Next week →</button>
         </div>
-      ) : (
-        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(280px,1fr))',gap:12}}>
-          {activeSites.length === 0 && (
-            <div style={Object.assign({}, S.card, {padding:20,color:'var(--text-muted)',fontSize:14})}>
-              Nothing scheduled for this day.
-            </div>
-          )}
-          {activeSites.map(l => {
-            const c = locColor(l.id);
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${shownDays.length},1fr)`,gap:6}} className="mob-scroll">
+          {shownDays.map(dk => {
+            const sel = dk === day;
+            const h = holidayFor(dk);
+            const n = activeTechs.filter(t => { const a = getAssignment(dk,t.id); const s = a.am||a.pm; return s && s !== 'OFF'; }).length;
             return (
-              <div key={l.id} style={Object.assign({}, S.card, {padding:14,borderColor:c.border})}>
-                <div style={{fontWeight:800,fontSize:15,color:c.text,marginBottom:10}}>{l.name}</div>
-                {['am','pm'].map(period => {
-                  const need = (targets[l.id] || {})[period] || 0;
-                  const here = assignedAt(selectedDate, l.id, period);
-                  const docs = (coverage && coverage[l.id] && coverage[l.id][period]) || [];
-                  const bad = need > 0 && here.length < need;
-                  return (
-                    <div key={period} style={{marginBottom:10,paddingBottom:10,borderBottom:period==='am'?'1px solid var(--border-subtle)':'none'}}>
-                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:5}}>
-                        <span style={{fontSize:11,fontWeight:800,letterSpacing:0.8,color:'var(--text-muted)'}}>{period.toUpperCase()}</span>
-                        <span style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:99,
-                                      background: bad ? 'rgba(239,68,68,0.15)' : need>0 ? 'rgba(16,185,129,0.13)' : 'var(--bg-elevated)',
-                                      color: bad ? '#ef4444' : need>0 ? '#10b981' : 'var(--text-dim)'}}>
-                          {here.length}/{need}
-                        </span>
-                      </div>
-                      <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>
-                        {docs.length ? '🩺 ' + docs.join(', ') : 'no doctor'}
-                      </div>
-                      <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
-                        {here.length === 0
-                          ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>no techs assigned</span>
-                          : here.map(t => (
-                              <span key={t.id} style={{fontSize:12,fontWeight:600,padding:'3px 9px',borderRadius:99,
-                                                       background:c.bg,border:'1px solid '+c.border,color:c.text}}>{t.name}</span>
-                            ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <button key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
+                style={{background: sel ? 'rgba(79,70,229,0.12)' : 'var(--bg-elevated)',
+                        border:'2px solid ' + (sel ? '#4f46e5' : 'var(--border-subtle)'),
+                        borderRadius:8,padding:'8px 6px',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+                <div style={{fontSize:12,fontWeight:800,color:'var(--text-primary)'}}>{fmtDateShort(dk)}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+                  {h && h.halfDay==='closed' ? <span style={{color:'#ef4444'}}>closed</span> : `${n} assigned`}
+                </div>
+              </button>
             );
           })}
         </div>
-      )}
+      </div>
+
+      {/* Doctor reference for the selected day */}
+      <div style={Object.assign({}, S.card, {padding:12})}>
+        <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>
+          Doctors on {fmtDateLong(day)} — published plan
+        </div>
+        {!coverage || Object.keys(coverage).length === 0 ? (
+          <div style={{fontSize:13,color:'var(--text-dim)'}}>No doctors scheduled (or no plan published for this month).</div>
+        ) : (
+          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+            {Object.keys(coverage).map(sid => {
+              const c = locColor(sid);
+              const am = coverage[sid].am, pm = coverage[sid].pm;
+              const same = am.join()===pm.join();
+              return (
+                <div key={sid} style={{border:'1px solid '+c.border,background:c.bg,borderRadius:8,padding:'6px 10px',minWidth:140}}>
+                  <div style={{fontSize:12,fontWeight:800,color:c.text}}>{locName(sid)}</div>
+                  <div style={{fontSize:11,color:'var(--text-secondary)',lineHeight:1.5,marginTop:2}}>
+                    {same ? (am.join(', ') || '—')
+                          : <span>AM {am.join(', ')||'—'}<br/>PM {pm.join(', ')||'—'}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Editor */}
+      <div style={Object.assign({}, S.card, {padding:14})}>
+        <div style={{display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap',marginBottom:10}}>
+          <span style={{fontWeight:800,fontSize:16}}>{fmtDateLong(day)}</span>
+          {hol && <span style={{fontSize:12,fontWeight:700,color:hol.halfDay==='closed'?'#ef4444':'#f59e0b'}}>
+            {hol.name}{hol.halfDay==='am' ? ' — AM only' : ' — closed'}
+          </span>}
+          <div style={{flex:1}} />
+          {isAdmin && held && (
+            <span style={{fontSize:12,fontWeight:700,color:'#818cf8'}}>
+              Holding a chip — tap a site to place it, or tap the chip again to cancel
+            </span>
+          )}
+        </div>
+
+        {isAdmin && (
+          <div style={{marginBottom:12}}>
+            <label style={S.label}>Note for this day (appears on the printout)</label>
+            <input type="text" value={techDayNotes[day] || ''}
+              onChange={e => {
+                const v = e.target.value;
+                setTechDayNotes(prev => {
+                  const next = Object.assign({}, prev);
+                  if (v.trim()) next[day] = v; else delete next[day];
+                  return next;
+                });
+              }}
+              placeholder="e.g. staff meeting 12:30" style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+        )}
+
+        {/* Available pool — also a drop target, so dragging here unassigns */}
+        <div {...dropProps('')}
+          style={{border:'2px dashed var(--border-default)',borderRadius:10,padding:'10px 12px',marginBottom:12,
+                  background:'var(--bg-deep)'}}>
+          <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>
+            Available — {unassigned.length} unassigned
+          </div>
+          {unassigned.length === 0
+            ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>everyone is placed</span>
+            : unassigned.map(t => <TechChip key={t.id} t={t} />)}
+          {markedOff.length > 0 && (
+            <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border-subtle)'}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>MARKED OFF</div>
+              {markedOff.map(t => <TechChip key={t.id} t={t} dim />)}
+            </div>
+          )}
+          {offToday.length > 0 && (
+            <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border-subtle)'}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>ON TIME OFF — not assignable</div>
+              {offToday.map(t => (
+                <span key={t.id} style={{display:'inline-block',fontSize:12,padding:'4px 9px',margin:'0 5px 5px 0',
+                        borderRadius:99,background:'var(--bg-elevated)',color:'var(--text-dim)',
+                        border:'1px dashed var(--border-default)',fontStyle:'italic'}}>
+                  {t.name.split(' ')[0]}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Site drop zones */}
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(240px,1fr))',gap:10}}>
+          {staffedSites.map(l => {
+            const c = locColor(l.id);
+            const here = activeTechs.filter(t => siteOf(t.id) === l.id);
+            const need = (targets[l.id] || {}).am || 0;
+            const short = need > 0 && here.length < need;
+            return (
+              <div key={l.id} {...dropProps(l.id)}
+                style={{border:'2px solid ' + (held ? '#4f46e5' : c.border), borderRadius:10,padding:'9px 11px',
+                        background: held ? 'rgba(79,70,229,0.05)' : 'var(--bg-surface)', minHeight:78,
+                        cursor: held ? 'pointer' : 'default', transition:'border-color .12s'}}>
+                <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6}}>
+                  <span style={{fontWeight:800,fontSize:14,color:c.text}}>{l.name}</span>
+                  {need > 0 && (
+                    <span style={{fontSize:11,fontWeight:800,padding:'1px 7px',borderRadius:99,
+                            background: short ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.13)',
+                            color: short ? '#ef4444' : '#10b981'}}>{here.length}/{need}</span>
+                  )}
+                </div>
+                {here.length === 0
+                  ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>
+                      {isAdmin ? 'drop technicians here' : 'nobody assigned'}
+                    </span>
+                  : here.map(t => <TechChip key={t.id} t={t} />)}
+              </div>
+            );
+          })}
+          {/* Explicit OFF bucket — different from "not yet assigned" */}
+          <div {...dropProps('OFF')}
+            style={{border:'2px dashed ' + (held ? '#4f46e5' : 'var(--border-default)'),borderRadius:10,
+                    padding:'9px 11px',background:'var(--bg-deep)',minHeight:78,
+                    cursor: held ? 'pointer' : 'default'}}>
+            <div style={{fontWeight:800,fontSize:14,color:'var(--text-muted)',marginBottom:6}}>OFF</div>
+            <span style={{fontSize:11,color:'var(--text-dim)',fontStyle:'italic'}}>
+              drop here to mark someone off for the day
+            </span>
+          </div>
+        </div>
+
+        {staffedSites.length === 0 && (
+          <div style={{marginTop:10,fontSize:13,color:'#f59e0b'}}>
+            ⚠ No sites are configured for technicians yet — set them up in the Staffing tab first.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
