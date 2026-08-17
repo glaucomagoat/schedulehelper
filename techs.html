@@ -300,6 +300,28 @@ function getHolidayDate(h, year) {
 
 function newId(prefix) { return prefix + Date.now() + Math.random().toString(36).slice(2,6); }
 
+// Both ported verbatim from index.html — the doctor-schedule reference has to render
+// identically to the doctor scheduler, so these must not drift.
+function staffDisplayColor(color, th) {
+  if (th !== 'light') return color;
+  const hex = String(color || '').replace('#', '');
+  if (hex.length !== 6) return color;
+  const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
+  const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+  if (lum < 0.35) return color;
+  const factor = 0.5;
+  const dr = Math.round(r*255*factor), dg = Math.round(g*255*factor), db = Math.round(b*255*factor);
+  return '#' + [dr,dg,db].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function getLastName(fullName) {
+  const parts = String(fullName || '').split(' ');
+  const suffixes = ['MD','OD','DO','NP','PA','RN','Jr','Sr','II','III'];
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (!suffixes.includes(parts[i].replace(/[.,]/g, ''))) return parts[i];
+  }
+  return parts[0];
+}
+
 // Mirrors index.html:383. Only used by the month-PDF export below — everything else
 // in this file goes through React's own escaping.
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -508,6 +530,7 @@ function App() {
   const [finalPlans, setFinalPlans]   = useState({});
   const [docSchedules, setDocSchedules] = useState({});
   const [holidays, setHolidays]       = useState(PRESET_HOLIDAYS);
+  const [docDayNotes, setDocDayNotes] = useState({});   // doctor-side notes: {scheduleKey:{dk:text}}
 
   const [selectedDate, setSelectedDate] = useState(() => todayKeyIn(DEFAULT_NOTIFY_SETTINGS.timezone));
   // Month is the default landing view — it's how the practice thinks about the
@@ -608,11 +631,11 @@ function App() {
     };
     const [
       tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn,
-      st, loc, fp, sch, hol
+      st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
       d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
       d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'),
-      d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'),
+      d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
     if (tk)  setTechs(tk);
@@ -629,6 +652,7 @@ function App() {
     if (fp)  setFinalPlans(fp);
     if (sch) setDocSchedules(sch);
     if (hol) setHolidays(hol);
+    if (ddn) setDocDayNotes(ddn);
     if (tns && tns.timezone) setSelectedDate(todayKeyIn(tns.timezone));
     if (tk && tk.length) loadPortalAccounts(tk);
   }
@@ -1814,7 +1838,8 @@ function App() {
                          activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
                          finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,
-                         techDayNotes,setTechDayNotes,generateMonthPDF}} />
+                         techDayNotes,setTechDayNotes,generateMonthPDF,
+                         docDayNotes,docSchedules,theme,siteAbbr}} />
         )}
         {activeTab === 'generate' && isAdmin && (
           <GeneratePanel {...{S,genYear,setGenYear,genMonth,setGenMonth,generating,aiLog,genLog,coverageReport,
@@ -1864,7 +1889,8 @@ function DayBoard(p) {
           activeTechs, locations, activeSites, targets, coverage, coverageIssues, getAssignment, setAssignment,
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
           lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
-          allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF } = p;
+          allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF,
+          docDayNotes, docSchedules, theme, siteAbbr } = p;
 
   const dp = parseDateKey(selectedDate);
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
@@ -1874,6 +1900,14 @@ function DayBoard(p) {
   const staffedSites = useMemo(
     () => allSites.filter(l => !!techStaffing[l.id]),
     [allSites, techStaffing]);
+
+  // Which sites occupy the four quadrants, matching the printout. Falls back to the
+  // first four configured sites so the cell is never blank before it is configured.
+  const quadSiteIds = useMemo(() => {
+    const cfg = (notifySettings.quadrantSiteIds || []).filter(id => !!techStaffing[id]);
+    if (cfg.length) return cfg.slice(0,4);
+    return Object.keys(techStaffing).slice(0,4);
+  }, [notifySettings, techStaffing]);
 
   function shiftDay(n) { setSelectedDate(addDays(selectedDate, n)); }
   function openDay(dk) { setSelectedDate(dk); setEditDate(dk); setBoardView('week'); }
@@ -1921,7 +1955,8 @@ function DayBoard(p) {
         : <WeekView  {...{S,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,editDate,setEditDate,
                           staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
-                          techDayNotes,setTechDayNotes,shiftDay}} />}
+                          techDayNotes,setTechDayNotes,shiftDay,locations,holidays,
+                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr}} />}
     </div>
   );
 }
@@ -2040,7 +2075,8 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
 function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDate, editDate, setEditDate,
                     staffedSites, activeTechs, getAssignment, setAssignment, locName, holidayFor,
                     isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
-                    techDayNotes, setTechDayNotes, shiftDay }) {
+                    techDayNotes, setTechDayNotes, shiftDay, locations, holidays,
+                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr }) {
 
   // Monday-first working week; Saturday appears only when something is scheduled.
   const weekDays = useMemo(() => {
@@ -2062,48 +2098,68 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
   // ── Drag and drop ──────────────────────────────────────────────────────────
   // HTML5 DnD for mouse, plus a tap-to-select fallback: touch devices do not fire
   // dragstart, and a coordinator on an iPad would otherwise be unable to edit.
-  const [held, setHeld] = useState(null);         // drives the visual "picked up" state
-  // Mirrored in a ref because a drop handler closes over the `held` value from the
-  // render that bound it. In a real drag React re-renders in between, but relying on
-  // that is a race — the ref is correct no matter when the drop lands.
-  const heldRef = useRef(null);
-  function pick(techId)  { heldRef.current = techId; setHeld(techId); }
-  function release()     { heldRef.current = null;   setHeld(null); }
+  // ── Dragging ───────────────────────────────────────────────────────────────
+  // Hand-rolled on pointer events rather than HTML5 drag-and-drop. Native DnD gives
+  // you a translucent snapshot that trails the cursor, refuses to start reliably on
+  // some elements, and never fires at all on touch. Pointer events give one code path
+  // for mouse and touch, and let the chip sit exactly under the cursor.
+  const [drag, setDrag] = useState(null);   // { techId, label, x, y, over } while dragging
+  const dragRef = useRef(null);             // same value, readable synchronously
 
   function place(techId, siteId) {
     if (!isAdmin) return;
     setAssignment(day, techId, 'both', siteId);   // techs stay at one site all day
-    release();
   }
-  function dragProps(techId) {
-    if (!isAdmin) return {};
-    return {
-      draggable: true,
-      onDragStart: e => {
-        if (e.dataTransfer) { e.dataTransfer.setData('text/plain', techId); e.dataTransfer.effectAllowed='move'; }
-        pick(techId);
-      },
-      onDragEnd: () => release(),
-      onClick: () => { if (heldRef.current === techId) release(); else pick(techId); },
-    };
+
+  function zoneUnder(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const z = el && el.closest ? el.closest('[data-drop]') : null;
+    return z ? z.getAttribute('data-drop') : null;
   }
-  function dropProps(siteId) {
-    if (!isAdmin) return {};
-    return {
-      onDragOver: e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='move'; },
-      // dataTransfer is the normal path, but it comes back empty in some browsers and
-      // whenever the drag did not originate from a real pointer. dragstart already
-      // recorded who was picked up, so fall back to that rather than dropping silently.
-      onDrop: e => {
-        e.preventDefault();
-        let id = '';
-        try { id = (e.dataTransfer && e.dataTransfer.getData('text/plain')) || ''; } catch(err) {}
-        const techId = id || heldRef.current;
-        if (techId) place(techId, siteId);
-      },
-      onClick: () => { if (heldRef.current) place(heldRef.current, siteId); },
-    };
+
+  function onDragMove(e) {
+    const st = dragRef.current;
+    if (!st) return;
+    e.preventDefault();
+    st.x = e.clientX; st.y = e.clientY;
+    st.over = zoneUnder(e.clientX, e.clientY);
+    setDrag(Object.assign({}, st));
   }
+
+  function onDragEnd(e) {
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+    window.removeEventListener('pointercancel', onDragEnd);
+    const st = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (!st) return;
+    const target = zoneUnder(e.clientX, e.clientY);
+    if (target === null) return;                       // released outside any zone: no change
+    place(st.techId, target === 'POOL' ? '' : target);
+  }
+
+  function startDrag(e, tech) {
+    if (!isAdmin) return;
+    if (e.button != null && e.button !== 0) return;    // left button / touch only
+    e.preventDefault();
+    const st = { techId: tech.id, label: tech.name.split(' ')[0], x: e.clientX, y: e.clientY, over: null };
+    dragRef.current = st;
+    setDrag(st);
+    window.addEventListener('pointermove', onDragMove, { passive: false });
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragEnd);
+  }
+
+  // Listeners are on window, so a drag that ends off-component still cleans up.
+  useEffect(() => () => {
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+    window.removeEventListener('pointercancel', onDragEnd);
+  }, []);
+
+  const draggingId = drag ? drag.techId : null;
+  const overZone   = drag ? drag.over   : null;
 
   const hol = holidayFor(day);
   const dayAssign = {};
@@ -2116,18 +2172,21 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
 
   function TechChip({ t, dim }) {
     const pin = (pinnedToday || {})[t.id];
-    const isHeld = held === t.id;
+    const isDragging = draggingId === t.id;
     return (
-      <span {...dragProps(t.id)}
-        title={pin ? 'Scribes for ' + pin.doctorName : (isAdmin ? 'Drag to a site, or tap then tap a site' : '')}
+      <span onPointerDown={e => startDrag(e, t)}
+        title={pin ? 'Scribes for ' + pin.doctorName : (isAdmin ? 'Drag onto a site' : '')}
         style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:12,fontWeight:600,
                 padding:'4px 9px',margin:'0 5px 5px 0',borderRadius:99,
-                background: isHeld ? '#4f46e5' : (dim ? 'var(--bg-elevated)' : 'var(--bg-active)'),
-                color: isHeld ? '#fff' : (dim ? 'var(--text-dim)' : 'var(--text-primary)'),
-                border:'1px solid ' + (isHeld ? '#4f46e5' : 'var(--border-default)'),
-                cursor: isAdmin ? 'grab' : 'default', userSelect:'none'}}>
+                background: dim ? 'var(--bg-elevated)' : 'var(--bg-active)',
+                color: dim ? 'var(--text-dim)' : 'var(--text-primary)',
+                border:'1px solid var(--border-default)',
+                // The original stays in place, faded, so the row does not reflow while
+                // the floating copy is under the cursor.
+                opacity: isDragging ? 0.28 : 1,
+                cursor: isAdmin ? 'grab' : 'default', userSelect:'none', touchAction:'none'}}>
         {t.name.split(' ')[0]}
-        {pin && <span style={{fontSize:9,color:isHeld?'#c7d2fe':'#818cf8',fontWeight:800}}>📌</span>}
+        {pin && <span style={{fontSize:9,color:'#818cf8',fontWeight:800}}>📌</span>}
         {(t.roles||[]).includes('Testing Tech') && <span style={{fontSize:9,opacity:0.7}}>(T)</span>}
       </span>
     );
@@ -2150,45 +2209,31 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             const h = holidayFor(dk);
             const n = activeTechs.filter(t => { const a = getAssignment(dk,t.id); const s = a.am||a.pm; return s && s !== 'OFF'; }).length;
             return (
-              <button key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
-                style={{background: sel ? 'rgba(79,70,229,0.12)' : 'var(--bg-elevated)',
+              <div key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
+                style={{background: sel ? 'rgba(79,70,229,0.10)' : 'var(--bg-elevated)',
                         border:'2px solid ' + (sel ? '#4f46e5' : 'var(--border-subtle)'),
-                        borderRadius:8,padding:'8px 6px',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
-                <div style={{fontSize:12,fontWeight:800,color:'var(--text-primary)'}}>{fmtDateShort(dk)}</div>
-                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
-                  {h && h.halfDay==='closed' ? <span style={{color:'#ef4444'}}>closed</span> : `${n} assigned`}
+                        borderRadius:8,padding:6,cursor:'pointer',textAlign:'left'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+                  <span style={{fontSize:12,fontWeight:800,color:'var(--text-primary)'}}>{fmtDateShort(dk)}</span>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{n}</span>
                 </div>
-              </button>
+                <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
+                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true}} />
+              </div>
             );
           })}
         </div>
       </div>
 
-      {/* Doctor reference for the selected day */}
+      {/* Doctor reference — rendered exactly as the doctor scheduler draws it */}
       <div style={Object.assign({}, S.card, {padding:12})}>
         <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>
-          Doctors on {fmtDateLong(day)} — published plan
+          Doctor schedule — {fmtDateLong(day)}
         </div>
-        {!coverage || Object.keys(coverage).length === 0 ? (
-          <div style={{fontSize:13,color:'var(--text-dim)'}}>No doctors scheduled (or no plan published for this month).</div>
-        ) : (
-          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-            {Object.keys(coverage).map(sid => {
-              const c = locColor(sid);
-              const am = coverage[sid].am, pm = coverage[sid].pm;
-              const same = am.join()===pm.join();
-              return (
-                <div key={sid} style={{border:'1px solid '+c.border,background:c.bg,borderRadius:8,padding:'6px 10px',minWidth:140}}>
-                  <div style={{fontSize:12,fontWeight:800,color:c.text}}>{locName(sid)}</div>
-                  <div style={{fontSize:11,color:'var(--text-secondary)',lineHeight:1.5,marginTop:2}}>
-                    {same ? (am.join(', ') || '—')
-                          : <span>AM {am.join(', ')||'—'}<br/>PM {pm.join(', ')||'—'}</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <div style={{maxWidth:isMobile?'100%':420,border:'1px solid var(--border-subtle)',borderRadius:8,
+                     padding:'6px 8px',background:'var(--bg-surface)'}}>
+          <DoctorDayCell {...{dk:day,doctors,locations,docSchedules,finalPlans,docDayNotes,holidays,theme,isWk:true}} />
+        </div>
       </div>
 
       {/* Editor */}
@@ -2199,9 +2244,9 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             {hol.name}{hol.halfDay==='am' ? ' — AM only' : ' — closed'}
           </span>}
           <div style={{flex:1}} />
-          {isAdmin && held && (
-            <span style={{fontSize:12,fontWeight:700,color:'#818cf8'}}>
-              Holding a chip — tap a site to place it, or tap the chip again to cancel
+          {isAdmin && (
+            <span style={{fontSize:12,color: drag ? '#818cf8' : 'var(--text-dim)',fontWeight: drag ? 700 : 400}}>
+              {drag ? 'Drop on a site, or back on Available to unassign' : 'Drag a technician onto a site'}
             </span>
           )}
         </div>
@@ -2223,9 +2268,10 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
         )}
 
         {/* Available pool — also a drop target, so dragging here unassigns */}
-        <div {...dropProps('')}
-          style={{border:'2px dashed var(--border-default)',borderRadius:10,padding:'10px 12px',marginBottom:12,
-                  background:'var(--bg-deep)'}}>
+        <div data-drop="POOL"
+          style={{border:'2px dashed ' + (overZone === 'POOL' ? '#4f46e5' : 'var(--border-default)'),
+                  borderRadius:10,padding:'10px 12px',marginBottom:12,
+                  background: overZone === 'POOL' ? 'rgba(79,70,229,0.07)' : 'var(--bg-deep)'}}>
           <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>
             Available — {unassigned.length} unassigned
           </div>
@@ -2260,10 +2306,11 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             const need = (targets[l.id] || {}).am || 0;
             const short = need > 0 && here.length < need;
             return (
-              <div key={l.id} {...dropProps(l.id)}
-                style={{border:'2px solid ' + (held ? '#4f46e5' : c.border), borderRadius:10,padding:'9px 11px',
-                        background: held ? 'rgba(79,70,229,0.05)' : 'var(--bg-surface)', minHeight:78,
-                        cursor: held ? 'pointer' : 'default', transition:'border-color .12s'}}>
+              <div key={l.id} data-drop={l.id}
+                style={{border:'2px solid ' + (overZone === l.id ? '#4f46e5' : c.border), borderRadius:10,
+                        padding:'9px 11px', minHeight:78, transition:'border-color .12s, background .12s',
+                        background: overZone === l.id ? 'rgba(79,70,229,0.10)'
+                                  : (drag ? 'rgba(79,70,229,0.03)' : 'var(--bg-surface)')}}>
                 <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6}}>
                   <span style={{fontWeight:800,fontSize:14,color:c.text}}>{l.name}</span>
                   {need > 0 && (
@@ -2281,10 +2328,10 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             );
           })}
           {/* Explicit OFF bucket — different from "not yet assigned" */}
-          <div {...dropProps('OFF')}
-            style={{border:'2px dashed ' + (held ? '#4f46e5' : 'var(--border-default)'),borderRadius:10,
-                    padding:'9px 11px',background:'var(--bg-deep)',minHeight:78,
-                    cursor: held ? 'pointer' : 'default'}}>
+          <div data-drop="OFF"
+            style={{border:'2px dashed ' + (overZone === 'OFF' ? '#4f46e5' : 'var(--border-default)'),borderRadius:10,
+                    padding:'9px 11px',minHeight:78,transition:'border-color .12s, background .12s',
+                    background: overZone === 'OFF' ? 'rgba(79,70,229,0.10)' : 'var(--bg-deep)'}}>
             <div style={{fontWeight:800,fontSize:14,color:'var(--text-muted)',marginBottom:6}}>OFF</div>
             <span style={{fontSize:11,color:'var(--text-dim)',fontStyle:'italic'}}>
               drop here to mark someone off for the day
@@ -2298,6 +2345,227 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           </div>
         )}
       </div>
+
+      {/* The chip under the cursor. pointerEvents:none is essential — without it this
+          element is what elementFromPoint returns and no drop zone is ever found. */}
+      {drag && (
+        <div style={{position:'fixed', left:drag.x, top:drag.y, transform:'translate(-50%,-50%)',
+                     pointerEvents:'none', zIndex:9999,
+                     fontSize:12, fontWeight:700, padding:'5px 11px', borderRadius:99,
+                     background:'#4f46e5', color:'#fff', border:'1px solid #4338ca',
+                     boxShadow:'0 6px 18px rgba(0,0,0,0.28)', whiteSpace:'nowrap'}}>
+          {drag.label}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Doctor day cell ──────────────────────────────────────────────────────────
+// A 1:1 reproduction of the doctor scheduler's calendar cell (index.html ~4819-4929):
+// same grouping rules, same colour lookups, same fonts, same OFF treatment, same
+// AM/PM split, same note block. Kept deliberately verbatim — if this drifts from the
+// doctor app, the two pages disagree about the same day and the reference is useless.
+
+function DoctorDayCell({ dk, doctors, locations, docSchedules, finalPlans, docDayNotes,
+                         holidays, theme, isWk }) {
+  const p = parseDateKey(dk);
+  const plan = finalPlans[`${p.year}-${p.month0}`];
+  const scheduleKey = `schedule-${p.year}-${p.month0}-${plan || 'A'}`;
+  const ds = ((docSchedules[scheduleKey] || {})[dk]) || {};
+  const notes = (docDayNotes[scheduleKey] || {})[dk];
+  const wkend = isWeekendDk(dk);
+  const locColors = theme === 'light' ? LOCATION_COLORS_LIGHT : LOCATION_COLORS;
+  const fs = isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10}
+                  : {loc:10,name:11,dot:6,dayNum:14,wk:9,hol:9,holSub:8,ampm:9};
+
+  function groupByLoc(entries) {
+    const groups = {};
+    entries.forEach(e => {
+      const key = e.locId === 'OFF' ? 'OFF' : e.locId;
+      if (!groups[key]) groups[key] = { locId: e.locId, staff: [] };
+      groups[key].staff.push(e.staff);
+    });
+    return Object.values(groups).sort((a, b) => {
+      if (a.locId === 'OFF') return 1;
+      if (b.locId === 'OFF') return -1;
+      const nA = ((locations.find(l => l.id === a.locId) || {}).name || '').toLowerCase();
+      const nB = ((locations.find(l => l.id === b.locId) || {}).name || '').toLowerCase();
+      return nA.localeCompare(nB);
+    });
+  }
+  const hybrid = (() => {
+    const allDay = [], splitAm = [], splitPm = [];
+    doctors.forEach(s => {
+      const am = (ds[s.id] || {}).am, pm = (ds[s.id] || {}).pm;
+      if (!am && !pm) return;
+      // No visibility filters here — this page has no show/hide toggles, so every
+      // doctor and location is in scope.
+      if (am && pm && am === pm) allDay.push({ staff: s, locId: am });
+      else { if (am) splitAm.push({ staff: s, locId: am }); if (pm) splitPm.push({ staff: s, locId: pm }); }
+    });
+    return { allDayGroups: groupByLoc(allDay), amGroups: groupByLoc(splitAm),
+             pmGroups: groupByLoc(splitPm), hasSplit: splitAm.length > 0 || splitPm.length > 0 };
+  })();
+
+  function renderLocBlock(g, gi) {
+    const isOff = g.locId === 'OFF';
+    const loc = isOff ? null : locations.find(l => l.id === g.locId);
+    const lc = locColors[g.locId] || locColors.OFF;
+    const nm = loc ? loc.name : '?';
+    return (
+      <div key={gi} style={{background:lc.bg,borderLeft:'3px solid '+lc.border,borderRadius:4,padding:isWk?'3px 5px':'2px 4px',marginBottom:isWk?3:2,display:'flex',alignItems:'flex-start',gap:isWk?6:4,flexWrap:'wrap'}}>
+        {!isOff && <div style={{fontSize:fs.loc,fontWeight:700,color:lc.text,lineHeight:1.3,whiteSpace:'nowrap',minWidth:isWk?'auto':0,flexShrink:isWk?0:1,overflow:'hidden',textOverflow:'ellipsis'}}>{nm}</div>}
+        <div style={{display:'flex',flexWrap:'wrap',gap:isWk?'2px 8px':'1px 6px',flex:1,minWidth:0}}>
+          {g.staff.map(s => (
+            <div key={s.id} style={{display:'flex',alignItems:'center',gap:2}}>
+              <div style={{width:fs.dot,height:fs.dot,borderRadius:'50%',background:isOff?'var(--text-muted)':staffDisplayColor(s.color,theme),flexShrink:0}} />
+              <span style={{fontSize:fs.name,color:isOff?'var(--text-muted)':staffDisplayColor(s.color,theme),fontWeight:600,whiteSpace:'nowrap'}}>
+                {getLastName(s.name)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const holiday = (() => {
+    for (const h of holidays) {
+      const dt = getHolidayDate(h, p.year);
+      if (dt && dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) === dk) return h;
+    }
+    return null;
+  })();
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:isWk?4:2,padding:'0 2px'}}>
+        <span style={{fontSize:fs.dayNum,fontWeight:700,color:wkend?'var(--text-faint)':'var(--text-primary)'}}>{p.day}</span>
+        <div style={{display:'flex',alignItems:'center',gap:4}}>
+          {notes && <span title={notes} style={{fontSize:isWk?13:11,lineHeight:1,opacity:0.9,filter:'drop-shadow(0 0 3px #f59e0b88)'}}>📝</span>}
+          {!wkend && <span style={{fontSize:fs.wk,color:'var(--text-dim)',fontWeight:600}}>W{getWeekOfMonth(p.day)}</span>}
+        </div>
+      </div>
+      {holiday && holiday.halfDay === 'am' && (
+        <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:'1px solid '+(theme==='light'?'#f59e0b':'#f59e0b44'),borderRadius:4,padding:'3px 5px',textAlign:'center',margin:'2px 0',marginBottom:3}}>
+          <div style={{fontSize:fs.hol,fontWeight:700,color:theme==='light'?'#92400e':'#f59e0b'}}>{'⚠️ '+holiday.name+' — AM Only'}</div>
+        </div>
+      )}
+      {holiday && holiday.halfDay !== 'am' && (
+        <div style={{background:theme==='light'?'#fee2e2':'#7f1d1d44',border:'1px solid '+(theme==='light'?'#f87171':'#ef444466'),borderRadius:4,padding:'4px 5px',textAlign:'center',margin:'2px 0'}}>
+          <div style={{fontSize:fs.hol,fontWeight:800,color:theme==='light'?'#b91c1c':'#ef4444',textTransform:'uppercase',letterSpacing:'0.05em'}}>Holiday</div>
+          <div style={{fontSize:fs.holSub,color:theme==='light'?'#7f1d1d':'#fca5a5',fontWeight:600,marginTop:1}}>{holiday.name}</div>
+        </div>
+      )}
+      {!wkend && (
+        <div>
+          {hybrid.allDayGroups.map((g, gi) => renderLocBlock(g, 'u-'+gi))}
+          {hybrid.hasSplit && (
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:isWk?4:2}}>
+              {[{period:'am',groups:hybrid.amGroups},{period:'pm',groups:hybrid.pmGroups}].map(item => (
+                <div key={item.period} style={{minHeight:0}}>
+                  <div style={{fontSize:fs.ampm,fontWeight:800,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.1em',textAlign:'center',marginBottom:1,borderBottom:'1px solid var(--border-subtle)',paddingBottom:1}}>{item.period}</div>
+                  {item.groups.map((g, gi) => renderLocBlock(g, item.period+'-'+gi))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!wkend && notes && (
+        <div style={{marginTop:isWk?4:2,padding:isWk?'3px 5px':'2px 4px',background:theme==='light'?'#fffbeb':'#78350f44',borderLeft:'2px solid '+(theme==='light'?'#f59e0b':'#f59e0b66'),borderRadius:2,fontSize:isWk?10:9,color:theme==='light'?'#78350f':'#fcd34d',fontStyle:'italic',lineHeight:1.3,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:isWk?3:2,WebkitBoxOrient:'vertical',wordBreak:'break-word'}}>
+          {notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Technician day cell ──────────────────────────────────────────────────────
+// The same shape as the printed month calendar: four fixed quadrants, an overflow
+// strip for other sites, then OFF and notes when there is anything to show. Used in
+// the week strip so the screen and the printout agree.
+
+function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSites, locColor,
+                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact }) {
+  const p = parseDateKey(dk);
+  const bySite = {};
+  activeTechs.forEach(t => {
+    if (isTechOff(t.id, dk)) return;
+    const a = getAssignment(dk, t.id);
+    const s = a.am || a.pm;
+    if (!s || s === 'OFF') return;
+    (bySite[s] = bySite[s] || []).push(t);
+  });
+  const off = activeTechs.filter(t => isTechOff(t.id, dk));
+  const hol = holidayFor(dk);
+  const note = techDayNotes[dk];
+  const overflow = staffedSites.filter(l => quadSiteIds.indexOf(l.id) === -1 && bySite[l.id]);
+  const fname = t => t.name.split(' ')[0];
+  const fz = compact ? 9 : 10;
+
+  if (hol && hol.halfDay === 'closed') {
+    return (
+      <div style={{background:'#fdeaea',border:'1px solid #d9534f',borderRadius:4,padding:'3px 4px',
+                   textAlign:'center',color:'#a02622',fontSize:fz,fontWeight:700,lineHeight:1.3}}>
+        {hol.name}<div style={{fontSize:fz-1,letterSpacing:1,fontWeight:800}}>CLOSED</div>
+      </div>
+    );
+  }
+
+  function quad(sid, i) {
+    const has = !!bySite[sid];
+    const c = locColor(sid);
+    return (
+      <div key={sid} style={{padding:'2px 3px',minHeight:14,
+              borderRight: (i % 2 === 0) ? '1px solid var(--border-subtle)' : 'none',
+              borderBottom: (i < 2) ? '1px solid var(--border-subtle)' : 'none'}}>
+        <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,letterSpacing:0.2,
+                      color:'#fff',background: has ? c.border : 'var(--border-default)',
+                      borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
+          {siteAbbr(sid)}
+        </span>
+        {has
+          ? <span style={{fontSize:fz,fontWeight:600}}>{bySite[sid].map(fname).join(' · ')}</span>
+          : <span style={{fontSize:fz,color:'var(--text-dim)'}}>—</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{border:'1px solid var(--border-subtle)',borderRadius:5,overflow:'hidden',background:'var(--bg-surface)'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr'}}>
+        {quadSiteIds.slice(0,4).map((sid, i) => quad(sid, i))}
+      </div>
+      {overflow.length > 0 && (
+        <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-deep)'}}>
+          {overflow.map(l => (
+            <span key={l.id} style={{marginRight:7}}>
+              <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,color:'#fff',
+                            background:locColor(l.id).border,borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
+                {siteAbbr(l.id)}
+              </span>
+              <span style={{fontSize:fz,fontWeight:600}}>{bySite[l.id].map(fname).join(' · ')}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {off.length > 0 && (
+        <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-elevated)'}}>
+          <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,color:'#fff',
+                        background:'#6b7280',borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>OFF</span>
+          <span style={{fontSize:fz,fontStyle:'italic',color:'var(--text-muted)'}}>{off.map(fname).join(' · ')}</span>
+        </div>
+      )}
+      {(note || (hol && hol.halfDay === 'am')) && (
+        <div style={{borderTop:'1px solid #f0b429',background:'#fff8e6',color:'#8a5a00',
+                     padding:'2px 4px',fontSize:fz-0.5,fontStyle:'italic',lineHeight:1.3}}>
+          {hol && hol.halfDay === 'am' ? <b style={{fontStyle:'normal'}}>{hol.name} — AM only</b> : null}
+          {hol && hol.halfDay === 'am' && note ? ' · ' : ''}
+          {note || ''}
+        </div>
+      )}
     </div>
   );
 }
