@@ -2225,14 +2225,36 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
         </div>
       </div>
 
-      {/* Doctor reference — rendered exactly as the doctor scheduler draws it */}
+      {/* Doctor reference — the whole week, each cell drawn exactly as the doctor
+          scheduler draws it. Clicking a column switches which day you are editing. */}
       <div style={Object.assign({}, S.card, {padding:12})}>
         <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>
-          Doctor schedule — {fmtDateLong(day)}
+          Doctor schedule — week of {fmtDateShort(shownDays[0])}
         </div>
-        <div style={{maxWidth:isMobile?'100%':420,border:'1px solid var(--border-subtle)',borderRadius:8,
-                     padding:'6px 8px',background:'var(--bg-surface)'}}>
-          <DoctorDayCell {...{dk:day,doctors,locations,docSchedules,finalPlans,docDayNotes,holidays,theme,isWk:true}} />
+        {/* Doctor names are single words that cannot wrap, so a column below about
+            250px clips them mid-word once the AM/PM split halves it. Give every column
+            a floor and let the panel scroll instead of squashing. */}
+        <div className="mob-scroll" style={{overflowX:'auto'}}>
+          <div style={{display:'grid',
+                       gridTemplateColumns:'repeat(' + shownDays.length + ', minmax(250px, 1fr))',
+                       gap:6, minWidth: shownDays.length * 256}}>
+            {shownDays.map(dk => (
+              <div key={dk} style={{fontSize:10,fontWeight:800,letterSpacing:0.8,textTransform:'uppercase',
+                                    color: dk === day ? '#818cf8' : 'var(--text-muted)',
+                                    textAlign:'center',paddingBottom:3,
+                                    borderBottom:'2px solid ' + (dk === day ? '#4f46e5' : 'var(--border-subtle)')}}>
+                {DAYS_OF_WEEK[dkToDate(dk).getDay()]}
+              </div>
+            ))}
+            {shownDays.map(dk => (
+              <div key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
+                style={{border:'2px solid ' + (dk === day ? '#4f46e5' : 'var(--border-subtle)'),
+                        borderRadius:8, padding:'5px 7px', cursor:'pointer', overflow:'hidden',
+                        background: dk === day ? 'rgba(79,70,229,0.05)' : 'var(--bg-surface)'}}>
+                <DoctorDayCell {...{dk,doctors,locations,docSchedules,finalPlans,docDayNotes,holidays,theme,isWk:true}} />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
