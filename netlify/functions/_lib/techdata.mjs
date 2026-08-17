@@ -123,8 +123,14 @@ export function techScheduleKeyFor(dk, ctx) {
 
 export function assignmentsFor(ctx, dk) {
   const key = techScheduleKeyFor(dk, ctx);
-  if (!key) return {};
-  return (ctx.techSchedules[key] || {})[dk] || {};
+  const day = key ? Object.assign({}, (ctx.techSchedules[key] || {})[dk] || {}) : {};
+  // Approved time off overrides the stored assignment, so a technician on holiday is
+  // told OFF rather than "No assignment", and the weekend/holiday send-suppression
+  // check does not count them as working.
+  (ctx.timeOff || []).forEach(v => {
+    if (dk >= v.startDate && dk <= v.endDate) day[v.techId] = { am: "OFF", pm: "OFF" };
+  });
+  return day;
 }
 
 export function locationName(ctx, id) {

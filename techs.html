@@ -916,6 +916,10 @@ function App() {
     [selectedDate, activeTechs, doctors, docSchedules, finalPlans, techStaffing, techTimeOff, holidays]);
 
   function getAssignment(dk, techId) {
+    // Approved time off wins over whatever is stored. Someone on holiday reads as OFF
+    // everywhere — board, printout, day link, Telegram — without anyone having to
+    // remember to also blank their assignment.
+    if (isTechOff(techId, dk)) return { am: 'OFF', pm: 'OFF' };
     const sk = techScheduleKeyFor(dk, activeTechPlan);
     const day = (techSchedules[sk] || {})[dk] || {};
     return day[techId] || { am: '', pm: '' };
@@ -1610,7 +1614,7 @@ function App() {
   // override. Set them in Staffing → each site card.
   function siteAbbr(id) {
     const custom = (techStaffing[id] || {}).abbr;
-    if (custom) return String(custom).toUpperCase().slice(0, 5);
+    if (custom) return String(custom).toUpperCase().slice(0, 4);
     return String(locName(id) || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 3);
   }
   function siteChipColor(id) { return (LOCATION_COLORS_LIGHT[id] || {}).border || '#6b7280'; }
@@ -1876,15 +1880,16 @@ function App() {
   }
 
   const TABS = [
-    { id:'board',    icon:'📋', label:'Day Board' },
+    { id:'board',    icon:'📋', label:'Schedule' },
     ...(isAdmin ? [
-      { id:'generate', icon:'✨', label:'Generate' },
       { id:'techs',    icon:'👥', label:`Technicians (${techs.length})` },
-      { id:'staffing', icon:'⚖️', label:'Staffing' },
-      { id:'rules',    icon:'📐', label:`Rules (${techRules.length})` },
+      { id:'staffing', icon:'📍', label:'Locations' },
       { id:'timeoff',  icon:'🏖', label:`Time Off (${techTimeOff.length})` },
       { id:'notify',   icon:'🔔', label:'Notifications' },
     ] : []),
+    // Generate and Rules are intentionally not listed: assignments are made by hand
+    // for now. GeneratePanel / RulesPanel and their state remain intact so putting
+    // either tab back is a one-line change.
   ];
 
   return (
@@ -1922,11 +1927,6 @@ function App() {
                          setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
                          refreshTechData,refreshing,quadSiteIds}} />
         )}
-        {activeTab === 'generate' && isAdmin && (
-          <GeneratePanel {...{S,genYear,setGenYear,genMonth,setGenMonth,generating,aiLog,genLog,coverageReport,
-                              generateTechSchedule,cancelGeneration,finalPlans,activeTechs,techStaffing,
-                              locName,locColor,setActiveTab,setSelectedDate,techs}} />
-        )}
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
                            portalAccounts,createTechPortalAccount,resetTechPortalPassword}} />
@@ -1934,9 +1934,6 @@ function App() {
         {activeTab === 'staffing' && isAdmin && (
           <StaffingPanel {...{S,allSites,locations,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
                               notifySettings,setNotifySettings}} />
-        )}
-        {activeTab === 'rules' && isAdmin && (
-          <RulesPanel {...{S,techRules,setTechRules,techs,locations:allSites,showToast}} />
         )}
         {activeTab === 'timeoff' && isAdmin && (
           <TimeOffPanel {...{S,techTimeOff,setTechTimeOff,techs,showToast}} />
@@ -3323,49 +3320,6 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
       <div style={Object.assign({}, S.card, {padding:16})}>
-        <div style={{fontWeight:700,marginBottom:6}}>How clinic load becomes tech coverage</div>
-        <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6}}>
-          For each half-day, the required tech count is <code style={{background:'var(--bg-elevated)',padding:'1px 5px',borderRadius:4}}>ceil(doctors present × techs per doctor)</code>,
-          raised to the minimum and capped at the maximum. Sites with no entry are ignored entirely — enable only the sites techs actually staff.
-          Holidays and weekends force the target to zero.
-        </p>
-      </div>
-
-      <div style={Object.assign({}, S.card, {padding:16})}>
-        <div style={{fontWeight:700,marginBottom:6}}>Print layout — quadrant sites</div>
-        <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
-          Pick up to 4 staffed sites to feature as the quadrant grid on the printed month calendar, in position
-          order (top-left, top-right, bottom-left, bottom-right). Any other staffed site appears in a horizontal
-          overflow strip below the quadrants instead. Leave all four blank to default to the first four staffed sites.
-        </p>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
-          {[0,1,2,3].map(slot => {
-            const cur = (notifySettings.quadrantSiteIds || [])[slot] || '';
-            const posLabel = ['Top-left','Top-right','Bottom-left','Bottom-right'][slot];
-            return (
-              <div key={slot}>
-                <label style={S.label}>{posLabel}</label>
-                <select value={cur}
-                  onChange={e => {
-                    const next = (notifySettings.quadrantSiteIds || []).slice();
-                    while (next.length < 4) next.push('');
-                    next[slot] = e.target.value;
-                    while (next.length && !next[next.length - 1]) next.pop(); // trailing blanks -> "default"
-                    setNotifySettings(Object.assign({}, notifySettings, { quadrantSiteIds: next }));
-                  }}
-                  style={Object.assign({}, S.input, {width:'100%'})}>
-                  <option value="">— none —</option>
-                  {Object.keys(techStaffing).map(id => (
-                    <option key={id} value={id}>{(allSites.find(l => l.id === id) || {}).name || id}</option>
-                  ))}
-                </select>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={Object.assign({}, S.card, {padding:16})}>
         <div style={{fontWeight:700,marginBottom:6}}>Sub-rooms</div>
         <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
           A room technicians staff separately, inside a site the doctor schedule already knows about — like a second
@@ -3433,30 +3387,19 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
                     <input type="number" min="0" value={cfg.maximum}
                            onChange={e => upd(l.id, 'maximum', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
                   </div>
+                  <div>
+                    <label style={S.label}>Short name (printout)</label>
+                    <input value={cfg.abbr || ''} maxLength={4}
+                           onChange={e => upd(l.id, 'abbr', e.target.value.toUpperCase().slice(0,4))}
+                           placeholder={l.name.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,3)}
+                           style={Object.assign({}, S.input, {width:'100%',fontFamily:'"Space Mono",monospace',letterSpacing:1})} />
+                  </div>
                   <div style={{display:'flex',alignItems:'flex-end',paddingBottom:8}}>
                     <label style={{display:'flex',alignItems:'center',gap:7,fontSize:12,color:'var(--text-secondary)',cursor:'pointer'}}>
                       <input type="checkbox" checked={!!cfg.staffWhenNoDoctor}
                              onChange={e => upd(l.id, 'staffWhenNoDoctor', e.target.checked)} style={{width:15,height:15,cursor:'pointer'}} />
                       Staff even with no doctor
                     </label>
-                  </div>
-                  <div style={{gridColumn:'1 / -1'}}>
-                    <label style={S.label}>Must have someone with</label>
-                    <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
-                      {TECH_SKILLS.map(sk => {
-                        const on = (cfg.requiredSkills || []).includes(sk);
-                        return (
-                          <button key={sk}
-                            onClick={() => upd(l.id, 'requiredSkills', on
-                              ? (cfg.requiredSkills||[]).filter(x => x !== sk)
-                              : (cfg.requiredSkills||[]).concat([sk]))}
-                            style={{fontSize:11,fontWeight:600,padding:'4px 9px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
-                                    background:on?'rgba(249,115,22,0.16)':'var(--bg-elevated)',
-                                    border:'1px solid '+(on?'#f97316':'var(--border-default)'),
-                                    color:on?'#f97316':'var(--text-dim)'}}>{sk}</button>
-                        );
-                      })}
-                    </div>
                   </div>
                 </div>
               )}
