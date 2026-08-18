@@ -3,7 +3,7 @@
 // Same HMAC-SHA256 scheme and the same millisecond `exp` convention as
 // storage-proxy.mjs — deliberately not JWT-standard seconds. Keep the two in step.
 
-import { ADMIN } from "./techdata.mjs";
+import { ADMIN, TECH_ADMINS } from "./techdata.mjs";
 
 function fromB64url(str) {
   return atob(String(str).replace(/-/g, "+").replace(/_/g, "/"));
@@ -47,8 +47,13 @@ export async function requireAdmin(req) {
     return { error: new Response(JSON.stringify({ error: "Forbidden — admin account required" }),
       { status: 403, headers: { "Content-Type": "application/json" } }) };
   }
+  // Accept the tenant that owns the data, anyone managed under it, and any extra
+  // login named in TECH_ADMIN_USERNAME.
   const ns = session.adminUsername || session.sub;
-  if (session.type !== "dev" && ns !== ADMIN) {
+  const permitted = ns === ADMIN
+    || TECH_ADMINS.indexOf(ns) !== -1
+    || TECH_ADMINS.indexOf(session.sub) !== -1;
+  if (session.type !== "dev" && !permitted) {
     return { error: new Response(JSON.stringify({ error: "Forbidden — not this practice's account" }),
       { status: 403, headers: { "Content-Type": "application/json" } }) };
   }

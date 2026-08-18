@@ -45,6 +45,18 @@ html,body{background:var(--bg-base);color:var(--text-primary);font-family:'DM Sa
   --cell-offmonth: #e8e8f5;
 }
 #root{min-height:100vh}
+/* Interactive affordance. Applied globally rather than per-element because both pages
+   style almost everything inline; a filter composes on top of any inline background.
+   Direction flips by theme so it reads as "lift" on dark and "press" on light. */
+button, a, [data-hoverable]{transition:filter .12s ease, transform .06s ease, border-color .12s ease}
+button:not(:disabled):hover, a:hover, [data-hoverable]:hover{filter:brightness(1.14)}
+:root[data-theme="light"] button:not(:disabled):hover,
+:root[data-theme="light"] a:hover,
+:root[data-theme="light"] [data-hoverable]:hover{filter:brightness(0.95)}
+button:not(:disabled):active, a:active, [data-hoverable]:active{transform:translateY(1px)}
+button:disabled{cursor:not-allowed}
+button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
+
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 @media(max-width:768px){
@@ -176,6 +188,17 @@ const TECH_LEVELS = ['Tech', 'COA', 'COT', 'COMT', 'Scribe', 'Front Desk'];
 // Optional duties, separate from certification level. A COT can also be a scribe;
 // "Scribe" as a level answers a different question than "scribes for Dr. Kim".
 const TECH_ROLES  = ['Scribe', 'Testing Tech', 'Workup', 'Surgical', 'Float'];
+
+// Per-DAY duty, set by right-clicking a placed chip. Distinct from a technician's
+// standing roles: someone can be a scribe by trade but be testing on a given Tuesday,
+// so this lives on the assignment rather than on the person.
+const DUTIES = [
+  { id:'S',  label:'Scribe' },
+  { id:'T',  label:'Testing' },
+  { id:'TR', label:'Training Refraction' },
+];
+function dutyLabel(id) { const d = DUTIES.find(x => x.id === id); return d ? d.label : ''; }
+function dutySuffix(id) { return id ? '(' + id + ')' : ''; }
 const TECH_SKILLS  = ['refraction','workup','VF','OCT','A-scan','photos','scribe','surgical','contact lens'];
 
 const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
@@ -932,8 +955,13 @@ function App() {
       const month = Object.assign({}, next[sk] || {});
       const day = Object.assign({}, month[dk] || {});
       const cur = Object.assign({ am:'', pm:'' }, day[techId] || {});
+      const prevSite = cur.am || cur.pm;
       if (period === 'both') { cur.am = locId; cur.pm = locId; }
       else cur[period] = locId;
+      // Any real move clears the duty: what a site needs differs from what the last
+      // one needed, so the duty has to be chosen again rather than carried over.
+      // Re-dropping onto the same site is a no-op and leaves it alone.
+      if ((cur.am || cur.pm) !== prevSite) delete cur.duty;
       day[techId] = cur;
       month[dk] = day;
       next[sk] = month;
@@ -942,6 +970,23 @@ function App() {
   }
 
   // Who is assigned where, for the selected day — inverse of the tech schedule.
+  function setDuty(dk, techId, duty) {
+    const sk = techScheduleKeyFor(dk, activeTechPlan);
+    setTechSchedules(prev => {
+      const next  = Object.assign({}, prev);
+      const month = Object.assign({}, next[sk] || {});
+      const day   = Object.assign({}, month[dk] || {});
+      const cur   = Object.assign({ am:'', pm:'' }, day[techId] || {});
+      if (duty) cur.duty = duty; else delete cur.duty;
+      day[techId] = cur; month[dk] = day; next[sk] = month;
+      return next;
+    });
+  }
+  function dutyOf(dk, techId) {
+    const sk = techScheduleKeyFor(dk, activeTechPlan);
+    return (((techSchedules[sk] || {})[dk] || {})[techId] || {}).duty || '';
+  }
+
   function assignedAt(dk, locId, period) {
     return activeTechs.filter(t => getAssignment(dk, t.id)[period] === locId);
   }
@@ -1734,7 +1779,7 @@ function App() {
           quadIds.concat(overflowIds).forEach(sid => {
             if (!dd.bySite[sid] || !dd.bySite[sid].length) return;
             inner += '<div class="satrow"><span class="ab" style="background:' + siteChipColor(sid) + '">' +
-              escapeHtml(siteAbbr(sid)) + '</span><div class="ns">' + namesFor(dd.bySite[sid]) + '</div></div>';
+              escapeHtml(siteAbbr(sid)) + '</span><div class="ns">' + namesFor(dd.bySite[sid], dd.duties) + '</div></div>';
           });
           tds += '<td class="' + cls + '">' + inner + '</td>';
           return;
@@ -1754,14 +1799,14 @@ function App() {
           const abStyle = has ? ' style="background:' + siteChipColor(sid) + '"' : '';
           q += '<div class="q q' + qi + '">' + dn +
             '<span class="ab' + (has ? '' : ' dim') + '"' + abStyle + '>' + escapeHtml(siteAbbr(sid)) + '</span>' +
-            '<span class="ns">' + (has ? namesFor(dd.bySite[sid]) : '<span class="mt">—</span>') + '</span></div>';
+            '<span class="ns">' + (has ? namesFor(dd.bySite[sid], dd.duties) : '<span class="mt">—</span>') + '</span></div>';
         });
 
         const overParts = [];
         overflowIds.forEach(sid => {
           if (!dd.bySite[sid] || !dd.bySite[sid].length) return;
           overParts.push('<span class="ab" style="background:' + siteChipColor(sid) + '">' + escapeHtml(siteAbbr(sid)) +
-            '</span><span class="ns">' + namesFor(dd.bySite[sid]) + '</span>');
+            '</span><span class="ns">' + namesFor(dd.bySite[sid], dd.duties) + '</span>');
         });
         const ov = overParts.length ? '<div class="strip over">' + overParts.join('<span class="sep"></span>') + '</div>' : '';
 
@@ -1796,7 +1841,7 @@ function App() {
     html += '<div class="hdr"><h1>Technician Schedule</h1><div class="m">' + MONTHS[month0] + ' ' + year + '</div>' +
       '<div class="sub">Central Valley Eye</div></div>';
     html += '<table><thead><tr>' + hdr + '</tr></thead><tbody>' + body + '</tbody></table>';
-    html += '<div class="legend"><span class="lg"><b>(S)</b> Scribe</span><span class="lg"><b>(T)</b> Testing tech</span>' +
+    html += '<div class="legend">' + DUTIES.map(d => '<span class="lg"><b>' + dutySuffix(d.id) + '</b> ' + escapeHtml(d.label) + '</span>').join('') +
       '<span class="lgsites">' + legendSites + '</span></div>';
     html += '</body></html>';
     return html;
@@ -1922,7 +1967,7 @@ function App() {
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
                          finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,
                          techDayNotes,setTechDayNotes,generateMonthPDF,
-                         docDayNotes,docSchedules,theme,siteAbbr,
+                         docDayNotes,docSchedules,theme,siteAbbr,dutyOf,setDuty,
                          activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
                          setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
                          refreshTechData,refreshing,quadSiteIds}} />
@@ -1968,7 +2013,7 @@ function DayBoard(p) {
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
           lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
           allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF,
-          docDayNotes, docSchedules, theme, siteAbbr,
+          docDayNotes, docSchedules, theme, siteAbbr, dutyOf, setDuty,
           activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
           setTechFinalPlan, clearTechFinalPlan, copyTechPlanTo, clearTechPlan,
           refreshTechData, refreshing, quadSiteIds } = p;
@@ -2079,12 +2124,12 @@ function DayBoard(p) {
       {boardView === 'month'
         ? <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,openDay,staffedSites,
                           activeTechs,getAssignment,locName,holidayFor,isTechOff,targets,holidays,
-                          quadSiteIds,siteAbbr,techDayNotes}} />
+                          quadSiteIds,siteAbbr,techDayNotes,dutyOf}} />
         : <WeekView  {...{S,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,editDate,setEditDate,
                           staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
                           techDayNotes,setTechDayNotes,shiftDay,locations,holidays,
-                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr}} />}
+                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty}} />}
     </div>
   );
 }
@@ -2096,7 +2141,7 @@ function DayBoard(p) {
 
 function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
                      activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays,
-                     quadSiteIds, siteAbbr, techDayNotes }) {
+                     quadSiteIds, siteAbbr, techDayNotes, dutyOf }) {
   const dp = parseDateKey(selectedDate);
   const first = new Date(dp.year, dp.month0, 1);
   const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
@@ -2152,7 +2197,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
                                    color: wknd ? 'var(--text-dim)' : 'var(--text-primary)'}}>{d}</div>
                       {(!wknd || anyWork) && (
                         <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
-                                           siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true}} />
+                                           siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf}} />
                       )}
                     </td>
                   );
@@ -2174,7 +2219,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                     staffedSites, activeTechs, getAssignment, setAssignment, locName, holidayFor,
                     isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
                     techDayNotes, setTechDayNotes, shiftDay, locations, holidays,
-                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr }) {
+                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty }) {
 
   // Monday-first working week; Saturday appears only when something is scheduled.
   const weekDays = useMemo(() => {
@@ -2202,6 +2247,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
   // some elements, and never fires at all on touch. Pointer events give one code path
   // for mouse and touch, and let the chip sit exactly under the cursor.
   const [drag, setDrag] = useState(null);   // { techId, label, x, y, over } while dragging
+  const [dutyMenu, setDutyMenu] = useState(null);  // { techId, name, x, y } for the right-click menu
   const dragRef = useRef(null);             // same value, readable synchronously
 
   function place(techId, siteId) {
@@ -2268,24 +2314,26 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
   const offToday   = activeTechs.filter(t => isTechOff(t.id, day));
   const markedOff  = activeTechs.filter(t => !isTechOff(t.id, day) && siteOf(t.id) === 'OFF');
 
-  function TechChip({ t, dim }) {
-    const pin = (pinnedToday || {})[t.id];
+  function TechChip({ t, dim, placed }) {
     const isDragging = draggingId === t.id;
+    const duty = placed ? dutyOf(day, t.id) : '';
     return (
-      <span onPointerDown={e => startDrag(e, t)}
-        title={pin ? 'Scribes for ' + pin.doctorName : (isAdmin ? 'Drag onto a site' : '')}
-        style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:12,fontWeight:600,
+      <span data-hoverable="1"
+        onPointerDown={e => startDrag(e, t)}
+        onContextMenu={placed && isAdmin ? (e => {
+          e.preventDefault();
+          setDutyMenu({ techId: t.id, name: t.name.split(' ')[0], x: e.clientX, y: e.clientY });
+        }) : undefined}
+        title={isAdmin ? (placed ? 'Drag to move · right-click to set duty' : 'Drag onto a site') : ''}
+        style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:12,fontWeight:600,
                 padding:'4px 9px',margin:'0 5px 5px 0',borderRadius:99,
                 background: dim ? 'var(--bg-elevated)' : 'var(--bg-active)',
                 color: dim ? 'var(--text-dim)' : 'var(--text-primary)',
                 border:'1px solid var(--border-default)',
-                // The original stays in place, faded, so the row does not reflow while
-                // the floating copy is under the cursor.
                 opacity: isDragging ? 0.28 : 1,
                 cursor: isAdmin ? 'grab' : 'default', userSelect:'none', touchAction:'none'}}>
         {t.name.split(' ')[0]}
-        {pin && <span style={{fontSize:9,color:'#818cf8',fontWeight:800}}>📌</span>}
-        {(t.roles||[]).includes('Testing Tech') && <span style={{fontSize:9,opacity:0.7}}>(T)</span>}
+        {duty && <span style={{fontSize:10,fontWeight:800,color:'#4338ca'}}>{dutySuffix(duty)}</span>}
       </span>
     );
   }
@@ -2316,7 +2364,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>{n}</span>
                 </div>
                 <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
-                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true}} />
+                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf}} />
               </div>
             );
           })}
@@ -2443,7 +2491,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                   ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>
                       {isAdmin ? 'drop technicians here' : 'nobody assigned'}
                     </span>
-                  : here.map(t => <TechChip key={t.id} t={t} />)}
+                  : here.map(t => <TechChip key={t.id} t={t} placed />)}
               </div>
             );
           })}
@@ -2461,10 +2509,60 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
 
         {staffedSites.length === 0 && (
           <div style={{marginTop:10,fontSize:13,color:'#f59e0b'}}>
-            ⚠ No sites are configured for technicians yet — set them up in the Staffing tab first.
+            ⚠ No sites are configured for technicians yet — set them up in the Locations tab first.
           </div>
         )}
+
+        <div style={{marginTop:14,paddingTop:10,borderTop:'1px solid var(--border-subtle)',
+                     display:'flex',gap:16,flexWrap:'wrap',alignItems:'baseline'}}>
+          {DUTIES.map(d => (
+            <span key={d.id} style={{fontSize:12,color:'var(--text-secondary)'}}>
+              <b style={{color:'#4338ca',fontWeight:800}}>{dutySuffix(d.id)}</b> {d.label}
+            </span>
+          ))}
+          {isAdmin && <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>
+            right-click a placed technician to set their duty
+          </span>}
+        </div>
       </div>
+
+      {dutyMenu && (
+        <React.Fragment>
+          <div onClick={() => setDutyMenu(null)} onContextMenu={e => { e.preventDefault(); setDutyMenu(null); }}
+               style={{position:'fixed',inset:0,zIndex:9998}} />
+          <div style={{position:'fixed', left:Math.min(dutyMenu.x, window.innerWidth - 200),
+                       top:Math.min(dutyMenu.y, window.innerHeight - 190), zIndex:9999,
+                       background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                       borderRadius:10,boxShadow:'0 10px 28px rgba(0,0,0,0.30)',padding:6,minWidth:184}}>
+            <div style={{fontSize:11,fontWeight:800,letterSpacing:0.5,color:'var(--text-muted)',
+                         padding:'4px 8px 6px'}}>{dutyMenu.name}</div>
+            {DUTIES.map(d => {
+              const on = dutyOf(day, dutyMenu.techId) === d.id;
+              return (
+                <button key={d.id} data-hoverable="1"
+                  onClick={() => { setDuty(day, dutyMenu.techId, on ? '' : d.id); setDutyMenu(null); }}
+                  style={{display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
+                          background: on ? 'rgba(79,70,229,0.12)' : 'transparent',
+                          border:'none',borderRadius:6,padding:'7px 8px',cursor:'pointer',
+                          fontFamily:'inherit',fontSize:13,fontWeight:600,
+                          color: on ? '#818cf8' : 'var(--text-primary)'}}>
+                  <span style={{fontWeight:800,color:'#4338ca',minWidth:30}}>{dutySuffix(d.id)}</span>
+                  {d.label}
+                  {on && <span style={{marginLeft:'auto',fontSize:11}}>✓</span>}
+                </button>
+              );
+            })}
+            <button data-hoverable="1"
+              onClick={() => { setDuty(day, dutyMenu.techId, ''); setDutyMenu(null); }}
+              style={{display:'block',width:'100%',textAlign:'left',background:'transparent',
+                      border:'none',borderTop:'1px solid var(--border-subtle)',marginTop:4,
+                      padding:'7px 8px',cursor:'pointer',fontFamily:'inherit',fontSize:13,
+                      color:'var(--text-muted)'}}>
+              No duty
+            </button>
+          </div>
+        </React.Fragment>
+      )}
 
       {/* The chip under the cursor. pointerEvents:none is essential — without it this
           element is what elementFromPoint returns and no drop zone is ever found. */}
@@ -2608,7 +2706,7 @@ function DoctorDayCell({ dk, doctors, locations, docSchedules, finalPlans, docDa
 // the week strip so the screen and the printout agree.
 
 function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSites, locColor,
-                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact }) {
+                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf }) {
   const p = parseDateKey(dk);
   const bySite = {};
   activeTechs.forEach(t => {
@@ -2622,7 +2720,10 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
   const hol = holidayFor(dk);
   const note = techDayNotes[dk];
   const overflow = staffedSites.filter(l => quadSiteIds.indexOf(l.id) === -1 && bySite[l.id]);
-  const fname = t => t.name.split(' ')[0];
+  const fname = t => {
+    const d = dutyOf ? dutyOf(dk, t.id) : '';
+    return t.name.split(' ')[0] + (d ? dutySuffix(d) : '');
+  };
   const fz = compact ? 9 : 10;
 
   if (hol && hol.halfDay === 'closed') {

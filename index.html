@@ -47,6 +47,18 @@ html,body{background:var(--bg-base);color:var(--text-primary);font-family:'DM Sa
   --login-gradient-mid: #c8c0f0;
 }
 #root{min-height:100vh}
+/* Interactive affordance. Applied globally rather than per-element because both pages
+   style almost everything inline; a filter composes on top of any inline background.
+   Direction flips by theme so it reads as "lift" on dark and "press" on light. */
+button, a, [data-hoverable]{transition:filter .12s ease, transform .06s ease, border-color .12s ease}
+button:not(:disabled):hover, a:hover, [data-hoverable]:hover{filter:brightness(1.14)}
+:root[data-theme="light"] button:not(:disabled):hover,
+:root[data-theme="light"] a:hover,
+:root[data-theme="light"] [data-hoverable]:hover{filter:brightness(0.95)}
+button:not(:disabled):active, a:active, [data-hoverable]:active{transform:translateY(1px)}
+button:disabled{cursor:not-allowed}
+button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
+
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 @media(max-width:768px){

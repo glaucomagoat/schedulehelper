@@ -9,7 +9,22 @@ import { getStore } from "@netlify/blobs";
 
 const STORE_NAME = "schedule-helper";
 
-export const ADMIN = process.env.TECH_ADMIN_USERNAME || "cve";
+// TECH_ADMIN_USERNAME may be a single login or a comma-separated list.
+//
+// The FIRST entry is the namespace the technician data actually lives in — every
+// blob is written as "<ADMIN>:tech*", and there is exactly one copy. The remaining
+// entries are additional logins permitted to administer it.
+//
+// Note this only widens the SERVER's check. storage-proxy independently allows an
+// account to touch its own namespace or its parent tenant's, so for a second person
+// to edit the same schedule from the browser they must be a managed user under the
+// tenant named first here. Listing an unrelated top-level admin here lets them call
+// the technician endpoints but will not let them load the data.
+const TECH_ADMIN_LIST = String(process.env.TECH_ADMIN_USERNAME || "cve")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
+export const ADMIN = TECH_ADMIN_LIST[0] || "cve";
+export const TECH_ADMINS = TECH_ADMIN_LIST;
 
 export function techStore() { return getStore(STORE_NAME); }
 
