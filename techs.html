@@ -496,7 +496,7 @@ const QUAD_CSS =
   'td.sat{width:__SATW__;background:#fbfbfd;padding:1px 2px}' +
   'td.blank{background:#f1f1f4}' +
   '.quads{display:grid;grid-template-columns:1fr 1fr}' +
-  '.q{padding:2px 3px 2.5px;min-height:15px}' +
+  '.q{padding:2px 4px 2.5px;min-height:15px;overflow:hidden;word-break:break-word}' +
   '.q0{border-right:1px solid #e4e4ec;border-bottom:1px solid #e4e4ec}' +
   '.q1{border-bottom:1px solid #e4e4ec}' +
   '.q2{border-right:1px solid #e4e4ec}' +
@@ -505,7 +505,7 @@ const QUAD_CSS =
   '.ab{display:inline-block;font-size:__AB__px;font-weight:800;letter-spacing:.2px;color:#fff;' +
   'border-radius:2px;padding:.5px 2.5px;margin-right:2.5px;vertical-align:1px}' +
   '.ab.dim{background:#dcdce4}.ab.offab{background:#6b7280}' +
-  '.ns{font-size:__FS__px;font-weight:600;line-height:1.3}' +
+  '.ns{font-size:__FS__px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}' +
   '.ns b{font-weight:800;color:#3730a3;font-size:__FSB__px}' +
   '.mt{color:#c9c9d2;font-size:__FS__px}' +
   '.satrow{margin-bottom:2px}' +
@@ -1662,7 +1662,19 @@ function App() {
     if (custom) return String(custom).toUpperCase().slice(0, 4);
     return String(locName(id) || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 3);
   }
+  // Printable area of landscape Letter at 96dpi, less 5mm margins on each side.
+  const PRINT_W = Math.round(11 * 96 - 2 * (5 / 25.4 * 96));   // 1018
+  const PRINT_H = Math.round(8.5 * 96 - 2 * (5 / 25.4 * 96));  //  778
+
+  // Print palette. Each site gets a saturated rule colour AND a pale tint, chosen so
+  // the tints fall on distinguishable steps of LIGHTNESS — colour alone disappears on
+  // a mono printer, and the abbreviation is what actually identifies the site there.
+  const PRINT_TINTS = ['#e8effb','#e6f5ec','#f3e9fb','#fdf4e3','#fde9f0','#e9f6f8','#f0f0f4','#eef3e6'];
   function siteChipColor(id) { return (LOCATION_COLORS_LIGHT[id] || {}).border || '#6b7280'; }
+  function siteTint(id) {
+    const idx = Object.keys(techStaffing).indexOf(id);
+    return PRINT_TINTS[(idx < 0 ? 0 : idx) % PRINT_TINTS.length];
+  }
 
   // Builds the full printable HTML for one month at a given name-cell font size
   // (px). Returns a string — no DOM access here, so it can also run inside the
@@ -1797,7 +1809,11 @@ function App() {
           const has = dd.bySite[sid] && dd.bySite[sid].length;
           const dn = qi === 0 ? '<span class="dnum">' + d + '</span>' : '';
           const abStyle = has ? ' style="background:' + siteChipColor(sid) + '"' : '';
-          q += '<div class="q q' + qi + '">' + dn +
+          // Tint + coloured left rule. On a mono printer the tints reduce to
+          // distinguishable greys and the rule still separates the blocks — and the
+          // abbreviation identifies the site regardless of either.
+          const qStyle = has ? ' style="background:' + siteTint(sid) + ';box-shadow:inset 3px 0 0 ' + siteChipColor(sid) + '"' : '';
+          q += '<div class="q q' + qi + '"' + qStyle + '>' + dn +
             '<span class="ab' + (has ? '' : ' dim') + '"' + abStyle + '>' + escapeHtml(siteAbbr(sid)) + '</span>' +
             '<span class="ns">' + (has ? namesFor(dd.bySite[sid], dd.duties) : '<span class="mt">—</span>') + '</span></div>';
         });
@@ -1837,7 +1853,15 @@ function App() {
       .join(' · ');
 
     let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + MONTHS[month0] + ' ' + year + ' Technician Schedule</title>';
-    html += '<style>@page{size:letter landscape;margin:5mm}' + css + '</style></head><body>';
+    // Explicit inches rather than "letter landscape": browsers honour a concrete
+    // size far more reliably, and this is what stops the sheet coming out portrait
+    // with the right-hand columns sheared off.
+    // print-color-adjust is what keeps the site colours — without it every printer
+    // preview silently drops background fills and the sheet arrives monochrome.
+    html += '<style>@page{size:11in 8.5in;margin:5mm}'
+         + 'html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+         + '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+         + css + '</style></head><body>';
     html += '<div class="hdr"><h1>Technician Schedule</h1><div class="m">' + MONTHS[month0] + ' ' + year + '</div>' +
       '<div class="sub">Central Valley Eye</div></div>';
     html += '<table><thead><tr>' + hdr + '</tr></thead><tbody>' + body + '</tbody></table>';
@@ -1851,12 +1875,14 @@ function App() {
   // Letter page at 5mm margins is 778px tall at this iframe's fixed pixel size) and
   // keeps shrinking the name font until it fits, before ever opening a print tab.
   async function generateMonthPDF(year, month0) {
-    const sizes = [9.0, 8.6, 8.2, 7.8];
+    const sizes = [9.0, 8.6, 8.2, 7.8, 7.4, 7.0];
     const iframe = document.createElement('iframe');
     iframe.style.position = 'fixed';
     iframe.style.left = '-99999px';
     iframe.style.top = '0';
-    iframe.width = '1066';
+    // 11in x 8.5in at 96dpi is 1056 x 816; 5mm margins take 37.8px off each axis.
+    // Measuring wider than the paper is why a chosen size could still overflow.
+    iframe.width = String(PRINT_W);
     iframe.height = '1400';
     document.body.appendChild(iframe);
 
@@ -1867,7 +1893,7 @@ function App() {
         finalHtml = html;
         const fits = await new Promise(resolve => {
           iframe.onload = () => {
-            try { resolve(iframe.contentDocument.body.scrollHeight <= 778); }
+            try { resolve(iframe.contentDocument.body.scrollHeight <= PRINT_H); }
             catch(e) { resolve(true); }
           };
           iframe.srcdoc = html;
@@ -2233,7 +2259,11 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
     const sat = weekDays[5];
     return activeTechs.some(t => { const a = getAssignment(sat, t.id); return (a.am && a.am !== 'OFF') || (a.pm && a.pm !== 'OFF'); });
   }, [weekDays, activeTechs, getAssignment]);
-  const shownDays = satHasWork ? weekDays : weekDays.slice(0,5);
+  // Saturday shows automatically once it has any assignment. Until then it is behind
+  // a small opener, reset per week so it never lingers on weeks that do not need it.
+  const [satOpenFor, setSatOpenFor] = useState(null);
+  const satOpen = satHasWork || satOpenFor === weekDays[0];
+  const shownDays = satOpen ? weekDays : weekDays.slice(0,5);
 
   const day = editDate && shownDays.indexOf(editDate) >= 0 ? editDate : shownDays[0];
   useEffect(() => { if (!editDate) setEditDate(shownDays[0]); }, []);
@@ -2348,6 +2378,20 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             Week of {fmtDateShort(shownDays[0])} – {fmtDateShort(shownDays[shownDays.length-1])}
           </div>
           <button onClick={() => shiftDay(7)} style={S.btn}>Next week →</button>
+          {isAdmin && !satHasWork && (
+            satOpen
+              ? <button onClick={() => setSatOpenFor(null)}
+                  style={Object.assign({}, S.btn, {padding:'5px 10px',fontSize:12,color:'var(--text-muted)'})}>
+                  Hide Saturday
+                </button>
+              : <button onClick={() => setSatOpenFor(weekDays[0])}
+                  title="Most weeks have no Saturday clinic — this adds it just for this week"
+                  style={{background:'transparent',border:'1px dashed var(--border-default)',borderRadius:8,
+                          padding:'5px 10px',fontSize:12,color:'var(--text-dim)',cursor:'pointer',
+                          fontFamily:'inherit'}}>
+                  + Saturday
+                </button>
+          )}
         </div>
         <div style={{display:'grid',gridTemplateColumns:`repeat(${shownDays.length},1fr)`,gap:6}} className="mob-scroll">
           {shownDays.map(dk => {
