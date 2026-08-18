@@ -78,6 +78,12 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 <!-- Renders Telegram invite links as scannable QR codes. Optional: if it fails to
      load, the invite UI falls back to copy-the-link and says so. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<!-- Real PDF generation. The browser's print dialog kept overriding orientation and
+     dropping colour no matter what @page said, so the month sheet is rendered to a
+     canvas and written into a landscape PDF we hand the user directly. Optional: if
+     either script fails to load, generateMonthPDF falls back to the print window. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 // Identical to the storage client in index.html. localStorage is shared across pages
 // on this origin, so an admin already signed in at index.html is authenticated here
@@ -496,7 +502,7 @@ const QUAD_CSS =
   'td.sat{width:__SATW__;background:#fbfbfd;padding:1px 2px}' +
   'td.blank{background:#f1f1f4}' +
   '.quads{display:grid;grid-template-columns:1fr 1fr}' +
-  '.q{padding:2px 4px 2.5px;min-height:15px;overflow:hidden;word-break:break-word}' +
+  '.q{padding:2px 4px 2.5px;min-height:15px;word-break:break-word}' +
   '.q0{border-right:1px solid #e4e4ec;border-bottom:1px solid #e4e4ec}' +
   '.q1{border-bottom:1px solid #e4e4ec}' +
   '.q2{border-right:1px solid #e4e4ec}' +
@@ -853,6 +859,7 @@ function App() {
     showToast('Plan ' + activeTechPlan + ' cleared', 'success');
   }
   const [refreshing, setRefreshing] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   async function refreshTechData() {
     if (!dataNs) return;
     setRefreshing(true);
@@ -1875,41 +1882,74 @@ function App() {
   // Letter page at 5mm margins is 778px tall at this iframe's fixed pixel size) and
   // keeps shrinking the name font until it fits, before ever opening a print tab.
   async function generateMonthPDF(year, month0) {
+    const label = MONTHS[month0] + ' ' + year;
+    setPdfBusy(true);
+    // Rendered offscreen at exactly the printable area, then shrunk until it fits one
+    // page. Measuring anywhere other than the true page size is what previously let a
+    // sheet overflow and collide.
     const sizes = [9.0, 8.6, 8.2, 7.8, 7.4, 7.0];
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-99999px';
-    iframe.style.top = '0';
-    // 11in x 8.5in at 96dpi is 1056 x 816; 5mm margins take 37.8px off each axis.
-    // Measuring wider than the paper is why a chosen size could still overflow.
-    iframe.width = String(PRINT_W);
-    iframe.height = '1400';
-    document.body.appendChild(iframe);
+    const host = document.createElement('iframe');
+    host.style.cssText = 'position:fixed;left:-99999px;top:0;border:0;background:#fff';
+    host.width = String(PRINT_W);
+    host.height = String(PRINT_H);
+    document.body.appendChild(host);
 
     let finalHtml = null;
     try {
       for (let i = 0; i < sizes.length; i++) {
-        const html = buildMonthPdfHtml(year, month0, sizes[i]);
-        finalHtml = html;
+        finalHtml = buildMonthPdfHtml(year, month0, sizes[i]);
         const fits = await new Promise(resolve => {
-          iframe.onload = () => {
-            try { resolve(iframe.contentDocument.body.scrollHeight <= PRINT_H); }
+          host.onload = () => {
+            try { resolve(host.contentDocument.body.scrollHeight <= PRINT_H); }
             catch(e) { resolve(true); }
           };
-          iframe.srcdoc = html;
+          host.srcdoc = finalHtml;
         });
         if (fits) break;
       }
-    } finally {
-      document.body.removeChild(iframe);
-    }
 
-    const blob = new Blob([finalHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if (w) w.opener = null;
-    if (w) { w.onload = () => { setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 600); }; }
-    else { URL.revokeObjectURL(url); showToast('Pop-up was blocked. Please allow pop-ups for this site and try again.', 'error'); }
+      // Preferred path: rasterise the sheet and write it into a landscape PDF we hand
+      // straight to the user. The print dialog is not involved, so orientation and
+      // background colour cannot be overridden by it or by printer defaults.
+      const canPdf = typeof html2canvas === 'function'
+        && window.jspdf && typeof window.jspdf.jsPDF === 'function';
+      if (canPdf) {
+        const doc = host.contentDocument;
+        const target = doc.body;
+        // scale 3 puts an 8.2px glyph at ~25px before the PDF scales it back down —
+        // roughly 300dpi on an 11in sheet, which stays crisp on paper.
+        const canvas = await html2canvas(target, {
+          scale: 3, backgroundColor: '#ffffff', logging: false,
+          width: PRINT_W, height: Math.max(PRINT_H, target.scrollHeight),
+          windowWidth: PRINT_W, windowHeight: PRINT_H,
+        });
+        const pdf = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'in', format: 'letter' });
+        const margin = 5 / 25.4;                 // the 5mm the layout already assumes
+        const w = 11 - margin * 2, h = 8.5 - margin * 2;
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.94), 'JPEG', margin, margin, w, h, undefined, 'FAST');
+        pdf.save('Technician Schedule — ' + label + '.pdf');
+        showToast('Downloaded “Technician Schedule — ' + label + '.pdf”', 'success');
+        return;
+      }
+
+      // Fallback only if a CDN script did not load: the old print-window route.
+      const blob = new Blob([finalHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const w2 = window.open(url, '_blank');
+      if (w2) {
+        w2.opener = null;
+        w2.onload = () => { setTimeout(() => { w2.print(); URL.revokeObjectURL(url); }, 600); };
+        showToast('PDF tools unavailable — opened the print view instead. Choose Landscape.', 'info');
+      } else {
+        URL.revokeObjectURL(url);
+        showToast('Pop-up was blocked. Please allow pop-ups for this site and try again.', 'error');
+      }
+    } catch (e) {
+      showToast('Could not build the PDF: ' + e.message, 'error');
+    } finally {
+      if (host.parentNode) document.body.removeChild(host);
+      setPdfBusy(false);
+    }
   }
 
   // ── Styles ─────────────────────────────────────────────────────────────────
@@ -1991,7 +2031,7 @@ function App() {
           <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,editDate,setEditDate,techStaffing,holidays,
                          activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
-                         finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,
+                         finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,pdfBusy,
                          techDayNotes,setTechDayNotes,generateMonthPDF,
                          docDayNotes,docSchedules,theme,siteAbbr,dutyOf,setDuty,
                          activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
@@ -2037,7 +2077,7 @@ function DayBoard(p) {
           editDate, setEditDate, techStaffing, holidays,
           activeTechs, locations, activeSites, targets, coverage, coverageIssues, getAssignment, setAssignment,
           assignedAt, locName, holidayFor, isTechOff, timeOffFor, notifySettings, unnotifiedChanges,
-          lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab,
+          lastSnapshot, finalPlans, sendChanges, sending, unreachable, setActiveTab, pdfBusy,
           allSites, pinnedToday, doctors, techDayNotes, setTechDayNotes, generateMonthPDF,
           docDayNotes, docSchedules, theme, siteAbbr, dutyOf, setDuty,
           activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
@@ -2069,7 +2109,9 @@ function DayBoard(p) {
         </div>
         <div style={{flex:1}} />
         {isAdmin && (
-          <button onClick={() => generateMonthPDF(dp.year, dp.month0)} style={S.btn}>🖨 Print month</button>
+          <button onClick={() => generateMonthPDF(dp.year, dp.month0)} disabled={pdfBusy} style={S.btn}>
+            {pdfBusy ? 'Building PDF…' : '⬇ Download month PDF'}
+          </button>
         )}
       </div>
 
@@ -2378,22 +2420,11 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             Week of {fmtDateShort(shownDays[0])} – {fmtDateShort(shownDays[shownDays.length-1])}
           </div>
           <button onClick={() => shiftDay(7)} style={S.btn}>Next week →</button>
-          {isAdmin && !satHasWork && (
-            satOpen
-              ? <button onClick={() => setSatOpenFor(null)}
-                  style={Object.assign({}, S.btn, {padding:'5px 10px',fontSize:12,color:'var(--text-muted)'})}>
-                  Hide Saturday
-                </button>
-              : <button onClick={() => setSatOpenFor(weekDays[0])}
-                  title="Most weeks have no Saturday clinic — this adds it just for this week"
-                  style={{background:'transparent',border:'1px dashed var(--border-default)',borderRadius:8,
-                          padding:'5px 10px',fontSize:12,color:'var(--text-dim)',cursor:'pointer',
-                          fontFamily:'inherit'}}>
-                  + Saturday
-                </button>
-          )}
         </div>
-        <div style={{display:'grid',gridTemplateColumns:`repeat(${shownDays.length},1fr)`,gap:6}} className="mob-scroll">
+        <div className="mob-scroll"
+             style={{display:'grid',
+                     gridTemplateColumns:`repeat(${shownDays.length},1fr)` + ((isAdmin && !satHasWork) ? ' 34px' : ''),
+                     gap:6}}>
           {shownDays.map(dk => {
             const sel = dk === day;
             const h = holidayFor(dk);
@@ -2412,6 +2443,20 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
               </div>
             );
           })}
+          {isAdmin && !satHasWork && (
+            <button onClick={() => setSatOpenFor(satOpen ? null : weekDays[0])}
+              title={satOpen ? 'Hide Saturday for this week' : 'Add a Saturday clinic to this week'}
+              style={{background: satOpen ? 'var(--bg-active)' : 'transparent',
+                      border:'1px dashed ' + (satOpen ? 'var(--border-interactive)' : 'var(--border-default)'),
+                      borderRadius:8, cursor:'pointer', fontFamily:'inherit',
+                      color: satOpen ? 'var(--text-secondary)' : 'var(--text-dim)',
+                      fontSize:11, fontWeight:700, lineHeight:1.15, padding:'6px 2px',
+                      display:'flex', flexDirection:'column', alignItems:'center',
+                      justifyContent:'center', gap:3}}>
+              <span style={{fontSize:15}}>{satOpen ? '×' : '+'}</span>
+              <span style={{writingMode:'vertical-rl', transform:'rotate(180deg)', letterSpacing:0.5}}>SAT</span>
+            </button>
+          )}
         </div>
       </div>
 
