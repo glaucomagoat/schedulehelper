@@ -1,6 +1,9 @@
 node_modules/
 .netlify/
 .env
+# Any .env variant (.env.local, .env.bak.*, …) — only the template is tracked.
+.env.*
+!.env.example
 *.log
 .DS_Store
 # Staff rosters and contact lists — personal data, never belongs in git history.
