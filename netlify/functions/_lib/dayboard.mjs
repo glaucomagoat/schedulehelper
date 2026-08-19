@@ -236,37 +236,61 @@ export function renderDayPage(ctx, dk, techId, techName, opts) {
     + '</div></div></body></html>';
 }
 
-// Full standalone page listing every day this month the technician has something
-// scheduled — the "whole month" view linked from the day page.
+// Full standalone page listing every day this month that has ANY scheduled
+// activity — the whole practice's finalized schedule, not just the viewer's own
+// days. Each day collapses behind a native <details> so the page stays usable on
+// a phone with no JS allowed at all (the page is served under a CSP that forbids
+// scripts entirely). The viewer's own line still leads each day's summary so they
+// can find themselves without expanding anything.
 export function renderMonthPage(ctx, ym, techId, techName, opts) {
   const o = opts || {};
   const label = monthLabel(ym);
   const p = parseYm(ym);
   const total = daysInMonth(ym);
+  const techs = activeTechs(ctx);
 
-  const rows = [];
+  const days = [];
   for (let day = 1; day <= total; day++) {
     const dk = p.year + "-" + String(p.month0 + 1).padStart(2, "0") + "-" + String(day).padStart(2, "0");
-    const line = summaryLine(ctx, dk, techId);
-    if (line === "OFF" || line === "No assignment") continue;
-    rows.push({ dk, line });
+    const dayAssignments = assignmentsFor(ctx, dk);
+    const hasTechActivity = techs.some(t => {
+      const a = dayAssignments[t.id];
+      return a && ((a.am && a.am !== "OFF") || (a.pm && a.pm !== "OFF"));
+    });
+    const hasDoctorActivity = Object.keys(doctorCoverage(ctx, dk)).length > 0;
+    if (!hasTechActivity && !hasDoctorActivity) continue;
+    days.push(dk);
   }
 
   let listHtml;
-  if (!rows.length) {
+  if (!days.length) {
     listHtml = '<div style="padding:20px;text-align:center;color:#6b7280;font-size:14px;">Nothing scheduled for '
       + escapeHtml(label) + ' yet.</div>';
   } else {
-    listHtml = rows.map(r => {
-      const isToday = r.dk === o.todayDk;
-      const detail = personalInlineDetail(ctx, r.dk, techId); // already escaped
-      return '<a href="' + escapeHtml(o.linkBase + "&d=" + r.dk) + '" style="display:block;text-decoration:none;border-radius:10px;'
-        + 'padding:10px 12px;margin-bottom:8px;'
-        + (isToday ? 'background:#4f46e5;color:#fff;' : 'background:#ffffff;border:1px solid #e3e6ef;color:#1a1a2e;') + '">'
-        + '<div style="font-size:13px;font-weight:700;">' + escapeHtml(fmtShort(r.dk)) + (isToday ? ' &middot; today' : '') + '</div>'
-        + '<div style="font-size:14px;font-weight:800;margin-top:2px;">' + escapeHtml(r.line) + '</div>'
-        + (detail ? '<div style="font-size:12px;margin-top:2px;' + (isToday ? 'opacity:0.85;' : 'color:#6b7280;') + '">' + detail + '</div>' : '')
-        + '</a>';
+    listHtml = days.map(dk => {
+      const isToday = dk === o.todayDk;
+      // On a page showing EVERYONE, "No assignment" in the collapsed row reads as
+      // "nothing is scheduled today" when in fact the whole practice is working. Say
+      // it from the viewer's point of view instead, and mark it as quiet text.
+      const rawMine = summaryLine(ctx, dk, techId); // plain text — must be escaped
+      const viewerOff = rawMine === "OFF" || rawMine === "No assignment";
+      const mine = viewerOff ? "You're off" : rawMine;
+      const board = renderBoardHtml(ctx, dk, techId); // already-built/escaped HTML
+      return '<details' + (isToday ? ' open' : '') + ' style="margin-bottom:10px;border-radius:10px;'
+        + 'overflow:hidden;' + (isToday ? 'border:2px solid #4f46e5;' : 'border:1px solid #e3e6ef;') + 'background:#ffffff;">'
+        + '<summary style="cursor:pointer;padding:10px 12px;'
+        + (isToday ? 'background:#4f46e5;color:#fff;' : 'background:#f7f8fc;color:#1a1a2e;') + '">'
+        + '<span style="font-size:13px;font-weight:800;">' + escapeHtml(fmtShort(dk)) + (isToday ? ' &middot; today' : '') + '</span>'
+        + '<span style="font-size:13px;margin-left:8px;'
+        + (isToday ? 'opacity:0.9;font-weight:600;'
+                   : (viewerOff ? 'color:#9ca3af;font-weight:500;font-style:italic;' : 'color:#4b5563;font-weight:600;'))
+        + '">' + escapeHtml(mine) + '</span>'
+        + '</summary>'
+        + '<div style="padding:12px;background:#f0f0f8;">'
+        + board
+        + '<a href="' + escapeHtml(o.linkBase + "&d=" + dk) + '" style="display:inline-block;margin-top:2px;font-size:12px;font-weight:700;color:#4f46e5;text-decoration:none;">View full day &rarr;</a>'
+        + '</div>'
+        + '</details>';
     }).join("");
   }
 
@@ -282,7 +306,7 @@ export function renderMonthPage(ctx, ym, techId, techName, opts) {
     + '<body style="margin:0;background:#f0f0f8;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e;">'
     + '<div style="max-width:560px;margin:0 auto;padding:18px 14px 40px;">'
     + '<a href="' + escapeHtml(backHref) + '" style="display:inline-block;font-size:12px;font-weight:700;color:#4f46e5;text-decoration:none;margin-bottom:10px;">&larr; Back to today</a>'
-    + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">' + escapeHtml(String(techName || "")) + ' &middot; Full month</div>'
+    + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">' + escapeHtml(String(techName || "")) + ' &middot; Everyone &middot; all sites</div>'
     + '<h1 style="font-size:20px;margin:0 0 14px;font-weight:800;">' + escapeHtml(label) + '</h1>'
     + listHtml
     + '<div style="margin-top:16px;">'
