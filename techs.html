@@ -884,6 +884,56 @@ function App() {
     showToast('Plan ' + plan + ' published to technicians', 'success');
   }
 
+  // Copy one day's technician assignments onto other days.
+  //
+  // Writes the stored assignment verbatim, duty tag included: this is duplicating a
+  // whole day's arrangement, not moving someone between sites, so the reason the drag
+  // handler clears duty does not apply here.
+  //
+  // Each target resolves its own schedule key, because a week can straddle two months
+  // (Aug 31 - Sep 4) and those live under different keys.
+  function copyTechDay(srcDk, targetDks, overwrite) {
+    const srcKey = techScheduleKeyFor(srcDk, activeTechPlan);
+    const srcDay = (techSchedules[srcKey] || {})[srcDk] || {};
+    const worked = a => !!(a && ((a.am && a.am !== 'OFF') || (a.pm && a.pm !== 'OFF')));
+    if (!Object.keys(srcDay).some(id => worked(srcDay[id]))) {
+      showToast('Nothing to copy — ' + fmtDateShort(srcDk) + ' has no assignments', 'info');
+      return;
+    }
+    const dayHasWork = dk => {
+      const d = (techSchedules[techScheduleKeyFor(dk, activeTechPlan)] || {})[dk] || {};
+      return activeTechs.some(t => worked(d[t.id]));
+    };
+    const candidates = targetDks.filter(dk => dk !== srcDk);
+    const targets = overwrite ? candidates : candidates.filter(dk => !dayHasWork(dk));
+    const skipped = candidates.length - targets.length;
+    if (!targets.length) {
+      showToast('Nothing copied — every other day already has assignments', 'info');
+      return;
+    }
+    setTechSchedules(prev => {
+      const next = Object.assign({}, prev);
+      targets.forEach(dk => {
+        const key = techScheduleKeyFor(dk, activeTechPlan);
+        const month = Object.assign({}, next[key] || {});
+        const day = {};
+        Object.keys(srcDay).forEach(techId => {
+          // Approved leave beats a copied assignment — never schedule someone onto a
+          // day they are already off.
+          if (isTechOff(techId, dk)) return;
+          if (!worked(srcDay[techId])) return;
+          day[techId] = Object.assign({}, srcDay[techId]);
+        });
+        month[dk] = day;
+        next[key] = month;
+      });
+      return next;
+    });
+    showToast('Copied ' + fmtDateShort(srcDk) + ' to ' + targets.length + ' day'
+      + (targets.length === 1 ? '' : 's')
+      + (skipped ? ' — skipped ' + skipped + ' that already had assignments' : ''), 'success');
+  }
+
   function publishTechChanges() {
     publishTechPlan(activeTechPlan);
     showToast('Changes published — technicians see them now', 'success');
@@ -2106,7 +2156,7 @@ function App() {
                          activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
                          setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
                          refreshTechData,refreshing,quadSiteIds,
-                         techPlanDirty,publishTechChanges,publishedForMonth,fmtPublishedAt}} />
+                         techPlanDirty,publishTechChanges,publishedForMonth,fmtPublishedAt,copyTechDay}} />
         )}
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
@@ -2131,8 +2181,10 @@ function App() {
       {toast && (
         <div style={{position:'fixed',bottom:20,left:'50%',transform:'translateX(-50%)',zIndex:999,
                      background:toast.kind==='error'?'#7f1d1d':toast.kind==='success'?'#14532d':'var(--bg-elevated)',
-                     border:'1px solid var(--border-default)',borderRadius:10,padding:'10px 18px',fontSize:14,
-                     color:'var(--text-primary)',boxShadow:'0 8px 24px rgba(0,0,0,0.3)',maxWidth:'90vw'}}>
+                     border:'1px solid '+(toast.kind==='error'||toast.kind==='success'?'#f8fafc':'var(--border-default)'),
+                     borderRadius:10,padding:'10px 18px',fontSize:14,
+                     color:toast.kind==='error'||toast.kind==='success'?'#f8fafc':'var(--text-primary)',
+                     boxShadow:'0 8px 24px rgba(0,0,0,0.3)',maxWidth:'90vw'}}>
           {toast.msg}
         </div>
       )}
@@ -2153,7 +2205,7 @@ function DayBoard(p) {
           activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
           setTechFinalPlan, clearTechFinalPlan, copyTechPlanTo, clearTechPlan,
           refreshTechData, refreshing, quadSiteIds,
-          techPlanDirty, publishTechChanges, publishedForMonth, fmtPublishedAt } = p;
+          techPlanDirty, publishTechChanges, publishedForMonth, fmtPublishedAt, copyTechDay } = p;
 
   const dp = parseDateKey(selectedDate);
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
@@ -2304,7 +2356,7 @@ function DayBoard(p) {
                           staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
                           techDayNotes,setTechDayNotes,shiftDay,locations,holidays,
-                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty}} />}
+                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty,copyTechDay}} />}
 
       {pdfGate && (
         <div onClick={() => setPdfGate(null)}
@@ -2424,7 +2476,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                     staffedSites, activeTechs, getAssignment, setAssignment, locName, holidayFor,
                     isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
                     techDayNotes, setTechDayNotes, shiftDay, locations, holidays,
-                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty }) {
+                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty, copyTechDay }) {
 
   // Monday-first working week; Saturday appears only when something is scheduled.
   const weekDays = useMemo(() => {
@@ -2441,6 +2493,8 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
   // Saturday shows automatically once it has any assignment. Until then it is behind
   // a small opener, reset per week so it never lingers on weeks that do not need it.
   const [satOpenFor, setSatOpenFor] = useState(null);
+  const [copyMenu, setCopyMenu] = useState(null);   // { dk, x, y } — right-clicked day
+  const [copyAllFor, setCopyAllFor] = useState(null); // source day for the whole-week prompt
   const satOpen = satHasWork || satOpenFor === weekDays[0];
   const shownDays = satOpen ? weekDays : weekDays.slice(0,5);
 
@@ -2523,6 +2577,23 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
   const offToday   = activeTechs.filter(t => isTechOff(t.id, day));
   const markedOff  = activeTechs.filter(t => !isTechOff(t.id, day) && siteOf(t.id) === 'OFF');
 
+  // Group the "Available" pool: scribes first, then one section per preferred
+  // location (alphabetical by location name), then anyone left over. Sorted
+  // within each section by the first name shown on the chip.
+  const isScribe = t => (Array.isArray(t.pinnedDoctorIds) && t.pinnedDoctorIds.length > 0)
+    || (Array.isArray(t.backupForDoctorIds) && t.backupForDoctorIds.length > 0)
+    || !!t.pinnedDoctorId;
+  const byChipName = (a, b) => a.name.split(' ')[0].localeCompare(b.name.split(' ')[0]);
+  const availScribes = unassigned.filter(isScribe).sort(byChipName);
+  const availByLoc = {};
+  unassigned.filter(t => !isScribe(t) && t.homeLocationId).forEach(t => {
+    (availByLoc[t.homeLocationId] = availByLoc[t.homeLocationId] || []).push(t);
+  });
+  const availLocGroups = Object.keys(availByLoc)
+    .map(id => ({ id, name: locName(id), techs: availByLoc[id].sort(byChipName) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const availUncategorized = unassigned.filter(t => !isScribe(t) && !t.homeLocationId).sort(byChipName);
+
   function TechChip({ t, dim, placed }) {
     const isDragging = draggingId === t.id;
     const duty = placed ? dutyOf(day, t.id) : '';
@@ -2568,6 +2639,11 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             const n = activeTechs.filter(t => { const a = getAssignment(dk,t.id); const s = a.am||a.pm; return s && s !== 'OFF'; }).length;
             return (
               <div key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
+                onContextMenu={isAdmin ? (e => {
+                  e.preventDefault();
+                  setCopyMenu({ dk, x: e.clientX, y: e.clientY });
+                }) : undefined}
+                title={isAdmin ? 'Right-click to copy this day to other days' : undefined}
                 style={{background: sel ? 'rgba(79,70,229,0.10)' : 'var(--bg-elevated)',
                         border:'2px solid ' + (sel ? '#4f46e5' : 'var(--border-subtle)'),
                         borderRadius:8,padding:6,cursor:'pointer',textAlign:'left'}}>
@@ -2576,7 +2652,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>{n}</span>
                 </div>
                 <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
-                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf}} />
+                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,nameSize:12}} />
               </div>
             );
           })}
@@ -2671,7 +2747,26 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           </div>
           {unassigned.length === 0
             ? <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>everyone is placed</span>
-            : unassigned.map(t => <TechChip key={t.id} t={t} />)}
+            : <React.Fragment>
+                {availScribes.length > 0 && (
+                  <div style={{marginBottom:6}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>SCRIBES</div>
+                    {availScribes.map(t => <TechChip key={t.id} t={t} />)}
+                  </div>
+                )}
+                {availLocGroups.map(g => (
+                  <div key={g.id} style={{marginBottom:6}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>{g.name.toUpperCase()}</div>
+                    {g.techs.map(t => <TechChip key={t.id} t={t} />)}
+                  </div>
+                ))}
+                {availUncategorized.length > 0 && (
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>UNCATEGORIZED</div>
+                    {availUncategorized.map(t => <TechChip key={t.id} t={t} />)}
+                  </div>
+                )}
+              </React.Fragment>}
           {markedOff.length > 0 && (
             <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border-subtle)'}}>
               <div style={{fontSize:10,fontWeight:700,color:'var(--text-dim)',marginBottom:4}}>MARKED OFF</div>
@@ -2751,6 +2846,71 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           </span>}
         </div>
       </div>
+
+      {copyMenu && (
+        <React.Fragment>
+          <div onClick={() => setCopyMenu(null)} onContextMenu={e => { e.preventDefault(); setCopyMenu(null); }}
+               style={{position:'fixed',inset:0,zIndex:9998}} />
+          <div style={{position:'fixed', left:Math.min(copyMenu.x, window.innerWidth - 230),
+                       top:Math.min(copyMenu.y, window.innerHeight - 60 - shownDays.length * 34),
+                       zIndex:9999, background:'var(--bg-surface)',
+                       border:'1px solid var(--border-default)', borderRadius:10,
+                       boxShadow:'0 10px 28px rgba(0,0,0,0.30)', padding:6, minWidth:214}}>
+            <div style={{fontSize:11,fontWeight:800,letterSpacing:0.5,color:'var(--text-muted)',
+                         padding:'4px 8px 6px'}}>
+              COPY {fmtDateShort(copyMenu.dk).toUpperCase()} TO…
+            </div>
+            {shownDays.filter(d => d !== copyMenu.dk).map(d => (
+              <button key={d} data-hoverable="1"
+                onClick={() => { copyTechDay(copyMenu.dk, [d], true); setCopyMenu(null); }}
+                style={{display:'block',width:'100%',textAlign:'left',background:'transparent',
+                        border:'none',borderRadius:6,padding:'7px 8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>
+                {fmtDateShort(d)}
+              </button>
+            ))}
+            <button data-hoverable="1"
+              onClick={() => { setCopyAllFor(copyMenu.dk); setCopyMenu(null); }}
+              style={{display:'block',width:'100%',textAlign:'left',background:'transparent',
+                      border:'none',borderTop:'1px solid var(--border-subtle)',marginTop:4,
+                      padding:'7px 8px',cursor:'pointer',fontFamily:'inherit',fontSize:13,
+                      fontWeight:700,color:'#818cf8'}}>
+              Copy to all days this week…
+            </button>
+          </div>
+        </React.Fragment>
+      )}
+
+      {copyAllFor && (
+        <div onClick={() => setCopyAllFor(null)}
+             style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                     display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+               style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                       borderRadius:14,padding:'20px 22px',maxWidth:440,width:'100%',
+                       boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+              Copy {fmtDateShort(copyAllFor)} to the whole week
+            </div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:18}}>
+              Some days this week already have assignments. Choose whether to leave those
+              alone or replace them.
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={() => setCopyAllFor(null)} style={S.btn}>Cancel</button>
+              <button onClick={() => { copyTechDay(copyAllFor, shownDays, false); setCopyAllFor(null); }}
+                      style={S.btn}>
+                Only empty days
+              </button>
+              <button onClick={() => { copyTechDay(copyAllFor, shownDays, true); setCopyAllFor(null); }}
+                      style={Object.assign({}, S.btn, {background:'#b45309',borderColor:'#b45309',
+                                                       color:'#fff',fontWeight:700})}>
+                Overwrite every day
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {dutyMenu && (
         <React.Fragment>
@@ -2932,7 +3092,7 @@ function DoctorDayCell({ dk, doctors, locations, docSchedules, finalPlans, docDa
 // the week strip so the screen and the printout agree.
 
 function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSites, locColor,
-                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf }) {
+                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf, nameSize }) {
   const p = parseDateKey(dk);
   const bySite = {};
   activeTechs.forEach(t => {
@@ -2951,6 +3111,15 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
     return t.name.split(' ')[0] + (d ? dutySuffix(d) : '');
   };
   const fz = compact ? 9 : 10;
+  // `nameSize` lets one call site (the week strip) render bigger technician names
+  // without touching the month grid, which is tuned to fit a one-page PDF.
+  // Badge size and cell padding/min-height scale proportionally with it.
+  const nfz = nameSize || fz;
+  const scale = nfz / fz;
+  const badgeFz = (fz - 2.5) * scale;
+  const padV = Math.round(2 * scale * 10) / 10;
+  const padH = Math.round(3 * scale * 10) / 10;
+  const minH = Math.round(14 * scale);
 
   if (hol && hol.halfDay === 'closed') {
     return (
@@ -2965,17 +3134,17 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
     const has = !!bySite[sid];
     const c = locColor(sid);
     return (
-      <div key={sid} style={{padding:'2px 3px',minHeight:14,
+      <div key={sid} style={{padding:padV+'px '+padH+'px',minHeight:minH,
               borderRight: (i % 2 === 0) ? '1px solid var(--border-subtle)' : 'none',
               borderBottom: (i < 2) ? '1px solid var(--border-subtle)' : 'none'}}>
-        <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,letterSpacing:0.2,
+        <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,letterSpacing:0.2,
                       color:'#fff',background: has ? c.border : 'var(--border-default)',
                       borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
           {siteAbbr(sid)}
         </span>
         {has
-          ? <span style={{fontSize:fz,fontWeight:600}}>{bySite[sid].map(fname).join(' · ')}</span>
-          : <span style={{fontSize:fz,color:'var(--text-dim)'}}>—</span>}
+          ? <span style={{fontSize:nfz,fontWeight:600}}>{bySite[sid].map(fname).join(' · ')}</span>
+          : <span style={{fontSize:nfz,color:'var(--text-dim)'}}>—</span>}
       </div>
     );
   }
@@ -2989,20 +3158,20 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
         <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-deep)'}}>
           {overflow.map(l => (
             <span key={l.id} style={{marginRight:7}}>
-              <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,color:'#fff',
+              <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,color:'#fff',
                             background:locColor(l.id).border,borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
                 {siteAbbr(l.id)}
               </span>
-              <span style={{fontSize:fz,fontWeight:600}}>{bySite[l.id].map(fname).join(' · ')}</span>
+              <span style={{fontSize:nfz,fontWeight:600}}>{bySite[l.id].map(fname).join(' · ')}</span>
             </span>
           ))}
         </div>
       )}
       {off.length > 0 && (
         <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-elevated)'}}>
-          <span style={{display:'inline-block',fontSize:fz-2.5,fontWeight:800,color:'#fff',
+          <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,color:'#fff',
                         background:'#6b7280',borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>OFF</span>
-          <span style={{fontSize:fz,fontStyle:'italic',color:'var(--text-muted)'}}>{off.map(fname).join(' · ')}</span>
+          <span style={{fontSize:nfz,fontStyle:'italic',color:'var(--text-muted)'}}>{off.map(fname).join(' · ')}</span>
         </div>
       )}
       {(note || (hol && hol.halfDay === 'am')) && (

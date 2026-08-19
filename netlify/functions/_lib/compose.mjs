@@ -54,7 +54,8 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     + escapeHtml(fmtLong(dk)) + "\n\n"
     + "📍 <b>" + escapeHtml(summary) + "</b>"
     + (detailLines.length ? "\n" + detailLines.join("\n") : "")
-    + (kind === "change" && prevSummary ? "\n<i>was: " + escapeHtml(prevSummary) + "</i>" : "");
+    + (kind === "change" && prevSummary ? "\n<i>was: " + escapeHtml(prevSummary) + "</i>" : "")
+    + "\n\n<i>Commands: /today /tomorrow /thisweek /board</i>";
 
   const changeNote = (kind === "change" && prevSummary)
     ? '<div style="font-size:14px;color:#6b7280;margin:-8px 0 16px;">Previously: <s>'
