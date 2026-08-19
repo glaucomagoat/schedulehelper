@@ -39,6 +39,32 @@ function secretOk(req) {
   return diff === 0;
 }
 
+const SEEN_UPDATES_KEY = ADMIN + ":telegramSeenUpdates";
+const SEEN_TTL_MS = 24 * 60 * 60 * 1000; // comfortably longer than Telegram ever keeps retrying
+const SEEN_MAX = 500;
+
+// Telegram retries a delivery whenever it does not get a fast 200 back — a cold
+// function (e.g. right after a deploy) is exactly the case that trips this. Without
+// claiming the update_id first, every retry re-runs the same command, which is what
+// turned one /today into six replies. Claiming happens before any other work so a
+// fast retry sees it already taken even if the original request is still in flight.
+async function alreadyProcessed(store, updateId) {
+  if (updateId == null) return false;
+  const now = Date.now();
+  const seen = await readJson(store, SEEN_UPDATES_KEY, {});
+  Object.keys(seen).forEach(id => { if (now - seen[id] > SEEN_TTL_MS) delete seen[id]; });
+  if (seen[updateId] != null) return true;
+  seen[updateId] = now;
+  const ids = Object.keys(seen);
+  if (ids.length > SEEN_MAX) {
+    ids.sort((a, b) => seen[a] - seen[b])
+       .slice(0, ids.length - SEEN_MAX)
+       .forEach(id => delete seen[id]);
+  }
+  await writeJson(store, SEEN_UPDATES_KEY, seen);
+  return false;
+}
+
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   if (!secretOk(req)) return new Response("Forbidden", { status: 403 });
@@ -46,13 +72,15 @@ export default async (req) => {
   let update;
   try { update = await req.json(); } catch (e) { return OK; }
 
+  const store = techStore();
+  if (await alreadyProcessed(store, update.update_id)) return OK;
+
   const msg = update.message || update.edited_message;
   if (!msg || !msg.chat) return OK;               // ignore everything that is not a chat message
   const chatId = msg.chat.id;
   const text = String(msg.text || "").trim();
   if (!text) return OK;
 
-  const store = techStore();
   const contactsKey = ADMIN + ":techContacts";
 
   // Always answer 200 to Telegram regardless of what happens below — a non-200 makes
