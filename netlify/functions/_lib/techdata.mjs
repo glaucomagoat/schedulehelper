@@ -217,7 +217,12 @@ export function doctorCoverage(ctx, dk) {
   const out = {};
   Object.keys(day).forEach(staffId => {
     const doc = ctx.doctors.find(x => x.id === staffId);
-    if (!doc || doc.active === false) return;
+    // Deliberately NOT filtered on doc.active. In the doctor scheduler `active` means
+    // "include this doctor when generating future schedules" — not "no longer here".
+    // A doctor who is on the published plan for this day is in the building that day,
+    // and the technicians working alongside them need the name. Filtering on it
+    // silently deleted a real, scheduled doctor from the board.
+    if (!doc) return;
     const per = day[staffId] || {};
     ["am", "pm"].forEach(period => {
       const lid = per[period];
