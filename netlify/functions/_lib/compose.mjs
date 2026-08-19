@@ -6,7 +6,7 @@
 // in full on a lock screen, in a mail-app list row, and on a watch face — no open
 // required. The body then carries what an SMS never could: the entire day's board.
 
-import { summaryLine, renderMineHtml, renderBoardHtml } from "./dayboard.mjs";
+import { summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines } from "./dayboard.mjs";
 import { fmtShort, fmtLong, escapeHtml } from "./techdata.mjs";
 
 function button(url, label) {
@@ -46,10 +46,14 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
 
   // Telegram: short, scannable, with the link as a tappable button rather than a
   // raw URL. HTML parse mode — only <b>/<i>/<a> are used, all values escaped.
+  // Who else is at the site and any duty tag ride along right under the location —
+  // the two things a technician actually needs before walking in.
+  const detailLines = personalTelegramLines(ctx, dk, tech.id);
   const telegramText =
     "<b>" + escapeHtml(heading) + "</b>\n"
     + escapeHtml(fmtLong(dk)) + "\n\n"
     + "📍 <b>" + escapeHtml(summary) + "</b>"
+    + (detailLines.length ? "\n" + detailLines.join("\n") : "")
     + (kind === "change" && prevSummary ? "\n<i>was: " + escapeHtml(prevSummary) + "</i>" : "");
 
   const changeNote = (kind === "change" && prevSummary)

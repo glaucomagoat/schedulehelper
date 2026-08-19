@@ -159,6 +159,22 @@ export function activeTechs(ctx) {
   return ctx.techs.filter(t => t.active !== false);
 }
 
+// Doctors present at a specific site on a specific day, resolving a sub-room's
+// borrowed parent doctors — someone assigned to "Stockton - Suite 2" should see the
+// Stockton doctors, not none. Kept here so every caller (the shared day-board
+// renderer, the Telegram messages) resolves borrowing the same way.
+export function doctorsAt(ctx, dk, lid) {
+  if (!lid || lid === "OFF") return { am: [], pm: [] };
+  const cov = doctorCoverage(ctx, dk);
+  const all = ctx.allSites || ctx.locations || [];
+  const site = all.find(s => s.id === lid);
+  const sourceId = (site && site.parentLocationId) ? site.parentLocationId : lid;
+  return cov[sourceId] || { am: [], pm: [] };
+}
+
+// Mirrors the DUTIES constant in techs.html — keep the two in step.
+export const DUTY_LABELS = { S: "Scribe", T: "Testing", TR: "Training Refraction" };
+
 // Which doctors are at which site on a given day, from the PUBLISHED plan.
 export function doctorCoverage(ctx, dk) {
   const p = parseDateKey(dk);

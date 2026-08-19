@@ -5,7 +5,7 @@
 // a phone on clinic wifi, and email clients strip <style> blocks and external assets.
 
 import {
-  activeTechs, assignmentsFor, doctorCoverage, locationName,
+  activeTechs, assignmentsFor, doctorCoverage, doctorsAt, DUTY_LABELS, locationName,
   fmtLong, fmtShort, escapeHtml, parseDateKey,
 } from "./techdata.mjs";
 
@@ -43,19 +43,53 @@ function groupBySite(ctx, dk) {
   // from the doctor plan too rather than only from tech assignments.
   Object.keys(cov).forEach(lid => { if (!sites[lid]) sites[lid] = { am: [], pm: [] }; });
 
-  // A sub-room borrows its parent's doctors — someone assigned to "Stockton - Suite 2"
-  // should see the Stockton doctors, not "no doctor".
-  const byId = {};
-  (ctx.allSites || ctx.locations || []).forEach(s => { byId[s.id] = s; });
-  const doctorsFor = lid => {
-    const site = byId[lid];
-    const sourceId = (site && site.parentLocationId) ? site.parentLocationId : lid;
-    return cov[sourceId] || { am: [], pm: [] };
-  };
-
   return Object.keys(sites)
     .sort((a, b) => locationName(ctx, a).localeCompare(locationName(ctx, b)))
-    .map(lid => ({ id: lid, name: locationName(ctx, lid), techs: sites[lid], doctors: doctorsFor(lid) }));
+    .map(lid => ({ id: lid, name: locationName(ctx, lid), techs: sites[lid], doctors: doctorsAt(ctx, dk, lid) }));
+}
+
+// Raw per-technician detail for one day — which doctors share each half with them,
+// and any duty tag. Channel-neutral; compose.mjs and the Telegram commands each
+// format this their own way rather than duplicating the lookup.
+export function personalDetail(ctx, dk, techId) {
+  const a = assignmentsFor(ctx, dk)[techId] || {};
+  const am = a.am || "OFF", pm = a.pm || "OFF";
+  return {
+    am, pm,
+    amDoctors: am !== "OFF" ? (doctorsAt(ctx, dk, am).am || []) : [],
+    pmDoctors: pm !== "OFF" ? (doctorsAt(ctx, dk, pm).pm || []) : [],
+    duty: a.duty || null,
+    dutyLabel: a.duty ? (DUTY_LABELS[a.duty] || a.duty) : null,
+  };
+}
+
+// Multi-line block for a single day — who else is at the site, and any duty tag.
+// Used by the push notifications and by /today and /tomorrow. Empty array when
+// there is nothing to add (OFF, or a period with no doctor on the published plan).
+export function personalTelegramLines(ctx, dk, techId) {
+  const d = personalDetail(ctx, dk, techId);
+  const lines = [];
+  if (d.am === d.pm) {
+    if (d.amDoctors.length) lines.push("👥 With: " + escapeHtml(d.amDoctors.join(", ")));
+  } else {
+    const parts = [];
+    if (d.amDoctors.length) parts.push("AM: " + escapeHtml(d.amDoctors.join(", ")));
+    if (d.pmDoctors.length) parts.push("PM: " + escapeHtml(d.pmDoctors.join(", ")));
+    if (parts.length) lines.push("👥 " + parts.join(" · "));
+  }
+  if (d.dutyLabel) lines.push("🎫 " + escapeHtml(d.dutyLabel));
+  return lines;
+}
+
+// One compact, escaped fragment for a dense week-view line — no emoji, no line
+// breaks. "" when there is nothing to add.
+export function personalInlineDetail(ctx, dk, techId) {
+  const d = personalDetail(ctx, dk, techId);
+  const docs = d.am === d.pm ? d.amDoctors : Array.from(new Set(d.amDoctors.concat(d.pmDoctors)));
+  const bits = [];
+  if (docs.length) bits.push(docs.join(", "));
+  if (d.dutyLabel) bits.push(d.dutyLabel);
+  return bits.length ? escapeHtml(bits.join(" · ")) : "";
 }
 
 function chip(text, highlight) {

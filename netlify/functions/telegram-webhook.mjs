@@ -1,4 +1,5 @@
-// Telegram inbound webhook: binds technicians to the bot, and handles /stop and /today.
+// Telegram inbound webhook: binds technicians to the bot, and handles /today,
+// /tomorrow, /thisweek, /board, and /stop.
 //
 // This is the ONLY way a chat_id can ever be learned — Telegram bots cannot message
 // someone who has not started the conversation. That constraint is the whole reason
@@ -7,24 +8,36 @@
 
 import {
   techStore, loadContext, readJson, writeJson, ADMIN, todayIn,
+  addDays, dayOfWeek, fmtShort, escapeHtml,
 } from "./_lib/techdata.mjs";
-import { verifyInviteToken } from "./_lib/links.mjs";
-import { summaryLine } from "./_lib/dayboard.mjs";
+import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
+import { summaryLine, personalTelegramLines, personalInlineDetail } from "./_lib/dayboard.mjs";
 
 const OK = new Response("ok", { status: 200 });
 
-async function reply(chatId, text) {
+async function reply(chatId, text, replyMarkup) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
+  const payload = { chat_id: String(chatId), text, parse_mode: "HTML", disable_web_page_preview: true };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
   try {
     await fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: "HTML", disable_web_page_preview: true }),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     console.error("telegram-webhook: reply failed", e.message);
   }
+}
+
+// Same PUBLIC_BASE_URL-first, request-origin-fallback rule tech-notify.mjs uses for
+// every other link it builds — kept in step so a link minted from a chat command
+// never points somewhere different than one that rode along with a push.
+function baseUrlFor(req) {
+  const configured = process.env.PUBLIC_BASE_URL;
+  if (configured) return configured.replace(/\/+$/, "");
+  try { return new URL(req.url).origin; } catch (e) { return ""; }
 }
 
 function secretOk(req) {
@@ -120,7 +133,7 @@ export default async (req) => {
       await reply(chatId,
         "✅ Linked, " + tech.name.split(" ")[0] + ".\n\n"
         + "You'll get your site assignment here the night before and again in the morning, "
-        + "plus an alert if anything changes.\n\nSend /today any time to see today's assignment.");
+        + "plus an alert if anything changes.\n\nSend /today for your assignment, /thisweek for the full week, or /board to see everyone's.");
       return OK;
     }
 
@@ -142,14 +155,68 @@ export default async (req) => {
       if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
       const tech = ctx.techs.find(t => t.id === techId);
       const today = todayIn(ctx.settings.timezone);
-      const dk = text.startsWith("/tomorrow")
+      const isTomorrow = text.startsWith("/tomorrow");
+      const dk = isTomorrow
         ? new Date(Date.parse(today + "T00:00:00Z") + 86400000).toISOString().slice(0, 10)
         : today;
-      await reply(chatId, "<b>" + (text.startsWith("/tomorrow") ? "Tomorrow" : "Today") + "</b>\n📍 " + summaryLine(ctx, dk, tech.id));
+      const summary = summaryLine(ctx, dk, tech.id);
+      const detailLines = personalTelegramLines(ctx, dk, tech.id);
+      await reply(chatId, "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n📍 " + escapeHtml(summary)
+        + (detailLines.length ? "\n" + detailLines.join("\n") : ""));
       return OK;
     }
 
-    await reply(chatId, "Commands: /today, /tomorrow, /stop");
+    if (text.startsWith("/thisweek")) {
+      const ctx = await loadContext(store);
+      const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
+      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
+
+      const today = todayIn(ctx.settings.timezone);
+      // Monday-first, matching the week the scheduler itself works in. Saturday is
+      // included only when this technician actually has something on it — most
+      // weeks don't run a Saturday clinic, and a bare "OFF" line adds nothing.
+      const monday = addDays(today, dayOfWeek(today) === 0 ? -6 : 1 - dayOfWeek(today));
+      const days = [0, 1, 2, 3, 4, 5].map(i => addDays(monday, i));
+      const rows = days
+        .map((dk, i) => ({ dk, i, line: summaryLine(ctx, dk, techId), detail: personalInlineDetail(ctx, dk, techId) }))
+        .filter(d => d.i < 5 || (d.line !== "OFF" && d.line !== "No assignment"));
+
+      // A full multi-line block per day (as /today gets) would run to 15+ lines for
+      // a six-day week — the doctors and duty tag ride inline instead, already
+      // escaped by personalInlineDetail.
+      const body = rows.map(d => {
+        const label = escapeHtml(fmtShort(d.dk));
+        const line = escapeHtml(d.line) + (d.detail ? " · " + d.detail : "");
+        return d.dk === today ? "<b>" + label + " — " + line + "</b> ◂ today" : label + " — " + line;
+      }).join("\n");
+
+      await reply(chatId, "<b>This week</b>\n" + body);
+      return OK;
+    }
+
+    if (text.startsWith("/board")) {
+      const contacts = await readJson(store, contactsKey, {});
+      const techId = Object.keys(contacts).find(id => String(contacts[id].telegramChatId) === String(chatId));
+      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
+
+      const LINK_SECRET = process.env.LINK_SECRET;
+      if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return OK; }
+
+      // A tech who was bound before ever receiving an invite-links refresh could in
+      // principle lack a linkNonce — mint one on the spot rather than dead-ending.
+      if (!contacts[techId].linkNonce) {
+        contacts[techId].linkNonce = newNonce();
+        await writeJson(store, contactsKey, contacts);
+      }
+      const token = await makeTechToken(techId, contacts[techId].linkNonce, LINK_SECRET);
+      const url = dayLinkFor(baseUrlFor(req), token);
+
+      await reply(chatId, "📋 Today's board — everyone, every site.",
+        { inline_keyboard: [[{ text: "View full board", url }]] });
+      return OK;
+    }
+
+    await reply(chatId, "Commands: /today, /tomorrow, /thisweek, /board, /stop");
   } catch (e) {
     console.error("telegram-webhook error:", e);
   }
