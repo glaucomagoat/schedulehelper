@@ -553,6 +553,9 @@ function App() {
   // parentLocationId instead of having its own.
   const [techSites, setTechSites]         = useState([]);
   const [techFinalPlans, setTechFinalPlans] = useState({});  // { "2026-7": "A" }
+  // What technicians actually see. Editing a finalised month changes this only
+  // when Publish Changes is pressed: { "2026-7": { plan, publishedAt, days } }
+  const [techPublished, setTechPublished] = useState({});
   const [activeTechPlan, setActiveTechPlan] = useState('A'); // which plan is being edited
   const [notifySettings, setNotifySettings] = useState(DEFAULT_NOTIFY_SETTINGS);
   const [notifyLog, setNotifyLog]         = useState({});
@@ -627,6 +630,7 @@ function App() {
   useEffect(() => { if (user) saveData('techTimeOff', techTimeOff); }, [techTimeOff]);
   useEffect(() => { if (user) saveData('techSites', techSites); }, [techSites]);
   useEffect(() => { if (user) saveData('techFinalPlans', techFinalPlans); }, [techFinalPlans]);
+  useEffect(() => { if (user) saveData('techPublished', techPublished); }, [techPublished]);
   useEffect(() => { if (user) saveData('techNotifySettings', notifySettings); }, [notifySettings]);
   useEffect(() => { if (user) saveData('techDayNotes', techDayNotes); }, [techDayNotes]);
 
@@ -668,11 +672,11 @@ function App() {
       catch(e) { return null; }
     };
     const [
-      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp,
+      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub,
       st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
       d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
-      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'),
+      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'), d('techPublished'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
@@ -681,6 +685,7 @@ function App() {
     if (tr)  setTechRules(tr);
     if (ts)  setTechStaffing(ts);
     if (tfp) setTechFinalPlans(tfp);
+    if (tpub) setTechPublished(tpub);
     if (tsch) {
       // One-time migration: keys written before plans existed (tech-YYYY-M) become
       // plan A. Done in memory and saved back, so it only ever happens once.
@@ -828,19 +833,83 @@ function App() {
   // ── Plans ──────────────────────────────────────────────────────────────────
   // Same model as the doctor scheduler: three drafts per month, one optionally marked
   // FINAL. Everything technicians actually see — day links, Telegram messages — reads
-  // the FINAL plan only, so a half-finished draft can never reach anyone.
+  // the PUBLISHED snapshot of the FINAL plan, so neither a half-finished draft nor a
+  // half-finished edit to a live month can reach anyone.
   const techMonthKey = techMonthKeyFor(selectedDate);
   const finalTechPlanForMonth = techFinalPlans[techMonthKey] || null;
+  const publishedForMonth = techPublished[techMonthKey] || null;
 
   function techPlanHasData(plan) {
     const k = techScheduleKeyFor(selectedDate, plan);
     return !!(techSchedules[k] && Object.keys(techSchedules[k]).length > 0);
   }
+  // The month's assignments for a given plan, as stored.
+  function techPlanDays(plan) {
+    const [y, m0] = techMonthKey.split('-').map(Number);
+    return techSchedules['tech-' + y + '-' + m0 + '-' + plan] || {};
+  }
+
+  // Order-independent comparison. Plain JSON.stringify would report a difference
+  // whenever key insertion order changed — dragging a chip away and back rewrites
+  // the day object and would otherwise look like an edit forever.
+  function canonicalDays(days) {
+    const out = {};
+    Object.keys(days || {}).sort().forEach(dk => {
+      const day = days[dk] || {};
+      const inner = {};
+      Object.keys(day).sort().forEach(techId => {
+        const a = day[techId] || {};
+        // Only the fields technicians are actually told about.
+        if (a.am || a.pm || a.duty) inner[techId] = { am: a.am || '', pm: a.pm || '', duty: a.duty || '' };
+      });
+      if (Object.keys(inner).length) out[dk] = inner;
+    });
+    return JSON.stringify(out);
+  }
+
+  // Copy the live plan into the published snapshot — this is the only thing that
+  // changes what technicians see.
+  function publishTechPlan(plan) {
+    const days = JSON.parse(JSON.stringify(techPlanDays(plan)));
+    setTechPublished(prev => Object.assign({}, prev, {
+      [techMonthKey]: { plan, publishedAt: Date.now(), days }
+    }));
+  }
+
+  // Setting a plan final publishes it at the same moment: there is no useful state
+  // where a month is "final but never published".
   function setTechFinalPlan(plan) {
     setTechFinalPlans(prev => Object.assign({}, prev, { [techMonthKey]: plan }));
+    publishTechPlan(plan);
+    showToast('Plan ' + plan + ' published to technicians', 'success');
   }
+
+  function publishTechChanges() {
+    publishTechPlan(activeTechPlan);
+    showToast('Changes published — technicians see them now', 'success');
+  }
+
+  // Does the live final plan differ from what was last published? A month finalised
+  // before publishing existed has no snapshot; the server still serves its live plan
+  // in that case, so there is nothing pending and this stays false.
+  const techPlanDirty = useMemo(() => {
+    if (!finalTechPlanForMonth) return false;
+    if (!publishedForMonth || !publishedForMonth.days) return false;
+    if (publishedForMonth.plan && publishedForMonth.plan !== finalTechPlanForMonth) return true;
+    return canonicalDays(techPlanDays(finalTechPlanForMonth)) !== canonicalDays(publishedForMonth.days);
+  }, [finalTechPlanForMonth, publishedForMonth, techSchedules, techMonthKey]);
+
+  function fmtPublishedAt(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate() + ', ' + d.getFullYear() + ' at ' + time;
+  }
+  // Withdrawing the month drops the published snapshot too, so nothing is left
+  // being served to technicians for a month that is no longer final.
   function clearTechFinalPlan() {
     setTechFinalPlans(prev => { const n = Object.assign({}, prev); delete n[techMonthKey]; return n; });
+    setTechPublished(prev => { const n = Object.assign({}, prev); delete n[techMonthKey]; return n; });
   }
   function copyTechPlanTo(fromPlan, toPlan) {
     const fromKey = techScheduleKeyFor(selectedDate, fromPlan);
@@ -2036,7 +2105,8 @@ function App() {
                          docDayNotes,docSchedules,theme,siteAbbr,dutyOf,setDuty,
                          activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
                          setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
-                         refreshTechData,refreshing,quadSiteIds}} />
+                         refreshTechData,refreshing,quadSiteIds,
+                         techPlanDirty,publishTechChanges,publishedForMonth,fmtPublishedAt}} />
         )}
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
@@ -2082,10 +2152,26 @@ function DayBoard(p) {
           docDayNotes, docSchedules, theme, siteAbbr, dutyOf, setDuty,
           activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
           setTechFinalPlan, clearTechFinalPlan, copyTechPlanTo, clearTechPlan,
-          refreshTechData, refreshing, quadSiteIds } = p;
+          refreshTechData, refreshing, quadSiteIds,
+          techPlanDirty, publishTechChanges, publishedForMonth, fmtPublishedAt } = p;
 
   const dp = parseDateKey(selectedDate);
   const published = !!finalPlans[`${dp.year}-${dp.month0}`];
+
+  // The printed sheet goes on a clinic wall, so it must never disagree with the
+  // phones. Downloading is therefore gated on the month being published: a draft or
+  // an unpublished edit would put a different Tuesday on paper than in Telegram.
+  const [pdfGate, setPdfGate] = useState(null);   // 'nofinal' | 'unpublished' | null
+  function tryDownloadMonthPDF() {
+    if (!finalTechPlanForMonth) { setPdfGate('nofinal'); return; }
+    if (techPlanDirty)          { setPdfGate('unpublished'); return; }
+    generateMonthPDF(dp.year, dp.month0);
+  }
+  function publishThenDownload() {
+    publishTechChanges();
+    setPdfGate(null);
+    generateMonthPDF(dp.year, dp.month0);
+  }
 
   // Sites technicians actually staff. Everything else is doctor-only and never a
   // drop target — dragging someone to a surgery centre would be a silent error.
@@ -2109,7 +2195,7 @@ function DayBoard(p) {
         </div>
         <div style={{flex:1}} />
         {isAdmin && (
-          <button onClick={() => generateMonthPDF(dp.year, dp.month0)} disabled={pdfBusy} style={S.btn}>
+          <button onClick={tryDownloadMonthPDF} disabled={pdfBusy} style={S.btn}>
             {pdfBusy ? 'Building PDF…' : '⬇ Download month PDF'}
           </button>
         )}
@@ -2140,7 +2226,16 @@ function DayBoard(p) {
           })}
 
           {finalTechPlanForMonth === activeTechPlan
-            ? <button onClick={clearTechFinalPlan} style={Object.assign({}, S.btn, {borderColor:'#b45309',color:'#f59e0b'})}>↩ Unset Final</button>
+            ? <React.Fragment>
+                {techPlanDirty && (
+                  <button onClick={publishTechChanges}
+                    title="Send these edits live to technicians"
+                    style={Object.assign({}, S.btn, {background:'#4f46e5',borderColor:'#4f46e5',color:'#fff',fontWeight:700})}>
+                    ⬆ Publish Changes
+                  </button>
+                )}
+                <button onClick={clearTechFinalPlan} style={Object.assign({}, S.btn, {borderColor:'#b45309',color:'#f59e0b'})}>↩ Unset Final</button>
+              </React.Fragment>
             : <button onClick={() => setTechFinalPlan(activeTechPlan)} disabled={!techPlanHasData(activeTechPlan)}
                 title={techPlanHasData(activeTechPlan) ? 'Publish this plan to technicians' : 'Plan is empty'}
                 style={Object.assign({}, S.btn, {borderColor:'#10b981',color:'#10b981',
@@ -2160,9 +2255,21 @@ function DayBoard(p) {
 
           <div style={{flex:1}} />
           {finalTechPlanForMonth
-            ? <span style={{fontSize:12,color:'#10b981',fontWeight:600}}>
-                Plan {finalTechPlanForMonth} is live for {MONTHS[dp.month0]}
-              </span>
+            ? <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1,lineHeight:1.4}}>
+                <span style={{fontSize:12,color: techPlanDirty ? '#f59e0b' : '#10b981',fontWeight:600}}>
+                  Plan {finalTechPlanForMonth} is live for {MONTHS[dp.month0]}
+                </span>
+                {publishedForMonth && publishedForMonth.publishedAt && (
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>
+                    Published {fmtPublishedAt(publishedForMonth.publishedAt)}
+                  </span>
+                )}
+                {techPlanDirty && (
+                  <span style={{fontSize:11,color:'#f59e0b',fontWeight:700}}>
+                    ⚠ Unpublished changes — technicians still see the published version
+                  </span>
+                )}
+              </div>
             : <span style={{fontSize:12,color:'#f59e0b',fontWeight:600}}>
                 ⚠ No final plan for {MONTHS[dp.month0]} — technicians see nothing
               </span>}
@@ -2198,6 +2305,36 @@ function DayBoard(p) {
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
                           techDayNotes,setTechDayNotes,shiftDay,locations,holidays,
                           docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty}} />}
+
+      {pdfGate && (
+        <div onClick={() => setPdfGate(null)}
+             style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                     display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+               style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                       borderRadius:14,padding:'20px 22px',maxWidth:440,width:'100%',
+                       boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+              {pdfGate === 'nofinal' ? 'Set a final plan first' : 'Publish your changes first'}
+            </div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:18}}>
+              {pdfGate === 'nofinal'
+                ? 'No plan is final for ' + MONTHS[dp.month0] + ', so technicians are not seeing a schedule at all. Mark a plan final before printing, or the sheet on the wall will not match anyone\u2019s phone.'
+                : 'This month has edits that have not been published. Technicians still see the previously published version, so downloading now would put a different schedule on paper than the one on their phones.'}
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={() => setPdfGate(null)} style={S.btn}>Cancel</button>
+              {pdfGate === 'unpublished' && (
+                <button onClick={publishThenDownload}
+                        style={Object.assign({}, S.btn, {background:'#4f46e5',borderColor:'#4f46e5',
+                                                         color:'#fff',fontWeight:700})}>
+                  ⬆ Publish and download
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

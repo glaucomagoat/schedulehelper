@@ -55,7 +55,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       readJson(store, ns + "techContacts", {}),
@@ -70,10 +70,11 @@ export async function loadContext(store) {
       readJson(store, ns + "techTimeOff", []),
       readJson(store, ns + "techSites", []),
       readJson(store, ns + "techFinalPlans", {}),
+      readJson(store, ns + "techPublished", {}),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
-    finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans,
+    finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans, techPublished,
     // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
     // Doctors only ever appear at real locations, which is why the two differ.
     allSites: (locations || []).concat(techSites || []),
@@ -134,14 +135,45 @@ export function techScheduleKeyFor(dk, ctx) {
   return "tech-" + p.year + "-" + p.month0 + "-" + plan;
 }
 
+export function monthKeyFor(dk) {
+  const p = parseDateKey(dk);
+  return p.year + "-" + p.month0;
+}
+
 // ── Domain lookups ───────────────────────────────────────────────────────────
 
-export function assignmentsFor(ctx, dk) {
+// What technicians actually see is the PUBLISHED snapshot, not the live plan. Editing
+// a finalised month therefore changes nothing for anyone until the coordinator presses
+// Publish Changes — which is the whole point: a half-finished reshuffle at 4pm must not
+// reach phones one assignment at a time.
+//
+// Legacy fallback: months finalised before publishing existed have no snapshot. Those
+// fall through to reading the live final plan, exactly as before, so nobody goes dark
+// in the window between this deploying and the first publish. The fallback stops
+// applying for a month as soon as it has been published once.
+export function publishedDayFor(ctx, dk) {
+  const ym = monthKeyFor(dk);
+  const finalPlan = (ctx.techFinalPlans || {})[ym] || null;
+  // Unsetting Final still blacks the month out, snapshot or not — the snapshot is
+  // what technicians see, never a reason for them to keep seeing a withdrawn month.
+  if (!finalPlan) return {};
+
+  const pub = (ctx.techPublished || {})[ym];
+  // Only serve a snapshot that belongs to the plan currently marked Final. A snapshot
+  // left over from a different letter is stale by definition.
+  if (pub && pub.days && (!pub.plan || pub.plan === finalPlan)) {
+    return Object.assign({}, pub.days[dk] || {});
+  }
   const key = techScheduleKeyFor(dk, ctx);
-  const day = key ? Object.assign({}, (ctx.techSchedules[key] || {})[dk] || {}) : {};
+  return key ? Object.assign({}, (ctx.techSchedules[key] || {})[dk] || {}) : {};
+}
+
+export function assignmentsFor(ctx, dk) {
+  const day = publishedDayFor(ctx, dk);
   // Approved time off overrides the stored assignment, so a technician on holiday is
   // told OFF rather than "No assignment", and the weekend/holiday send-suppression
-  // check does not count them as working.
+  // check does not count them as working. This sits outside the publish gate on
+  // purpose — approved leave takes effect immediately, without waiting on a publish.
   (ctx.timeOff || []).forEach(v => {
     if (dk >= v.startDate && dk <= v.endDate) day[v.techId] = { am: "OFF", pm: "OFF" };
   });
