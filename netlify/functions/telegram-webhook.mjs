@@ -13,7 +13,12 @@ import {
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
 import { summaryLine, personalTelegramLines, personalInlineDetail } from "./_lib/dayboard.mjs";
 
-const OK = new Response("ok", { status: 200 });
+// A Response body can be read only once, so this MUST build a new object per
+// return. Netlify reuses the module across invocations in a warm container, so a
+// single shared instance works for the first request and then throws
+// "Response body object should not be disturbed or locked" on every one after —
+// surfacing to Telegram as a 502 and an endlessly retried update.
+const ok = () => new Response("ok", { status: 200 });
 
 async function reply(chatId, text, replyMarkup) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -61,63 +66,73 @@ const SEEN_MAX = 500;
 // claiming the update_id first, every retry re-runs the same command, which is what
 // turned one /today into six replies. Claiming happens before any other work so a
 // fast retry sees it already taken even if the original request is still in flight.
+// Fails OPEN: if the store is unreachable this returns false and the command runs
+// anyway. The worst case is a repeated reply; throwing here would take the whole bot
+// down, which is far worse and is exactly what a 502 in this function looks like.
 async function alreadyProcessed(store, updateId) {
   if (updateId == null) return false;
-  const now = Date.now();
-  const seen = await readJson(store, SEEN_UPDATES_KEY, {});
-  Object.keys(seen).forEach(id => { if (now - seen[id] > SEEN_TTL_MS) delete seen[id]; });
-  if (seen[updateId] != null) return true;
-  seen[updateId] = now;
-  const ids = Object.keys(seen);
-  if (ids.length > SEEN_MAX) {
-    ids.sort((a, b) => seen[a] - seen[b])
-       .slice(0, ids.length - SEEN_MAX)
-       .forEach(id => delete seen[id]);
+  try {
+    const now = Date.now();
+    const seen = await readJson(store, SEEN_UPDATES_KEY, {});
+    Object.keys(seen).forEach(id => { if (now - seen[id] > SEEN_TTL_MS) delete seen[id]; });
+    if (seen[updateId] != null) return true;
+    seen[updateId] = now;
+    const ids = Object.keys(seen);
+    if (ids.length > SEEN_MAX) {
+      ids.sort((a, b) => seen[a] - seen[b])
+         .slice(0, ids.length - SEEN_MAX)
+         .forEach(id => delete seen[id]);
+    }
+    await writeJson(store, SEEN_UPDATES_KEY, seen);
+    return false;
+  } catch (e) {
+    console.error("telegram-webhook: dedup store unavailable, processing anyway:", e.message);
+    return false;
   }
-  await writeJson(store, SEEN_UPDATES_KEY, seen);
-  return false;
 }
 
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   if (!secretOk(req)) return new Response("Forbidden", { status: 403 });
 
-  let update;
-  try { update = await req.json(); } catch (e) { return OK; }
-
-  const store = techStore();
-  if (await alreadyProcessed(store, update.update_id)) return OK;
-
-  const msg = update.message || update.edited_message;
-  if (!msg || !msg.chat) return OK;               // ignore everything that is not a chat message
-  const chatId = msg.chat.id;
-  const text = String(msg.text || "").trim();
-  if (!text) return OK;
-
-  const contactsKey = ADMIN + ":techContacts";
-
-  // Always answer 200 to Telegram regardless of what happens below — a non-200 makes
-  // Telegram retry the same update indefinitely.
+  // Everything below is inside one try. A webhook must answer 200 even when it fails
+  // internally: any other status makes Telegram retry the same update on a timer, and
+  // a persistent error becomes a retry storm that looks, from the outside, like the
+  // bot has simply stopped responding.
   try {
+    let update;
+    try { update = await req.json(); } catch (e) { return ok(); }
+
+    const store = techStore();
+    if (await alreadyProcessed(store, update.update_id)) return ok();
+
+    const msg = update.message || update.edited_message;
+    if (!msg || !msg.chat) return ok();             // ignore everything that is not a chat message
+    const chatId = msg.chat.id;
+    const text = String(msg.text || "").trim();
+    if (!text) return ok();
+
+    const contactsKey = ADMIN + ":techContacts";
+
     if (text.startsWith("/start")) {
       const payload = text.slice("/start".length).trim();
       if (!payload) {
         await reply(chatId, "Hi! Please use the personal invite link the scheduling coordinator sent you — it links this chat to your name.");
-        return OK;
+        return ok();
       }
       const LINK_SECRET = process.env.LINK_SECRET;
-      if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return OK; }
+      if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return ok(); }
 
       const contacts = await readJson(store, contactsKey, {});
       const techId = await verifyInviteToken(payload, LINK_SECRET, id => (contacts[id] || {}).linkNonce);
       if (!techId) {
         await reply(chatId, "That invite link is not valid any more. Please ask the scheduling coordinator for a new one.");
-        return OK;
+        return ok();
       }
 
       const ctx = await loadContext(store);
       const tech = ctx.techs.find(t => t.id === techId);
-      if (!tech) { await reply(chatId, "That technician is no longer on the schedule."); return OK; }
+      if (!tech) { await reply(chatId, "That technician is no longer on the schedule."); return ok(); }
 
       contacts[techId] = Object.assign({}, contacts[techId] || {}, {
         telegramChatId: String(chatId),
@@ -134,7 +149,7 @@ export default async (req) => {
         "✅ Linked, " + tech.name.split(" ")[0] + ".\n\n"
         + "You'll get your site assignment here the night before and again in the morning, "
         + "plus an alert if anything changes.\n\nSend /today for your assignment, /thisweek for the full week, or /board to see everyone's.");
-      return OK;
+      return ok();
     }
 
     if (text.startsWith("/stop")) {
@@ -146,13 +161,13 @@ export default async (req) => {
         await writeJson(store, contactsKey, contacts);
       }
       await reply(chatId, "Stopped. You will not get schedule messages on Telegram any more. Email still works if it is on file — contact the scheduling coordinator to change that.");
-      return OK;
+      return ok();
     }
 
     if (text.startsWith("/today") || text.startsWith("/tomorrow")) {
       const ctx = await loadContext(store);
       const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
+      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
       const tech = ctx.techs.find(t => t.id === techId);
       const today = todayIn(ctx.settings.timezone);
       const isTomorrow = text.startsWith("/tomorrow");
@@ -163,13 +178,13 @@ export default async (req) => {
       const detailLines = personalTelegramLines(ctx, dk, tech.id);
       await reply(chatId, "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n📍 " + escapeHtml(summary)
         + (detailLines.length ? "\n" + detailLines.join("\n") : ""));
-      return OK;
+      return ok();
     }
 
     if (text.startsWith("/thisweek")) {
       const ctx = await loadContext(store);
       const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
+      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
 
       const today = todayIn(ctx.settings.timezone);
       // Monday-first, matching the week the scheduler itself works in. Saturday is
@@ -191,16 +206,16 @@ export default async (req) => {
       }).join("\n");
 
       await reply(chatId, "<b>This week</b>\n" + body);
-      return OK;
+      return ok();
     }
 
     if (text.startsWith("/board")) {
       const contacts = await readJson(store, contactsKey, {});
       const techId = Object.keys(contacts).find(id => String(contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return OK; }
+      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
 
       const LINK_SECRET = process.env.LINK_SECRET;
-      if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return OK; }
+      if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return ok(); }
 
       // A tech who was bound before ever receiving an invite-links refresh could in
       // principle lack a linkNonce — mint one on the spot rather than dead-ending.
@@ -213,12 +228,12 @@ export default async (req) => {
 
       await reply(chatId, "📋 Today's board — everyone, every site.",
         { inline_keyboard: [[{ text: "View full board", url }]] });
-      return OK;
+      return ok();
     }
 
     await reply(chatId, "Commands: /today, /tomorrow, /thisweek, /board, /stop");
   } catch (e) {
     console.error("telegram-webhook error:", e);
   }
-  return OK;
+  return ok();
 };

@@ -10,7 +10,12 @@
 import { techStore, readJson, writeJson, ADMIN } from "./_lib/techdata.mjs";
 import { updateDeliveryStatus } from "./_lib/sendlog.mjs";
 
-const OK = new Response("ok", { status: 200 });
+// A Response body can be read only once, so this MUST build a new object per
+// return. Netlify reuses the module across invocations in a warm container, so a
+// single shared instance works for the first request and then throws
+// "Response body object should not be disturbed or locked" on every one after —
+// surfacing to Telegram as a 502 and an endlessly retried update.
+const ok = () => new Response("ok", { status: 200 });
 
 function secretOk(req) {
   const expected = process.env.EMAIL_WEBHOOK_SECRET || "";
@@ -43,7 +48,7 @@ export default async (req) => {
   if (!secretOk(req)) return new Response("Forbidden", { status: 403 });
 
   let evt;
-  try { evt = await req.json(); } catch (e) { return OK; }
+  try { evt = await req.json(); } catch (e) { return ok(); }
 
   const events = Array.isArray(evt) ? evt : [evt];
   const store = techStore();
@@ -79,5 +84,5 @@ export default async (req) => {
     }
   }
 
-  return OK;
+  return ok();
 };
