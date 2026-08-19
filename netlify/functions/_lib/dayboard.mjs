@@ -6,7 +6,7 @@
 
 import {
   activeTechs, assignmentsFor, doctorCoverage, doctorsAt, DUTY_LABELS, locationName,
-  fmtLong, fmtShort, escapeHtml, parseDateKey,
+  fmtLong, fmtShort, escapeHtml, parseDateKey, dayOfWeek, addDays,
 } from "./techdata.mjs";
 
 // The one-line version of a person's day. Used for the email SUBJECT and the
@@ -138,13 +138,84 @@ export function renderMineHtml(ctx, dk, techId, techName) {
     + '</div>';
 }
 
+// ── Week / month link helpers (Monday-first, to match the rest of the app) ──
+
+// The Monday that starts the week containing dk.
+function mondayOf(dk) {
+  const offset = (dayOfWeek(dk) + 6) % 7; // Mon=0 ... Sun=6
+  return addDays(dk, -offset);
+}
+
+// Monday-Friday always, Saturday only if someone actually works it.
+function weekDayKeys(ctx, dk) {
+  const monday = mondayOf(dk);
+  const days = [0, 1, 2, 3, 4].map(i => addDays(monday, i));
+  const saturday = addDays(monday, 5);
+  const satAssignments = assignmentsFor(ctx, saturday);
+  const satWorked = activeTechs(ctx).some(t => {
+    const a = satAssignments[t.id];
+    return a && ((a.am && a.am !== "OFF") || (a.pm && a.pm !== "OFF"));
+  });
+  if (satWorked) days.push(saturday);
+  return days;
+}
+
+// "YYYY-MM" (1-indexed, zero-padded) for a given day — the format the ?m= link
+// param uses. Deliberately separate from monthKeyFor, whose "year-month0" shape
+// is an internal plan-lookup key, not a URL-safe month string.
+function ymOf(dk) {
+  const p = parseDateKey(dk);
+  return p.year + "-" + String(p.month0 + 1).padStart(2, "0");
+}
+
+function parseYm(ym) {
+  const [y, m] = String(ym).split("-").map(Number);
+  return { year: y, month0: m - 1 };
+}
+
+function addMonthsYm(ym, n) {
+  const p = parseYm(ym);
+  const total = p.year * 12 + p.month0 + n;
+  const ny = Math.floor(total / 12);
+  const nm = ((total % 12) + 12) % 12;
+  return ny + "-" + String(nm + 1).padStart(2, "0");
+}
+
+function monthLabel(ym) {
+  const p = parseYm(ym);
+  const dt = new Date(Date.UTC(p.year, p.month0, 1));
+  return new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(dt) + " " + p.year;
+}
+
+function daysInMonth(ym) {
+  const p = parseYm(ym);
+  return new Date(Date.UTC(p.year, p.month0 + 1, 0)).getUTCDate();
+}
+
 // Full standalone page for the signed link.
 export function renderDayPage(ctx, dk, techId, techName, opts) {
   const o = opts || {};
-  const navLink = (targetDk, label, active) =>
-    '<a href="' + escapeHtml(o.linkBase + "&d=" + targetDk) + '" style="display:inline-block;padding:7px 14px;border-radius:8px;'
-    + 'text-decoration:none;font-size:13px;font-weight:700;margin-right:6px;'
-    + (active ? 'background:#4f46e5;color:#fff;' : 'background:#eef0f7;color:#4b5563;') + '">' + escapeHtml(label) + '</a>';
+
+  const weekDays = weekDayKeys(ctx, dk);
+  const weekRow = weekDays.map(wdk => {
+    const active = wdk === dk;
+    const isToday = wdk === o.todayDk;
+    return '<a href="' + escapeHtml(o.linkBase + "&d=" + wdk) + '" style="display:inline-block;text-align:center;padding:7px 10px;border-radius:8px;'
+      + 'text-decoration:none;font-size:13px;font-weight:700;margin:0 6px 6px 0;'
+      + (active ? 'background:#4f46e5;color:#fff;' : 'background:#eef0f7;color:#4b5563;') + '">'
+      + escapeHtml(fmtShort(wdk))
+      + (isToday ? '<div style="font-size:9px;font-weight:800;letter-spacing:0.5px;margin-top:1px;opacity:' + (active ? '0.85' : '0.65') + ';">TODAY</div>' : '')
+      + '</a>';
+  }).join("");
+
+  const curYm = ymOf(dk);
+  const nextYm = addMonthsYm(curYm, 1);
+  const monthRow = '<div style="margin-bottom:16px;">'
+    + '<a href="' + escapeHtml(o.linkBase + "&m=" + curYm) + '" style="display:inline-block;font-size:12px;font-weight:600;color:#6b7280;text-decoration:underline;margin-right:14px;">'
+    + escapeHtml(monthLabel(curYm)) + '</a>'
+    + '<a href="' + escapeHtml(o.linkBase + "&m=" + nextYm) + '" style="display:inline-block;font-size:12px;font-weight:600;color:#6b7280;text-decoration:underline;">'
+    + escapeHtml(monthLabel(nextYm)) + '</a>'
+    + '</div>';
 
   return '<!DOCTYPE html><html lang="en"><head>'
     + '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -155,14 +226,72 @@ export function renderDayPage(ctx, dk, techId, techName, opts) {
     + '<div style="max-width:560px;margin:0 auto;padding:18px 14px 40px;">'
     + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">Technician schedule</div>'
     + '<h1 style="font-size:20px;margin:0 0 14px;font-weight:800;">' + escapeHtml(fmtLong(dk)) + '</h1>'
-    + '<div style="margin-bottom:16px;">'
-    + navLink(o.todayDk, "Today", dk === o.todayDk)
-    + navLink(o.tomorrowDk, "Tomorrow", dk === o.tomorrowDk)
-    + '</div>'
+    + '<div style="margin-bottom:8px;">' + weekRow + '</div>'
+    + monthRow
     + renderMineHtml(ctx, dk, techId, techName)
     + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin-bottom:8px;">EVERYONE TODAY</div>'
     + renderBoardHtml(ctx, dk, techId)
     + '<div style="margin-top:20px;font-size:12px;color:#9ca3af;line-height:1.6;">'
     + 'This schedule can change. Check back the morning of, or watch for a change alert.'
+    + '</div></div></body></html>';
+}
+
+// Full standalone page listing every day this month the technician has something
+// scheduled — the "whole month" view linked from the day page.
+export function renderMonthPage(ctx, ym, techId, techName, opts) {
+  const o = opts || {};
+  const label = monthLabel(ym);
+  const p = parseYm(ym);
+  const total = daysInMonth(ym);
+
+  const rows = [];
+  for (let day = 1; day <= total; day++) {
+    const dk = p.year + "-" + String(p.month0 + 1).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+    const line = summaryLine(ctx, dk, techId);
+    if (line === "OFF" || line === "No assignment") continue;
+    rows.push({ dk, line });
+  }
+
+  let listHtml;
+  if (!rows.length) {
+    listHtml = '<div style="padding:20px;text-align:center;color:#6b7280;font-size:14px;">Nothing scheduled for '
+      + escapeHtml(label) + ' yet.</div>';
+  } else {
+    listHtml = rows.map(r => {
+      const isToday = r.dk === o.todayDk;
+      const detail = personalInlineDetail(ctx, r.dk, techId); // already escaped
+      return '<a href="' + escapeHtml(o.linkBase + "&d=" + r.dk) + '" style="display:block;text-decoration:none;border-radius:10px;'
+        + 'padding:10px 12px;margin-bottom:8px;'
+        + (isToday ? 'background:#4f46e5;color:#fff;' : 'background:#ffffff;border:1px solid #e3e6ef;color:#1a1a2e;') + '">'
+        + '<div style="font-size:13px;font-weight:700;">' + escapeHtml(fmtShort(r.dk)) + (isToday ? ' &middot; today' : '') + '</div>'
+        + '<div style="font-size:14px;font-weight:800;margin-top:2px;">' + escapeHtml(r.line) + '</div>'
+        + (detail ? '<div style="font-size:12px;margin-top:2px;' + (isToday ? 'opacity:0.85;' : 'color:#6b7280;') + '">' + detail + '</div>' : '')
+        + '</a>';
+    }).join("");
+  }
+
+  const prevYm = addMonthsYm(ym, -1);
+  const nextYm = addMonthsYm(ym, 1);
+  const backHref = o.todayDk ? (o.linkBase + "&d=" + o.todayDk) : o.linkBase;
+
+  return '<!DOCTYPE html><html lang="en"><head>'
+    + '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<meta name="robots" content="noindex,nofollow">'
+    + '<title>' + escapeHtml(label) + ' &middot; Technician Schedule</title>'
+    + '</head>'
+    + '<body style="margin:0;background:#f0f0f8;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e;">'
+    + '<div style="max-width:560px;margin:0 auto;padding:18px 14px 40px;">'
+    + '<a href="' + escapeHtml(backHref) + '" style="display:inline-block;font-size:12px;font-weight:700;color:#4f46e5;text-decoration:none;margin-bottom:10px;">&larr; Back to today</a>'
+    + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">' + escapeHtml(String(techName || "")) + ' &middot; Full month</div>'
+    + '<h1 style="font-size:20px;margin:0 0 14px;font-weight:800;">' + escapeHtml(label) + '</h1>'
+    + listHtml
+    + '<div style="margin-top:16px;">'
+    + '<a href="' + escapeHtml(o.linkBase + "&m=" + prevYm) + '" style="display:inline-block;font-size:12px;font-weight:600;color:#6b7280;text-decoration:underline;margin-right:14px;">'
+    + '&larr; ' + escapeHtml(monthLabel(prevYm)) + '</a>'
+    + '<a href="' + escapeHtml(o.linkBase + "&m=" + nextYm) + '" style="display:inline-block;font-size:12px;font-weight:600;color:#6b7280;text-decoration:underline;">'
+    + escapeHtml(monthLabel(nextYm)) + ' &rarr;</a>'
+    + '</div>'
+    + '<div style="margin-top:20px;font-size:12px;color:#9ca3af;line-height:1.6;">'
+    + 'This schedule can change. Check back closer to the date, or watch for a change alert.'
     + '</div></div></body></html>';
 }

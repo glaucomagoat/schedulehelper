@@ -13,7 +13,7 @@ import { verifyTechToken } from "./_lib/links.mjs";
 import {
   techStore, loadContext, todayIn, addDays, isValidDateKey, escapeHtml,
 } from "./_lib/techdata.mjs";
-import { renderDayPage } from "./_lib/dayboard.mjs";
+import { renderDayPage, renderMonthPage } from "./_lib/dayboard.mjs";
 
 const HTML = {
   "Content-Type": "text/html; charset=utf-8",
@@ -24,6 +24,14 @@ const HTML = {
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
 };
+
+// Same "a mangled link should still show something useful" principle as the `d`
+// param: only a well-formed, real month routes to the month page.
+function isValidYm(s) {
+  if (!/^\d{4}-\d{2}$/.test(String(s || ""))) return false;
+  const m = Number(String(s).slice(5, 7));
+  return m >= 1 && m <= 12;
+}
 
 function errorPage(status, message) {
   return new Response(
@@ -53,6 +61,7 @@ export default async (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get("t") || "";
   const requested = url.searchParams.get("d") || "";
+  const requestedYm = url.searchParams.get("m") || "";
 
   const store = techStore();
   const ctx = await loadContext(store);
@@ -73,7 +82,12 @@ export default async (req) => {
   const dk = isValidDateKey(requested) ? requested : todayDk;
 
   const linkBase = url.pathname + "?t=" + encodeURIComponent(token);
-  const html = renderDayPage(ctx, dk, techId, tech.name, { linkBase, todayDk, tomorrowDk });
+
+  // A well-formed, real `m` wins and renders the month page; anything else (absent,
+  // malformed, out-of-range) falls through to the normal day view rather than erroring.
+  const html = isValidYm(requestedYm)
+    ? renderMonthPage(ctx, requestedYm, techId, tech.name, { linkBase, todayDk })
+    : renderDayPage(ctx, dk, techId, tech.name, { linkBase, todayDk, tomorrowDk });
 
   return new Response(req.method === "HEAD" ? null : html, { status: 200, headers: HTML });
 };
