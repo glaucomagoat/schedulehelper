@@ -1,5 +1,5 @@
 // Telegram inbound webhook: binds technicians to the bot, and handles /today,
-// /tomorrow, /thisweek, /board, and /stop.
+// /tomorrow, /week (alias /thisweek), /board, and /stop.
 //
 // This is the ONLY way a chat_id can ever be learned — Telegram bots cannot message
 // someone who has not started the conversation. That constraint is the whole reason
@@ -11,7 +11,7 @@ import {
   addDays, dayOfWeek, fmtShort, escapeHtml,
 } from "./_lib/techdata.mjs";
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
-import { summaryLine, personalTelegramLines, personalInlineDetail } from "./_lib/dayboard.mjs";
+import { summaryLine, personalTelegramLines } from "./_lib/dayboard.mjs";
 
 // A Response body can be read only once, so this MUST build a new object per
 // return. Netlify reuses the module across invocations in a warm container, so a
@@ -148,7 +148,7 @@ export default async (req) => {
       await reply(chatId,
         "✅ Linked, " + tech.name.split(" ")[0] + ".\n\n"
         + "You'll get your site assignment here the night before and again in the morning, "
-        + "plus an alert if anything changes.\n\nSend /today for your assignment, /thisweek for the full week, or /board to see everyone's.");
+        + "plus an alert if anything changes.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's.");
       return ok();
     }
 
@@ -181,7 +181,7 @@ export default async (req) => {
       return ok();
     }
 
-    if (text.startsWith("/thisweek")) {
+    if (text.startsWith("/thisweek") || text.startsWith("/week")) {
       const ctx = await loadContext(store);
       const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
       if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
@@ -193,19 +193,25 @@ export default async (req) => {
       const monday = addDays(today, dayOfWeek(today) === 0 ? -6 : 1 - dayOfWeek(today));
       const days = [0, 1, 2, 3, 4, 5].map(i => addDays(monday, i));
       const rows = days
-        .map((dk, i) => ({ dk, i, line: summaryLine(ctx, dk, techId), detail: personalInlineDetail(ctx, dk, techId) }))
+        .map((dk, i) => ({ dk, i, line: summaryLine(ctx, dk, techId) }))
         .filter(d => d.i < 5 || (d.line !== "OFF" && d.line !== "No assignment"));
 
-      // A full multi-line block per day (as /today gets) would run to 15+ lines for
-      // a six-day week — the doctors and duty tag ride inline instead, already
-      // escaped by personalInlineDetail.
+      // One small block per day separated by a blank line. Packing each day onto a
+      // single line fits more on screen but wraps into a wall of text on a phone,
+      // which is the opposite of what someone glancing at their week needs.
       const body = rows.map(d => {
-        const label = escapeHtml(fmtShort(d.dk));
-        const line = escapeHtml(d.line) + (d.detail ? " · " + d.detail : "");
-        return d.dk === today ? "<b>" + label + " — " + line + "</b> ◂ today" : label + " — " + line;
-      }).join("\n");
+        const off = d.line === "OFF" || d.line === "No assignment";
+        const head = "<b>" + escapeHtml(fmtShort(d.dk)) + "</b>"
+          + (d.dk === today ? " ◂ today" : "");
+        if (off) return head + "\n<i>Off</i>";
+        return [head, "📍 " + escapeHtml(d.line)]
+          .concat(personalTelegramLines(ctx, d.dk, techId))
+          .join("\n");
+      }).join("\n\n");
 
-      await reply(chatId, "<b>This week</b>\n" + body);
+      const range = escapeHtml(fmtShort(rows.length ? rows[0].dk : days[0])
+        + " – " + fmtShort(rows.length ? rows[rows.length - 1].dk : days[4]));
+      await reply(chatId, "<b>This week</b>\n<i>" + range + "</i>\n\n" + body);
       return ok();
     }
 
@@ -231,7 +237,7 @@ export default async (req) => {
       return ok();
     }
 
-    await reply(chatId, "Commands: /today, /tomorrow, /thisweek, /board, /stop");
+    await reply(chatId, "Commands: /today, /tomorrow, /week, /board, /stop");
   } catch (e) {
     console.error("telegram-webhook error:", e);
   }
