@@ -205,7 +205,7 @@ export function doctorsAt(ctx, dk, lid) {
 }
 
 // Mirrors the DUTIES constant in techs.html — keep the two in step.
-export const DUTY_LABELS = { S: "Scribe", T: "Testing", TR: "Training Refraction" };
+export const DUTY_LABELS = { S: "Scribe", T: "Testing", A: "A scan", TR: "Training Refraction" };
 
 // Which doctors are at which site on a given day, from the PUBLISHED plan.
 export function doctorCoverage(ctx, dk) {

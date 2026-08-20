@@ -191,9 +191,6 @@ const PRESET_HOLIDAYS = [
 ];
 
 const TECH_LEVELS = ['Tech', 'COA', 'COT', 'COMT', 'Scribe', 'Front Desk'];
-// Optional duties, separate from certification level. A COT can also be a scribe;
-// "Scribe" as a level answers a different question than "scribes for Dr. Kim".
-const TECH_ROLES  = ['Scribe', 'Testing Tech', 'Workup', 'Surgical', 'Float'];
 
 // Per-DAY duty, set by right-clicking a placed chip. Distinct from a technician's
 // standing roles: someone can be a scribe by trade but be testing on a given Tuesday,
@@ -201,11 +198,11 @@ const TECH_ROLES  = ['Scribe', 'Testing Tech', 'Workup', 'Surgical', 'Float'];
 const DUTIES = [
   { id:'S',  label:'Scribe' },
   { id:'T',  label:'Testing' },
+  { id:'A',  label:'A scan' },
   { id:'TR', label:'Training Refraction' },
 ];
 function dutyLabel(id) { const d = DUTIES.find(x => x.id === id); return d ? d.label : ''; }
 function dutySuffix(id) { return id ? '(' + id + ')' : ''; }
-const TECH_SKILLS  = ['refraction','workup','VF','OCT','A-scan','photos','scribe','surgical','contact lens'];
 
 const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
 const DEFAULT_NOTIFY_SETTINGS = {
@@ -1867,9 +1864,17 @@ function App() {
           (bySite[siteId] = bySite[siteId] || []).push(tid);
         });
       });
-      const off = (techTimeOff || [])
+      const offSet = {};
+      (techTimeOff || [])
         .filter(o => dk >= o.startDate && dk <= o.endDate)
-        .map(o => o.techId);
+        .forEach(o => { offSet[o.techId] = true; });
+      // Also catch technicians explicitly dropped into the OFF box that day —
+      // not just approved time off — so the printed strip matches the board.
+      Object.keys(day).forEach(tid => {
+        const a = day[tid] || {};
+        if (a.am === 'OFF' && a.pm === 'OFF') offSet[tid] = true;
+      });
+      const off = Object.keys(offSet);
       return { dk, bySite, off };
     }
 
@@ -2330,7 +2335,7 @@ function DayBoard(p) {
 
       {!published && (
         <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'10px 14px',fontSize:13,color:'#f59e0b'}}>
-          ⚠ No doctor plan is published for {MONTHS[dp.month0]} {dp.year}. Staffing targets and the doctor
+          ⚠ No doctor plan is published for {MONTHS[dp.month0]} {dp.year}. The doctor
           reference below can't be computed until one is published in the doctor scheduler.
         </div>
       )}
@@ -2792,8 +2797,6 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           {staffedSites.map(l => {
             const c = locColor(l.id);
             const here = activeTechs.filter(t => siteOf(t.id) === l.id);
-            const need = (targets[l.id] || {}).am || 0;
-            const short = need > 0 && here.length < need;
             return (
               <div key={l.id} data-drop={l.id}
                 style={{border:'2px solid ' + (overZone === l.id ? '#4f46e5' : c.border), borderRadius:10,
@@ -2802,10 +2805,10 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                                   : (drag ? 'rgba(79,70,229,0.03)' : 'var(--bg-surface)')}}>
                 <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6}}>
                   <span style={{fontWeight:800,fontSize:14,color:c.text}}>{l.name}</span>
-                  {need > 0 && (
+                  {here.length > 0 && (
                     <span style={{fontSize:11,fontWeight:800,padding:'1px 7px',borderRadius:99,
-                            background: short ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.13)',
-                            color: short ? '#ef4444' : '#10b981'}}>{here.length}/{need}</span>
+                            background:'var(--bg-elevated)',border:'1px solid var(--border-default)',
+                            color:'var(--text-muted)'}}>{here.length}</span>
                   )}
                 </div>
                 {here.length === 0
@@ -2816,16 +2819,25 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
               </div>
             );
           })}
-          {/* Explicit OFF bucket — different from "not yet assigned" */}
-          <div data-drop="OFF"
-            style={{border:'2px dashed ' + (overZone === 'OFF' ? '#4f46e5' : 'var(--border-default)'),borderRadius:10,
-                    padding:'9px 11px',minHeight:78,transition:'border-color .12s, background .12s',
-                    background: overZone === 'OFF' ? 'rgba(79,70,229,0.10)' : 'var(--bg-deep)'}}>
-            <div style={{fontWeight:800,fontSize:14,color:'var(--text-muted)',marginBottom:6}}>OFF</div>
-            <span style={{fontSize:11,color:'var(--text-dim)',fontStyle:'italic'}}>
-              drop here to mark someone off for the day
-            </span>
-          </div>
+          {/* Explicit OFF bucket — different from "not yet assigned". Covers both
+              technicians dropped here directly and those on approved time off, since
+              getAssignment() returns OFF/OFF for either case. */}
+          {(() => {
+            const offHere = activeTechs.filter(t => siteOf(t.id) === 'OFF');
+            return (
+              <div data-drop="OFF"
+                style={{border:'2px dashed ' + (overZone === 'OFF' ? '#4f46e5' : 'var(--border-default)'),borderRadius:10,
+                        padding:'9px 11px',minHeight:78,transition:'border-color .12s, background .12s',
+                        background: overZone === 'OFF' ? 'rgba(79,70,229,0.10)' : 'var(--bg-deep)'}}>
+                <div style={{fontWeight:800,fontSize:14,color:'var(--text-muted)',marginBottom:6}}>OFF</div>
+                {offHere.length === 0
+                  ? <span style={{fontSize:11,color:'var(--text-dim)',fontStyle:'italic'}}>
+                      drop here to mark someone off for the day
+                    </span>
+                  : offHere.map(t => <TechChip key={t.id} t={t} placed />)}
+              </div>
+            );
+          })()}
         </div>
 
         {staffedSites.length === 0 && (
@@ -3383,11 +3395,6 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
     setTechs(techs.filter(x => x.id !== t.id));
     const c = Object.assign({}, techContacts); delete c[t.id]; setTechContacts(c);
   }
-  function toggleSkill(sk) {
-    const has = (form.skills || []).includes(sk);
-    setForm(Object.assign({}, form, { skills: has ? form.skills.filter(x => x !== sk) : (form.skills||[]).concat([sk]) }));
-  }
-
   // ── Bulk import ────────────────────────────────────────────────────────────
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
@@ -3561,44 +3568,6 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
           </div>
         )}
 
-        <div style={{marginTop:12}}>
-          <label style={S.label}>Notes (shown to the generator)</label>
-          <input value={form.notes || ''} onChange={e => setForm(Object.assign({}, form, {notes:e.target.value}))}
-                 placeholder="e.g. occasionally covers LASIK" style={Object.assign({}, S.input, {width:'100%'})} />
-        </div>
-        <div style={{marginTop:12}}>
-          <label style={S.label}>Roles</label>
-          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-            {TECH_ROLES.map(rl => {
-              const on = (form.roles||[]).includes(rl);
-              return (
-                <button key={rl}
-                  onClick={() => setForm(Object.assign({}, form, {
-                    roles: on ? (form.roles||[]).filter(x => x !== rl) : (form.roles||[]).concat([rl])
-                  }))}
-                  style={{fontSize:12,fontWeight:600,padding:'5px 11px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
-                          background:on?'rgba(16,185,129,0.16)':'var(--bg-elevated)',
-                          border:'1px solid '+(on?'#10b981':'var(--border-default)'),
-                          color:on?'#10b981':'var(--text-muted)'}}>{rl}</button>
-              );
-            })}
-          </div>
-        </div>
-        <div style={{marginTop:12}}>
-          <label style={S.label}>Skills</label>
-          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-            {TECH_SKILLS.map(sk => {
-              const on = (form.skills||[]).includes(sk);
-              return (
-                <button key={sk} onClick={() => toggleSkill(sk)}
-                  style={{fontSize:12,fontWeight:600,padding:'5px 11px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
-                          background:on?'rgba(79,70,229,0.18)':'var(--bg-elevated)',
-                          border:'1px solid '+(on?'#4f46e5':'var(--border-default)'),
-                          color:on?'#818cf8':'var(--text-muted)'}}>{sk}</button>
-              );
-            })}
-          </div>
-        </div>
         <div style={{display:'flex',gap:8,marginTop:14}}>
           <button onClick={save} style={S.btnP}>{editing ? 'Save changes' : 'Add technician'}</button>
           {editing && <button onClick={() => { setForm(blank); setEditing(false); }} style={S.btn}>Cancel</button>}
@@ -3609,18 +3578,17 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
         <div className="mob-scroll">
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
             <thead><tr>
-              <th style={S.th}>Name</th><th style={S.th}>Level</th><th style={S.th}>Skills</th>
+              <th style={S.th}>Name</th><th style={S.th}>Level</th>
               <th style={S.th}>Contact</th><th style={S.th}>Portal login</th><th style={S.th}>Active</th><th style={S.th}></th>
             </tr></thead>
             <tbody>
-              {techs.length === 0 && <tr><td style={Object.assign({}, S.td,{color:'var(--text-muted)'})} colSpan={7}>No technicians yet.</td></tr>}
+              {techs.length === 0 && <tr><td style={Object.assign({}, S.td,{color:'var(--text-muted)'})} colSpan={6}>No technicians yet.</td></tr>}
               {techs.map(t => {
                 const c = techContacts[t.id] || {};
                 return (
                   <tr key={t.id} style={{opacity: t.active === false ? 0.5 : 1}}>
                     <td style={Object.assign({}, S.td, {fontWeight:600})}>{t.name}</td>
                     <td style={S.td}>{t.level}</td>
-                    <td style={Object.assign({}, S.td, {fontSize:12,color:'var(--text-muted)'})}>{(t.skills||[]).join(', ') || '—'}</td>
                     <td style={Object.assign({}, S.td, {fontSize:12})}>
                       {c.email ? <span title={c.email}>✉️</span> : <span style={{opacity:0.3}}>✉️</span>}{' '}
                       {c.telegramChatId ? <span title="Telegram linked">💬</span> : <span style={{opacity:0.3}}>💬</span>}
@@ -3867,36 +3835,12 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
                 {l.address && <span style={{fontSize:11,color:'var(--text-dim)'}}>{l.address}</span>}
               </div>
               {on && (
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                  <div>
-                    <label style={S.label}>Techs per doctor</label>
-                    <input type="number" min="0" step="0.5" value={cfg.techsPerDoctor}
-                           onChange={e => upd(l.id, 'techsPerDoctor', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
-                  </div>
-                  <div>
-                    <label style={S.label}>Minimum</label>
-                    <input type="number" min="0" value={cfg.minimum}
-                           onChange={e => upd(l.id, 'minimum', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
-                  </div>
-                  <div>
-                    <label style={S.label}>Maximum (0 = none)</label>
-                    <input type="number" min="0" value={cfg.maximum}
-                           onChange={e => upd(l.id, 'maximum', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})} />
-                  </div>
-                  <div>
-                    <label style={S.label}>Short name (printout)</label>
-                    <input value={cfg.abbr || ''} maxLength={4}
-                           onChange={e => upd(l.id, 'abbr', e.target.value.toUpperCase().slice(0,4))}
-                           placeholder={l.name.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,3)}
-                           style={Object.assign({}, S.input, {width:'100%',fontFamily:'"Space Mono",monospace',letterSpacing:1})} />
-                  </div>
-                  <div style={{display:'flex',alignItems:'flex-end',paddingBottom:8}}>
-                    <label style={{display:'flex',alignItems:'center',gap:7,fontSize:12,color:'var(--text-secondary)',cursor:'pointer'}}>
-                      <input type="checkbox" checked={!!cfg.staffWhenNoDoctor}
-                             onChange={e => upd(l.id, 'staffWhenNoDoctor', e.target.checked)} style={{width:15,height:15,cursor:'pointer'}} />
-                      Staff even with no doctor
-                    </label>
-                  </div>
+                <div style={{maxWidth:220}}>
+                  <label style={S.label}>Short name (printout)</label>
+                  <input value={cfg.abbr || ''} maxLength={4}
+                         onChange={e => upd(l.id, 'abbr', e.target.value.toUpperCase().slice(0,4))}
+                         placeholder={l.name.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,3)}
+                         style={Object.assign({}, S.input, {width:'100%',fontFamily:'"Space Mono",monospace',letterSpacing:1})} />
                 </div>
               )}
             </div>
