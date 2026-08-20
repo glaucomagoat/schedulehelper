@@ -7,7 +7,7 @@
 // required. The body then carries what an SMS never could: the entire day's board.
 
 import { summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines } from "./dayboard.mjs";
-import { fmtShort, fmtLong, escapeHtml } from "./techdata.mjs";
+import { fmtShort, fmtLong, escapeHtml, todayIn } from "./techdata.mjs";
 
 function button(url, label) {
   return '<div style="margin:18px 0;"><a href="' + escapeHtml(url) + '" '
@@ -27,20 +27,31 @@ function emailShell(inner, link) {
 
 // `kind`: 'evening' (tomorrow), 'morning' (today), 'change' (an edit after sending),
 // 'test' (a dry run to the admin's own contact details).
+//
+// `prevSummary` is still accepted and still computed by the caller, but is
+// deliberately NOT rendered: a change message names only where to go now. Please do
+// not "restore" it — showing both sites is how someone reads the wrong one.
 export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
   const summary = summaryLine(ctx, dk, tech.id);
   const when = kind === "evening" ? "Tomorrow" : kind === "morning" ? "Today" : "";
   const dayLabel = fmtShort(dk);
 
   // Change messages must explain themselves — a technician who gets a second message
-  // about the same day with no context assumes something is wrong on their end.
-  const CHANGE_EXPLAINER = "This is a last-minute change due to staff changes. "
-    + "Please confirm with your Technician Supervisor if you have questions.";
+  // about the same day with no context assumes something is wrong on their end. The
+  // read-receipt request is deliberate: a reassignment nobody acknowledges is the one
+  // that ends with a room unstaffed.
+  const CHANGE_EXPLAINER = "This is a scheduling change due to last-minute staffing changes. "
+    + "Please send a text to your Technician Supervisor to confirm you've received this notification.";
+
+  // Change messages state the NEW location only. Naming the old one alongside it is
+  // the fastest way to have someone read the wrong half and drive to the wrong site.
+  const isOff = summary === "OFF" || summary === "No assignment";
+  const whenWord = dk === todayIn((ctx.settings || {}).timezone) ? "today" : "on " + dayLabel;
 
   let subject, heading;
   if (kind === "change") {
     subject = "⚠ CHANGE " + dayLabel + " — " + summary;
-    heading = "Your assignment changed";
+    heading = "Schedule change";
   } else if (kind === "test") {
     subject = "[test] " + dayLabel + " — " + summary;
     heading = "Test message";
@@ -54,19 +65,25 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
   // Who else is at the site and any duty tag ride along right under the location —
   // the two things a technician actually needs before walking in.
   const detailLines = personalTelegramLines(ctx, dk, tech.id);
+
+  // A change spells out that the site moved and where to go now; the routine
+  // evening/morning message just states the assignment.
+  const assignmentBlock = kind === "change"
+    ? escapeHtml("Your site assignment " + whenWord + " has been changed.") + "\n"
+        + (isOff
+            ? "<b>" + escapeHtml("You are no longer scheduled " + whenWord + ".") + "</b>"
+            : "<b>New location: " + escapeHtml(summary) + "</b>")
+        + (detailLines.length ? "\n" + detailLines.join("\n") : "")
+    : "📍 <b>" + escapeHtml(summary) + "</b>"
+        + (detailLines.length ? "\n" + detailLines.join("\n") : "");
+
   const telegramText =
     "<b>" + escapeHtml(heading) + "</b>\n"
     + escapeHtml(fmtLong(dk)) + "\n\n"
-    + "📍 <b>" + escapeHtml(summary) + "</b>"
-    + (detailLines.length ? "\n" + detailLines.join("\n") : "")
-    + (kind === "change" && prevSummary ? "\n<i>was: " + escapeHtml(prevSummary) + "</i>" : "")
+    + assignmentBlock
     + (kind === "change" ? "\n\n" + escapeHtml(CHANGE_EXPLAINER) : "")
     + "\n\n<i>Commands: /today /tomorrow /thisweek /board</i>";
 
-  const changeNote = (kind === "change" && prevSummary)
-    ? '<div style="font-size:14px;color:#6b7280;margin:-8px 0 16px;">Previously: <s>'
-        + escapeHtml(prevSummary) + '</s></div>'
-    : "";
 
   const changeExplainerHtml = (kind === "change")
     ? '<div style="font-size:14px;font-weight:700;color:#b91c1c;background:#fef2f2;'
@@ -76,7 +93,6 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
 
   const emailHtml = emailShell(
     renderMineHtml(ctx, dk, tech.id, tech.name)
-    + changeNote
     + changeExplainerHtml
     + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin:0 0 8px;">EVERYONE ON '
     + escapeHtml(dayLabel.toUpperCase()) + '</div>'
@@ -89,7 +105,6 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
   const emailText =
     heading + "\n" + fmtLong(dk) + "\n\n"
     + summary + "\n"
-    + (kind === "change" && prevSummary ? "(was: " + prevSummary + ")\n" : "")
     + (kind === "change" ? "\n" + CHANGE_EXPLAINER + "\n" : "")
     + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
     + "\nThis schedule can change during the day — the link above is always current.";
