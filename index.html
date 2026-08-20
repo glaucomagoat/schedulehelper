@@ -59,6 +59,28 @@ button:not(:disabled):active, a:active, [data-hoverable]:active{transform:transl
 button:disabled{cursor:not-allowed}
 button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
 
+/* Clickable rows (sidebar nav, list rows): they sit on a transparent ground, so a
+   brightness filter has nothing to act on — tint the background instead. */
+.hov-row{transition:box-shadow .12s ease,color .12s ease}
+/* An inset shadow with a huge spread tints the whole row. Using `background` here
+   would be silently defeated: these rows set background inline (active vs
+   transparent), and an inline style always beats an external class rule. */
+.hov-row:hover{box-shadow:inset 0 0 0 999px rgba(129,140,248,0.12)}
+
+/* Clickable tiles (cards, calendar day cells). Deliberately shadow+border only and
+   NO background change, so it composes with drag-over and selected states that set
+   their own background. */
+.hov-tile{transition:box-shadow .12s ease,transform .06s ease}
+/* Ring drawn with box-shadow rather than border-color, for the same reason: most of
+   these tiles set their border inline, so a border-color rule would never apply. */
+.hov-tile:hover{box-shadow:0 0 0 2px rgba(129,140,248,0.55),0 2px 10px rgba(99,102,241,0.20)}
+.hov-tile:active{transform:translateY(1px)}
+
+@media (prefers-reduced-motion: reduce){
+  .hov-row,.hov-tile{transition:none}
+  .hov-tile:active{transform:none}
+}
+
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 @media(max-width:768px){
@@ -542,7 +564,7 @@ function WeekOfMonthPicker({ value, onChange }) {
     <div style={{marginBottom:16}}>
       <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,fontFamily:'"DM Sans",sans-serif',textTransform:'uppercase',letterSpacing:'0.05em'}}>Week of Month</label>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-        <div onClick={toggleAll} role="button" tabIndex={0}
+        <div onClick={toggleAll} role="button" tabIndex={0} className="hov-tile"
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAll(); } }}
           style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
             background:isAll?'#6366f122':'var(--bg-surface)',color:isAll?'#818cf8':'var(--text-muted)',border:`1px solid ${isAll?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
@@ -551,7 +573,7 @@ function WeekOfMonthPicker({ value, onChange }) {
         {weeks.map(w => {
           const active = selected.includes(w);
           return (
-            <div key={w} onClick={() => toggle(w)} role="button" tabIndex={0}
+            <div key={w} onClick={() => toggle(w)} role="button" tabIndex={0} className="hov-tile"
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(w); } }}
               style={{padding:'8px 16px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'"DM Sans",sans-serif',
                 background:active?'#6366f122':'var(--bg-surface)',color:active?'#818cf8':'var(--text-muted)',border:`1px solid ${active?'#6366f1':'var(--border-interactive)'}`,transition:'all 0.15s'}}>
@@ -4097,7 +4119,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                 <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Account Type</label>
                 <div style={{display:'flex',gap:10}}>
                   {[{v:'admin',icon:'🔑',label:'Admin',desc:'Full access — edit schedules, staff & rules'},{v:'staff',icon:'👤',label:'Staff',desc:'View-only — read final schedules'}].map(opt=>(
-                    <div key={opt.v} onClick={()=>setLoginForm(p=>({...p,userType:opt.v}))}
+                    <div key={opt.v} onClick={()=>setLoginForm(p=>({...p,userType:opt.v}))} className="hov-tile"
                       style={{flex:1,padding:'10px 12px',borderRadius:10,cursor:'pointer',border:`2px solid ${loginForm.userType===opt.v?'#6366f1':'var(--border-default)'}`,background:loginForm.userType===opt.v?'#6366f115':'var(--bg-surface)',transition:'all 0.15s'}}>
                       <div style={{fontSize:16,marginBottom:4}}>{opt.icon}</div>
                       <div style={{fontSize:14,fontWeight:700,color:loginForm.userType===opt.v?'#818cf8':'var(--text-primary)'}}>{opt.label}</div>
@@ -4230,7 +4252,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           ].map(tab => {
             const active = activeTab === tab.id;
             return (
-              <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+              <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
                 style={{flex:'1 0 auto',minWidth:56,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,cursor:'pointer',
                   borderTop:`2px solid ${active?'#6366f1':'transparent'}`,
                   background:active?'var(--bg-elevated)':'transparent',
@@ -4261,7 +4283,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {id:'holidays',icon:'🎉',label:`Holidays (${holidays.length})`},
                 ] : []),
               ].map(tab => (
-                <div key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
                   title={tab.label}
                   style={{padding:sidebarCollapsed?'12px 0':'12px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
                     color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',
@@ -4339,7 +4361,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
               {/* Provider Filter — collapsible */}
               <div style={{background:'var(--bg-elevated)',borderRadius:10,border:'1px solid var(--border-subtle)',marginBottom:10,overflow:'hidden'}}>
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:providersCollapsed?'none':'1px solid var(--border-subtle)'}}
+                <div className="hov-row" style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:providersCollapsed?'none':'1px solid var(--border-subtle)'}}
                   onClick={()=>setProvidersCollapsed(p=>!p)}>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
                     <span style={{fontSize:12,color:'var(--text-dim)',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Doctors</span>
@@ -4386,7 +4408,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
               {/* Location Filter — collapsible */}
               <div style={{background:'var(--bg-elevated)',borderRadius:10,border:'1px solid var(--border-subtle)',marginBottom:16,overflow:'hidden'}}>
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:locationsCollapsed?'none':'1px solid var(--border-subtle)'}}
+                <div className="hov-row" style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',cursor:'pointer',borderBottom:locationsCollapsed?'none':'1px solid var(--border-subtle)'}}
                   onClick={()=>setLocationsCollapsed(p=>!p)}>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
                     <span style={{fontSize:12,color:'var(--text-dim)',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em'}}>Locations</span>
@@ -4683,7 +4705,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         const mon = new Date(d1); mon.setDate(d1.getDate() + diff);
                         setCurrentWeekStart(mon);
                       }
-                    }}
+                    }} className="hov-tile"
                       style={{padding:'6px 16px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                         background:calendarView===v?'#6366f1':'transparent',color:calendarView===v?'#fff':'var(--text-muted)',
                         transition:'all 0.15s'}}>{label}</div>
@@ -4699,7 +4721,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const isFinal = finalPlanForMonth === plan;
                   const isActive = activePlan === plan;
                   return (
-                    <div key={plan} onClick={()=>setActivePlan(plan)}
+                    <div key={plan} onClick={()=>setActivePlan(plan)} className="hov-tile"
                       style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700,userSelect:'none',transition:'all 0.15s',
                         background:isActive?(isFinal?(theme==='light'?'#e6fff5':'#065f4622'):(theme==='light'?'#eeeeff':'#6366f122')):'var(--bg-surface)',
                         color:isActive?(isFinal?'#34d399':'#818cf8'):(hasData?'var(--text-secondary)':'var(--text-dim)'),
@@ -4742,11 +4764,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       <span style={{fontSize:12,color:'#fca5a5',fontWeight:600}}>
                         Clear all data from Plan {activePlan} for {MONTHS[currentMonth]} {currentYear}?
                       </span>
-                      <span onClick={clearSchedule}
+                      <span onClick={clearSchedule} className="hov-tile"
                         style={{fontSize:12,fontWeight:700,color:'#ef4444',cursor:'pointer',padding:'2px 10px',borderRadius:6,border:'1px solid #7f1d1d',background:'#3a1010',userSelect:'none'}}>
                         Yes, Clear
                       </span>
-                      <span onClick={()=>setConfirmClearPlan(false)}
+                      <span onClick={()=>setConfirmClearPlan(false)} className="hov-tile"
                         style={{fontSize:12,fontWeight:600,color:'var(--text-muted)',cursor:'pointer',padding:'2px 10px',borderRadius:6,border:'1px solid var(--border-default)',background:'var(--bg-surface)',userSelect:'none'}}>
                         Cancel
                       </span>
@@ -5125,7 +5147,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const sml=medicalLeaves.filter(ml=>ml.staffId===s.id && (ml.startDate||'').startsWith(thisYr));
                   const isExpanded = expandedStaffMember === s.id;
                   return(
-                    <div key={s.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${isStaffActive(s)?s.color:'var(--border-default)'}`,overflow:'hidden',opacity:isStaffActive(s)?1:0.6}}>
+                    <div key={s.id} className="hov-tile" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:14,borderTop:`3px solid ${isStaffActive(s)?s.color:'var(--border-default)'}`,overflow:'hidden',opacity:isStaffActive(s)?1:0.6}}>
                       <div style={{padding:'18px 24px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}
                         onClick={()=>setExpandedStaffMember(isExpanded?null:s.id)}>
                         <div style={{display:'flex',alignItems:'center',gap:16}}>
@@ -5466,7 +5488,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const lc = locColors[l.id] || locColors.OFF;
                   const isExpanded = expandedLocation === l.id;
                   return(
-                    <div key={l.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,borderLeft:`3px solid ${lc.border}`,overflow:'hidden'}}>
+                    <div key={l.id} className="hov-tile" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,borderLeft:`3px solid ${lc.border}`,overflow:'hidden'}}>
                       <div style={{padding:'16px 20px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}
                         onClick={()=>setExpandedLocation(isExpanded?null:l.id)}>
                         <div style={{display:'flex',alignItems:'center',gap:14}}>
@@ -5548,7 +5570,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 <div style={{display:'flex',gap:8,alignItems:'center'}}>
                   <div style={{display:'flex',gap:4,background:'var(--bg-surface)',borderRadius:8,padding:3,border:'1px solid var(--border-default)'}}>
                     {[{v:'newest',l:'Newest'},{v:'default',l:'Default'}].map(opt=>(
-                      <div key={opt.v} onClick={()=>setRulesSort(opt.v)}
+                      <div key={opt.v} onClick={()=>setRulesSort(opt.v)} className="hov-tile"
                         style={{padding:'4px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all 0.15s',
                           background:rulesSort===opt.v?'var(--border-subtle)':'transparent',color:rulesSort===opt.v?'#818cf8':'var(--text-muted)'}}>
                         {opt.l}
@@ -5562,7 +5584,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
               {/* Filter by provider */}
               <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
-                <div onClick={()=>setRulesFilter('all')}
+                <div onClick={()=>setRulesFilter('all')} className="hov-tile"
                   style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:rulesFilter==='all'?'#6366f122':'var(--bg-surface)',color:rulesFilter==='all'?'#818cf8':'var(--text-muted)',border:`1px solid ${rulesFilter==='all'?'#6366f1':'var(--border-default)'}`}}>
                   All ({rules.length})
@@ -5571,7 +5593,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const count=rules.filter(r=>r.staffId===s.id&&r.ruleScope!=='location').length;
                   if(count===0) return null;
                   return(
-                    <div key={s.id} onClick={()=>setRulesFilter(s.id)}
+                    <div key={s.id} onClick={()=>setRulesFilter(s.id)} className="hov-tile"
                       style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
                         background:rulesFilter===s.id?s.color+'22':'var(--bg-surface)',color:rulesFilter===s.id?s.color:'var(--text-muted)',border:`1px solid ${rulesFilter===s.id?s.color:'var(--border-default)'}`}}>
                       {getLastName(s.name)} ({count})
@@ -5584,7 +5606,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   if(count===0) return null;
                   const lc=locColors[l.id]||{text:'var(--text-secondary)',border:'var(--border-default)'};
                   return(
-                    <div key={'loc_'+l.id} onClick={()=>setRulesFilter('loc_'+l.id)}
+                    <div key={'loc_'+l.id} onClick={()=>setRulesFilter('loc_'+l.id)} className="hov-tile"
                       style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
                         background:rulesFilter==='loc_'+l.id?lc.text+'22':'var(--bg-surface)',color:rulesFilter==='loc_'+l.id?lc.text:'var(--text-muted)',border:`1px solid ${rulesFilter==='loc_'+l.id?lc.border:'var(--border-default)'}`}}>
                       📍 {l.name} ({count})
@@ -5869,7 +5891,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Access Level</label>
           <div style={{display:'flex',gap:8}}>
             {[{v:'staff',l:'👁 Read Only',desc:'View final schedules only'},{v:'admin',l:'✏️ Full Editing',desc:'Edit schedules, staff & rules'}].map(opt=>(
-              <div key={opt.v} onClick={()=>setManagerForm(p=>({...p,userType:opt.v}))}
+              <div key={opt.v} onClick={()=>setManagerForm(p=>({...p,userType:opt.v}))} className="hov-tile"
                 style={{flex:1,padding:'10px 12px',borderRadius:8,cursor:'pointer',border:`2px solid ${managerForm.userType===opt.v?'#6366f1':'var(--border-default)'}`,background:managerForm.userType===opt.v?(theme==='light'?'#e0e0ff':'#1e1e3f'):'var(--bg-surface)',transition:'all 0.15s'}}>
                 <div style={{fontWeight:700,fontSize:13}}>{opt.l}</div>
                 <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{opt.desc}</div>
@@ -6140,7 +6162,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       const isSel=partialRegenDays.has(dk);
                       const isHol=!!getHolidayForDate(currentYear,currentMonth,day);
                       return(
-                        <div key={day} onClick={()=>{setPartialRegenDays(prev=>{const n=new Set(prev);if(n.has(dk))n.delete(dk);else n.add(dk);return n;});}}
+                        <div key={day} onClick={()=>{setPartialRegenDays(prev=>{const n=new Set(prev);if(n.has(dk))n.delete(dk);else n.add(dk);return n;});}} className="hov-tile"
                           style={{textAlign:'center',padding:'6px 2px',borderRadius:6,fontSize:13,fontWeight:isSel?700:500,cursor:'pointer',
                             background:isSel?'#6366f1':isWkend?'var(--bg-elevated)':'var(--bg-surface)',
                             color:isSel?'#fff':isWkend?'var(--text-muted)':isHol?'#f59e0b':'var(--text-primary)',
@@ -6216,7 +6238,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         {/* Rule Scope Toggle: Staff Rule vs Location Rule */}
         <div style={{display:'flex',gap:8,marginBottom:16}}>
           {[{v:'staff',l:'👤 Staff Rule',c:'#6366f1'},{v:'location',l:'📍 Location Rule',c:'#10b981'}].map(s=>(
-            <div key={s.v} onClick={()=>setRuleForm(p=>({...p,ruleScope:s.v,ruleType:s.v==='location'&&p.ruleType==='rotation'?'standard':p.ruleType}))}
+            <div key={s.v} onClick={()=>setRuleForm(p=>({...p,ruleScope:s.v,ruleType:s.v==='location'&&p.ruleType==='rotation'?'standard':p.ruleType}))} className="hov-tile"
               style={{flex:1,padding:'10px 0',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700,textAlign:'center',
                 background:(ruleForm.ruleScope||'staff')===s.v?s.c+'22':'var(--bg-surface)',
                 color:(ruleForm.ruleScope||'staff')===s.v?s.c:'var(--text-muted)',
@@ -6231,7 +6253,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
             {[{v:'standard',l:'📋 Standard',c:'#6366f1'},{v:'conditional',l:'🔀 Conditional (IF/THEN)',c:'#f59e0b'},{v:'exception',l:'⚠️ Exception',c:'#ef4444'},{v:'negative',l:'🚫 Negative Constraint',c:'#ec4899'},{v:'rotation',l:'🔄 Rotation/Shared',c:'#10b981',staffOnly:true},{v:'complex',l:'📝 Complex (Free Text)',c:'#8b5cf6'}]
               .filter(t=>!(t.staffOnly&&(ruleForm.ruleScope||'staff')==='location'))
               .map(t=>(
-                <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))}
+                <div key={t.v} onClick={()=>setRuleForm(p=>({...p,ruleType:t.v}))} className="hov-tile"
                   style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:ruleForm.ruleType===t.v?t.c+'22':'var(--bg-surface)',color:ruleForm.ruleType===t.v?t.c:'var(--text-muted)',
                     border:'1px solid '+(ruleForm.ruleType===t.v?t.c:'var(--border-default)'),transition:'all 0.15s'}}>{t.l}</div>
@@ -6340,13 +6362,13 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
             </div>
             <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-              <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))}
+              <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:amb.chose}))} className="hov-tile"
                 style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                   background:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b98133':'var(--bg-surface)',
                   color:genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--text-muted)',
                   border:'1px solid '+(genAmbiguityAnswers[amb.id||ai]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose ? `Keep: ${resolveAmbiguityLabel(amb.chose)}` : "Keep AI's choice"}</div>
               {(amb.alternatives || []).map((alt, oi) => (
-                <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))}
+                <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[amb.id||ai]:alt}))} className="hov-tile"
                   style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:600,
                     background:genAmbiguityAnswers[amb.id||ai]===alt?'#6366f133':'var(--bg-surface)',
                     color:genAmbiguityAnswers[amb.id||ai]===alt?'#818cf8':'var(--text-muted)',
@@ -6394,13 +6416,13 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 AI decided: <span style={{color:'var(--text-primary)',fontWeight:600}}>{amb.chose ? resolveAmbiguityLabel(amb.chose) : <em style={{opacity:0.5}}>not specified</em>}</span>
               </div>
               <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
-                <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:amb.chose}))}
+                <div onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:amb.chose}))} className="hov-tile"
                   style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
                     background:genAmbiguityAnswers[key]===amb.chose?'#10b98133':'var(--bg-elevated)',
                     color:genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--text-muted)',
                     border:'1px solid '+(genAmbiguityAnswers[key]===amb.chose?'#10b981':'var(--border-default)')}}>{amb.chose?`Keep: ${resolveAmbiguityLabel(amb.chose)}`:"Keep AI's choice"}</div>
                 {(amb.alternatives||[]).map((alt,oi)=>(
-                  <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:alt}))}
+                  <div key={oi} onClick={()=>setGenAmbiguityAnswers(prev=>({...prev,[key]:alt}))} className="hov-tile"
                     style={{padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,
                       background:genAmbiguityAnswers[key]===alt?'#6366f133':'var(--bg-elevated)',
                       color:genAmbiguityAnswers[key]===alt?'#818cf8':'var(--text-muted)',

@@ -57,6 +57,28 @@ button:not(:disabled):active, a:active, [data-hoverable]:active{transform:transl
 button:disabled{cursor:not-allowed}
 button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
 
+/* Clickable rows (sidebar nav, list rows): they sit on a transparent ground, so a
+   brightness filter has nothing to act on — tint the background instead. */
+.hov-row{transition:box-shadow .12s ease,color .12s ease}
+/* An inset shadow with a huge spread tints the whole row. Using `background` here
+   would be silently defeated: these rows set background inline (active vs
+   transparent), and an inline style always beats an external class rule. */
+.hov-row:hover{box-shadow:inset 0 0 0 999px rgba(129,140,248,0.12)}
+
+/* Clickable tiles (cards, calendar day cells). Deliberately shadow+border only and
+   NO background change, so it composes with drag-over and selected states that set
+   their own background. */
+.hov-tile{transition:box-shadow .12s ease,transform .06s ease}
+/* Ring drawn with box-shadow rather than border-color, for the same reason: most of
+   these tiles set their border inline, so a border-color rule would never apply. */
+.hov-tile:hover{box-shadow:0 0 0 2px rgba(129,140,248,0.55),0 2px 10px rgba(99,102,241,0.20)}
+.hov-tile:active{transform:translateY(1px)}
+
+@media (prefers-reduced-motion: reduce){
+  .hov-row,.hov-tile{transition:none}
+  .hov-tile:active{transform:none}
+}
+
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 @media(max-width:768px){
@@ -2456,7 +2478,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
                   const wknd = di===0 || di===6;
                   const anyWork = activeTechs.some(t => { const a = getAssignment(dk,t.id); const st = a.am||a.pm; return st && st !== 'OFF'; });
                   return (
-                    <td key={di} onClick={() => openDay(dk)}
+                    <td key={di} onClick={() => openDay(dk)} className="hov-tile"
                       style={{border:'2px solid ' + (isSel ? '#4f46e5' : 'var(--border-subtle)'),
                               background: isSel ? 'rgba(79,70,229,0.07)' : (wknd ? 'var(--cell-weekend)' : 'var(--bg-surface)'),
                               verticalAlign:'top',padding:'3px 4px',cursor:'pointer'}}>
@@ -2654,6 +2676,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                   setCopyMenu({ dk, x: e.clientX, y: e.clientY });
                 }) : undefined}
                 title={isAdmin ? 'Right-click to copy this day to other days' : undefined}
+                className="hov-tile"
                 style={{background: sel ? 'rgba(79,70,229,0.10)' : 'var(--bg-elevated)',
                         border:'2px solid ' + (sel ? '#4f46e5' : 'var(--border-subtle)'),
                         borderRadius:8,padding:6,cursor:'pointer',textAlign:'left'}}>
@@ -2705,7 +2728,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
               </div>
             ))}
             {shownDays.map(dk => (
-              <div key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }}
+              <div key={dk} onClick={() => { setEditDate(dk); setSelectedDate(dk); }} className="hov-tile"
                 style={{border:'2px solid ' + (dk === day ? '#4f46e5' : 'var(--border-subtle)'),
                         borderRadius:8, padding:'5px 7px', cursor:'pointer', overflow:'hidden',
                         background: dk === day ? 'rgba(79,70,229,0.05)' : 'var(--bg-surface)'}}>
