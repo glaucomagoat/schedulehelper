@@ -215,7 +215,6 @@ const DEFAULT_NOTIFY_SETTINGS = {
   // only clutter the UI with a channel that cannot fire.
   defaultChannels: ['telegram'],
   fanout: false,
-  changeAlertsEnabled: true,
   // Up to 4 site IDs, in quadrant order (top-left, top-right, bottom-left,
   // bottom-right), for the printed month PDF. Empty = default to the first four
   // staffed sites at render time.
@@ -1294,9 +1293,9 @@ function App() {
     return bits.join(', ') || 'nothing sent';
   }
 
+  // Confirmation now happens at the call site (a styled in-page modal), not here —
+  // this fires immediately once called.
   async function sendDay(dk, kind) {
-    const label = kind === 'morning' ? "this morning's" : "tonight's";
-    if (!confirm(`Send ${label} assignments for ${fmtDateShort(dk)} to every technician?`)) return;
     setSending(kind);
     try {
       const d = await callTechApi({ action: 'send-day', dateKey: dk, kind });
@@ -1315,6 +1314,12 @@ function App() {
       await reloadNotifyLog();
     } catch(e) { showToast('Send failed: ' + e.message, 'error'); }
     finally { setSending(null); }
+  }
+
+  // Dry-run of send-changes: what WOULD go out, with no side effects. Used to build
+  // the "Push changes only" confirmation modal before anything is actually sent.
+  async function previewChanges(dk) {
+    return await callTechApi({ action: 'preview-changes', dateKey: dk });
   }
 
   async function sendTest(techId) {
@@ -2177,7 +2182,7 @@ function App() {
         {activeTab === 'notify' && isAdmin && (
           <NotifyPanel {...{S,notifySettings,setNotifySettings,techs,techContacts,setTechContacts,notifyLog,showToast,
                             dayLinks,linksLoading,loadDayLinks,rotateDayLink,
-                            selectedDate,setSelectedDate,sendDay,sendChanges,sendTest,sendInvite,sending,
+                            selectedDate,setSelectedDate,sendDay,sendChanges,previewChanges,sendTest,sendInvite,sending,
                             channelStatus,loadChannelStatus,reloadNotifyLog,
                             invites,invitesLoading,loadInvites,botUsername,unreachable}} />
         )}
@@ -4063,7 +4068,7 @@ function TimeOffPanel({ S, techTimeOff, setTechTimeOff, techs, showToast }) {
 
 function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts, setTechContacts, notifyLog, showToast,
                        dayLinks, linksLoading, loadDayLinks, rotateDayLink,
-                       selectedDate, setSelectedDate, sendDay, sendChanges, sendTest, sendInvite, sending,
+                       selectedDate, setSelectedDate, sendDay, sendChanges, previewChanges, sendTest, sendInvite, sending,
                        channelStatus, loadChannelStatus, reloadNotifyLog,
                        invites, invitesLoading, loadInvites, botUsername, unreachable }) {
   const set = (k,v) => setNotifySettings(Object.assign({}, notifySettings, {[k]:v}));
@@ -4077,6 +4082,60 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
 
   const [logDate, setLogDate] = useState(selectedDate);
   const entry = notifyLog[logDate] || {};
+
+  // "Today"/"tomorrow" for the send buttons are the practice's wall-clock day, not
+  // the browser's — never the log's browse date, which is a separate, independent
+  // control below.
+  const todayDk = todayKeyIn(notifySettings.timezone);
+  const tomorrowDk = addDays(todayDk, 1);
+
+  // Confirmation modal state for all three send buttons. `type: 'day'` covers
+  // Today/Tomorrow; `type: 'changes'` covers Push changes only (built from a
+  // preview-changes call, never from a guess).
+  const [confirmSend, setConfirmSend] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  function fmtSentAt(ts) {
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate() + ', ' + d.getFullYear() + ' at ' + time;
+  }
+  function fmtMonthDay(dk) {
+    const p = parseDateKey(dk);
+    return MONTHS[p.month0].slice(0, 3) + ' ' + p.day;
+  }
+  // Most recent sentAt for one scheduled-send kind, across every date in the log —
+  // plus which date it was ABOUT, since that's stored as the log's key, not the
+  // send time's date.
+  function lastSentInfo(kind) {
+    let best = null;
+    Object.keys(notifyLog || {}).forEach(dk => {
+      const e = (notifyLog[dk] || {})[kind];
+      if (e && e.sentAt && (!best || e.sentAt > best.sentAt)) best = { sentAt: e.sentAt, dateKey: dk };
+    });
+    return best;
+  }
+  const eveningLast = lastSentInfo('evening');
+  const morningLast = lastSentInfo('morning');
+
+  async function handlePushChangesClick() {
+    setPreviewLoading(true);
+    try {
+      const d = await previewChanges(todayDk);
+      const list = d.changed || [];
+      if (list.length === 0) { showToast('Nothing has changed since the last send', 'info'); return; }
+      setConfirmSend({ type: 'changes', dateKey: todayDk, list });
+    } catch(e) { showToast('Could not check for changes: ' + e.message, 'error'); }
+    finally { setPreviewLoading(false); }
+  }
+
+  async function confirmSendGo() {
+    const cs = confirmSend;
+    if (!cs) return;
+    setConfirmSend(null);
+    if (cs.type === 'day') await sendDay(cs.dateKey, cs.sendKind);
+    else await sendChanges(cs.dateKey);
+  }
 
   // Flatten the day's attempts into one table. Every attempt is shown, including a
   // Telegram failure that later fell through to email — hiding it would hide exactly
@@ -4158,27 +4217,19 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
 
       <div style={Object.assign({}, S.card, {padding:16})}>
         <div style={{fontWeight:700,marginBottom:10}}>Send now</div>
-        <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
-          <div>
-            <label style={S.label}>For the day</label>
-            <input type="date" value={logDate} onChange={e => e.target.value && setLogDate(e.target.value)}
-                   style={S.input} />
-          </div>
-          <button onClick={() => sendDay(logDate, 'evening')} disabled={!!sending} style={S.btnP}>
-            {sending === 'evening' ? 'Sending…' : '🌙 Send as night-before'}
+        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+          <button onClick={() => setConfirmSend({ type:'day', sendKind:'morning', dateKey: todayDk, label:'Today' })}
+                  disabled={!!sending} style={S.btnP}>
+            {sending === 'morning' ? 'Sending…' : "📅 Send Today's Schedule"}
           </button>
-          <button onClick={() => sendDay(logDate, 'morning')} disabled={!!sending} style={S.btnP}>
-            {sending === 'morning' ? 'Sending…' : '☀️ Send as morning-of'}
+          <button onClick={() => setConfirmSend({ type:'day', sendKind:'evening', dateKey: tomorrowDk, label:'Tomorrow' })}
+                  disabled={!!sending} style={S.btnP}>
+            {sending === 'evening' ? 'Sending…' : "📅 Send Tomorrow's Schedule"}
           </button>
-          <button onClick={() => sendChanges(logDate)} disabled={!!sending} style={S.btn}>
-            {sending === 'change' ? 'Sending…' : '🔔 Push changes only'}
+          <button onClick={handlePushChangesClick} disabled={!!sending || previewLoading} style={S.btn}>
+            {previewLoading ? 'Checking…' : sending === 'change' ? 'Sending…' : '🔔 Push changes only'}
           </button>
           <button onClick={reloadNotifyLog} style={S.btn}>↻ Refresh log</button>
-        </div>
-        <div style={{marginTop:10,fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
-          "Night-before" says <em>Tomorrow</em>, "morning-of" says <em>Today</em> — pick the one matching what the
-          technicians should read, not the clock. "Push changes only" messages just the people whose own assignment
-          moved since the last send.
         </div>
       </div>
 
@@ -4194,26 +4245,28 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
             <select value={notifySettings.eveningHour} onChange={e => set('eveningHour', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})}>
               {hours.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
             </select>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
+              {eveningLast
+                ? 'Last sent ' + fmtSentAt(eveningLast.sentAt) + ' (for ' + fmtMonthDay(eveningLast.dateKey) + ')'
+                : 'Never sent'}
+            </div>
           </div>
           <div>
             <label style={S.label}>Morning-of send</label>
             <select value={notifySettings.morningHour} onChange={e => set('morningHour', Number(e.target.value))} style={Object.assign({}, S.input, {width:'100%'})}>
               {hours.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
             </select>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
+              {morningLast
+                ? 'Last sent ' + fmtSentAt(morningLast.sentAt) + ' (for ' + fmtMonthDay(morningLast.dateKey) + ')'
+                : 'Never sent'}
+            </div>
           </div>
         </div>
         <div style={{display:'flex',gap:18,marginTop:14,flexWrap:'wrap'}}>
           <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
             <input type="checkbox" checked={!!notifySettings.enabled} onChange={e => set('enabled', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
             Automatic sends enabled
-          </label>
-          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-            <input type="checkbox" checked={!!notifySettings.changeAlertsEnabled} onChange={e => set('changeAlertsEnabled', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
-            Alert on last-minute changes
-          </label>
-          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-            <input type="checkbox" checked={!!notifySettings.fanout} onChange={e => set('fanout', e.target.checked)} style={{width:16,height:16,cursor:'pointer'}} />
-            Send on every channel (not just the first that works)
           </label>
         </div>
       </div>
@@ -4412,9 +4465,16 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
           <span style={{fontSize:12,color:'var(--text-muted)'}}>
             {rows.length ? `${rows.length} attempt${rows.length===1?'':'s'}` : 'nothing sent for this day'}
           </span>
+          <div style={{flex:1}} />
+          <label style={{display:'flex',alignItems:'center',gap:6,fontSize:11,color:'var(--text-muted)'}}>
+            Browse log for
+            <input type="date" value={logDate} onChange={e => e.target.value && setLogDate(e.target.value)}
+                   style={Object.assign({}, S.input, {padding:'5px 8px',fontSize:12})} />
+          </label>
         </div>
         <div style={{padding:'2px 16px 12px',fontSize:12,color:'var(--text-muted)'}}>
-          Every attempt is listed, including a channel that failed before a fallback succeeded.
+          Every attempt is listed, including a channel that failed before a fallback succeeded. This date only
+          filters what you're viewing here — it does not affect what gets sent.
         </div>
         {rows.length === 0 ? (
           <div style={{padding:'0 16px 16px',fontSize:13,color:'var(--text-dim)'}}>
@@ -4452,6 +4512,60 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
           </div>
         )}
       </div>
+
+      {confirmSend && (
+        <div onClick={() => setConfirmSend(null)}
+             style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                     display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+               style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                       borderRadius:14,padding:'20px 22px',maxWidth:460,width:'100%',
+                       boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+            {confirmSend.type === 'day' ? (
+              <div>
+                <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+                  Send {confirmSend.label}'s schedule?
+                </div>
+                <div style={{fontSize:14,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:18}}>
+                  This will message every technician with an assignment for {fmtDateLong(confirmSend.dateKey)}.
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+                  Push changes for {fmtDateLong(confirmSend.dateKey)}?
+                </div>
+                <div style={{fontSize:14,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:10}}>
+                  Only {confirmSend.list.length} technician{confirmSend.list.length===1?'':'s'} will be messaged
+                  — everyone else's assignment for this day has not changed.
+                </div>
+                <div style={{maxHeight:220,overflowY:'auto',marginBottom:18,
+                             border:'1px solid var(--border-subtle)',borderRadius:8}}>
+                  {confirmSend.list.map(c => (
+                    <div key={c.techId} style={{padding:'8px 12px',borderBottom:'1px solid var(--border-subtle)',fontSize:13}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <span style={{fontWeight:700}}>{c.name}</span>
+                        {!c.reachable && (
+                          <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>⚠ unreachable — will not receive this</span>
+                        )}
+                      </div>
+                      <div style={{color:'var(--text-muted)',marginTop:2}}>{c.from} → {c.to}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={() => setConfirmSend(null)} style={S.btn}>Cancel</button>
+              <button onClick={confirmSendGo} disabled={!!sending}
+                      style={Object.assign({}, S.btn, {background:'#4f46e5',borderColor:'#4f46e5',
+                                                       color:'#fff',fontWeight:700})}>
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

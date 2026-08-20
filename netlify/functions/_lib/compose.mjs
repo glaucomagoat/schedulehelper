@@ -32,6 +32,11 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
   const when = kind === "evening" ? "Tomorrow" : kind === "morning" ? "Today" : "";
   const dayLabel = fmtShort(dk);
 
+  // Change messages must explain themselves — a technician who gets a second message
+  // about the same day with no context assumes something is wrong on their end.
+  const CHANGE_EXPLAINER = "This is a last-minute change due to staff changes. "
+    + "Please confirm with your Technician Supervisor if you have questions.";
+
   let subject, heading;
   if (kind === "change") {
     subject = "⚠ CHANGE " + dayLabel + " — " + summary;
@@ -55,6 +60,7 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     + "📍 <b>" + escapeHtml(summary) + "</b>"
     + (detailLines.length ? "\n" + detailLines.join("\n") : "")
     + (kind === "change" && prevSummary ? "\n<i>was: " + escapeHtml(prevSummary) + "</i>" : "")
+    + (kind === "change" ? "\n\n" + escapeHtml(CHANGE_EXPLAINER) : "")
     + "\n\n<i>Commands: /today /tomorrow /thisweek /board</i>";
 
   const changeNote = (kind === "change" && prevSummary)
@@ -62,9 +68,16 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
         + escapeHtml(prevSummary) + '</s></div>'
     : "";
 
+  const changeExplainerHtml = (kind === "change")
+    ? '<div style="font-size:14px;font-weight:700;color:#b91c1c;background:#fef2f2;'
+        + 'border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin:0 0 16px;">'
+        + escapeHtml(CHANGE_EXPLAINER) + '</div>'
+    : "";
+
   const emailHtml = emailShell(
     renderMineHtml(ctx, dk, tech.id, tech.name)
     + changeNote
+    + changeExplainerHtml
     + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin:0 0 8px;">EVERYONE ON '
     + escapeHtml(dayLabel.toUpperCase()) + '</div>'
     + renderBoardHtml(ctx, dk, tech.id),
@@ -77,6 +90,7 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     heading + "\n" + fmtLong(dk) + "\n\n"
     + summary + "\n"
     + (kind === "change" && prevSummary ? "(was: " + prevSummary + ")\n" : "")
+    + (kind === "change" ? "\n" + CHANGE_EXPLAINER + "\n" : "")
     + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
     + "\nThis schedule can change during the day — the link above is always current.";
 

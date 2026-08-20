@@ -11,7 +11,8 @@ import {
 } from "./_lib/links.mjs";
 import { composeDayMessage, composeInviteEmail } from "./_lib/compose.mjs";
 import { sendToTech, configuredChannels } from "./_lib/notify.mjs";
-import { runSendJob } from "./_lib/sendjob.mjs";
+import { runSendJob, describeAssignment } from "./_lib/sendjob.mjs";
+import { changedTechs } from "./_lib/sendlog.mjs";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -97,6 +98,28 @@ export default async (req) => {
       if (!dk) return json({ error: "A valid dateKey (YYYY-MM-DD) is required" }, 400);
       const out = await runSendJob(store, ctx, { dateKey: dk, kind: "change", base, secret: LINK_SECRET });
       return json(Object.assign({ success: true }, out));
+    }
+
+    // Preview of what "send-changes" WOULD do, without sending anything or touching
+    // the log/snapshot. Uses the exact same source of truth (changedTechs +
+    // describeAssignment) so the preview can never drift from the real send.
+    case "preview-changes": {
+      const dk = isValidDateKey(body.dateKey) ? body.dateKey : null;
+      if (!dk) return json({ error: "A valid dateKey (YYYY-MM-DD) is required" }, 400);
+
+      const changed = changedTechs(ctx, dk);
+      const list = changed.map(c => {
+        const tech = ctx.techs.find(t => t.id === c.techId);
+        const contact = ctx.contacts[c.techId] || {};
+        return {
+          techId: c.techId,
+          name: tech ? tech.name : c.techId,
+          from: describeAssignment(ctx, c.from),
+          to: describeAssignment(ctx, c.to),
+          reachable: !!contact.telegramChatId,
+        };
+      });
+      return json({ success: true, dateKey: dk, changed: list });
     }
 
     // Dry run to one technician. Deliberately does NOT touch the log or the snapshot —

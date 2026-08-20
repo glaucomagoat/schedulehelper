@@ -49,7 +49,6 @@ export const DEFAULT_SETTINGS = {
   morningHour: 6,
   defaultChannels: ["telegram", "email"],
   fanout: false,
-  changeAlertsEnabled: true,
 };
 
 // One round trip for everything a day view or a send needs.

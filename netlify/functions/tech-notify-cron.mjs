@@ -17,7 +17,7 @@
 import {
   techStore, loadContext, todayIn, addDays, isValidDateKey,
 } from "./_lib/techdata.mjs";
-import { wasNotified, changedTechs } from "./_lib/sendlog.mjs";
+import { wasNotified } from "./_lib/sendlog.mjs";
 import { anyoneWorking } from "./_lib/sendjob.mjs";
 
 export const config = { schedule: "*/5 * * * *" };
@@ -101,19 +101,6 @@ export default async (req) => {
       && !wasNotified(ctx, today, "morning")
       && anyoneWorking(ctx, today)) {
     jobs.push({ dateKey: today, kind: "morning" });
-  }
-
-  // Change alerts. Only for days people have already been told about — a day with no
-  // prior send has no "change", just a first send that has not happened yet.
-  if (s.changeAlertsEnabled) {
-    [today, tomorrow].forEach(dk => {
-      const alreadySent = wasNotified(ctx, dk, "evening") || wasNotified(ctx, dk, "morning");
-      if (!alreadySent) return;
-      // Skip a day we are about to send in full — the full send updates the snapshot
-      // anyway, and nobody should get both messages in the same minute.
-      if (jobs.some(j => j.dateKey === dk)) return;
-      if (changedTechs(ctx, dk).length > 0) jobs.push({ dateKey: dk, kind: "change" });
-    });
   }
 
   if (jobs.length === 0) return new Response("nothing to do", { status: 200 });
