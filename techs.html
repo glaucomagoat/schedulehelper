@@ -520,21 +520,22 @@ const QUAD_CSS =
   'td.sat{width:__SATW__;background:#fbfbfd;padding:1px 2px}' +
   'td.blank{background:#f1f1f4}' +
   '.quads{display:grid;grid-template-columns:1fr 1fr}' +
-  '.q{padding:2px 4px 2.5px;min-height:15px;word-break:break-word}' +
+  '.q{padding:1.5px 4px;min-height:0;word-break:break-word}' +
+  '.q.wide{grid-column:1 / -1}' +
   '.q0{border-right:1px solid #e4e4ec;border-bottom:1px solid #e4e4ec}' +
   '.q1{border-bottom:1px solid #e4e4ec}' +
   '.q2{border-right:1px solid #e4e4ec}' +
-  '.dnum{font-size:10.5px;font-weight:800;margin-right:3px;vertical-align:-.5px}' +
+  '.dnum{font-size:__DNUM__px;font-weight:800;margin-right:3px;vertical-align:-.5px;line-height:1}' +
   'td.sun .dnum,td.sat .dnum{font-size:7.5px;color:#aaa;font-weight:700;display:block;margin:0 0 1px}' +
   '.ab{display:inline-block;font-size:__AB__px;font-weight:800;letter-spacing:.2px;color:#fff;' +
-  'border-radius:2px;padding:.5px 2.5px;margin-right:2.5px;vertical-align:1px}' +
+  'border-radius:2px;padding:0 2px;margin-right:2.5px;vertical-align:1px;line-height:1.35}' +
   '.ab.dim{background:#dcdce4}.ab.offab{background:#6b7280}' +
-  '.ns{font-size:__FS__px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}' +
+  '.ns{font-size:__FS__px;font-weight:600;line-height:1.25;overflow-wrap:anywhere}' +
   '.ns b{font-weight:800;color:#3730a3;font-size:__FSB__px}' +
   '.mt{color:#c9c9d2;font-size:__FS__px}' +
   '.satrow{margin-bottom:2px}' +
   '.satrow .ns{display:block;margin-top:1px;line-height:1.25}' +
-  '.strip{padding:2px 3px;border-top:1px solid #dcdce4}' +
+  '.strip{padding:1px 3px;border-top:1px solid #dcdce4;line-height:1.25}' +
   '.strip.over{background:#fcfcfe}.strip.off{background:#f4f4f7}' +
   '.strip.off .ns{color:#555;font-style:italic}' +
   '.sep{display:inline-block;width:9px}' +
@@ -1973,21 +1974,23 @@ function App() {
       const first = (t.name || '').trim().split(/\s+/)[0] || t.name;
       firstNameCounts[first] = (firstNameCounts[first] || 0) + 1;
     });
-    function techLabel(techId) {
+    function techLabel(techId, duties) {
       const t = techs.find(x => x.id === techId);
       if (!t) return '';
       const parts = (t.name || '').trim().split(/\s+/);
       const first = parts[0] || t.name;
       let label = first;
       if (firstNameCounts[first] > 1 && parts.length > 1) label = first + ' ' + parts[parts.length - 1].charAt(0) + '.';
-      const isScribe = (t.pinnedDoctorIds && t.pinnedDoctorIds.length) || (t.backupForDoctorIds && t.backupForDoctorIds.length);
-      const isTesting = (t.roles || []).includes('Testing Tech');
+      // The suffix is the DUTY assigned to this person on THIS day (right-click on the
+      // board), not a standing role. It used to be derived from t.roles, which meant
+      // the printed legend advertised (S)(T)(A)(TR) while no name ever carried one —
+      // and that fallback died completely once the roles field was removed.
       let out = escapeHtml(label);
-      if (isScribe) out += '<b>(S)</b>';
-      if (isTesting) out += '<b>(T)</b>';
+      const duty = duties && duties[techId];
+      if (duty) out += '<b>' + escapeHtml(dutySuffix(duty)) + '</b>';
       return out;
     }
-    function namesFor(ids) { return ids.map(techLabel).join(' · '); }
+    function namesFor(ids, duties) { return ids.map(id => techLabel(id, duties)).join(' · '); }
 
     // Holidays for this month, by day-of-month — computed straight from the
     // existing getHolidayDate(), not the selectedDate-scoped holidayMap memo.
@@ -2024,7 +2027,9 @@ function App() {
         if (a.am === 'OFF' && a.pm === 'OFF') offSet[tid] = true;
       });
       const off = Object.keys(offSet);
-      return { dk, bySite, off };
+      const duties = {};
+      Object.keys(day).forEach(tid => { if (day[tid] && day[tid].duty) duties[tid] = day[tid].duty; });
+      return { dk, bySite, off, duties };
     }
 
     // Saturday column stays narrow unless some Saturday this month actually has
@@ -2085,6 +2090,25 @@ function App() {
         }
 
         let q = '';
+        // Five or more names in a half-width box wraps to three lines; across the full
+        // width it is two. The threshold is deliberately low because a wide row costs
+        // one line and usually saves two.
+        const wideFlags = quadIds.slice(0, 4).map(sid =>
+          !!(dd.bySite[sid] && dd.bySite[sid].length >= 5));
+        // Walk the grid to find where each block lands. A wide block takes a whole
+        // row; the rest fill two columns. If the LAST block ends up in the left column
+        // there is nothing beside it, so widen it too — it costs no extra height and
+        // uses space that would otherwise sit blank.
+        {
+          let col = 0;
+          const cols = wideFlags.map(isWide => {
+            if (isWide) { col = 0; return -1; }
+            const c = col; col = (col + 1) % 2; return c;
+          });
+          const last = wideFlags.length - 1;
+          if (last >= 0 && cols[last] === 0) wideFlags[last] = true;
+        }
+
         quadIds.forEach((sid, qi) => {
           const has = dd.bySite[sid] && dd.bySite[sid].length;
           const dn = qi === 0 ? '<span class="dnum">' + d + '</span>' : '';
@@ -2093,7 +2117,8 @@ function App() {
           // distinguishable greys and the rule still separates the blocks — and the
           // abbreviation identifies the site regardless of either.
           const qStyle = has ? ' style="background:' + siteTint(sid) + ';box-shadow:inset 3px 0 0 ' + siteChipColor(sid) + '"' : '';
-          q += '<div class="q q' + qi + '"' + qStyle + '>' + dn +
+          const wide = wideFlags[qi] ? ' wide' : '';
+          q += '<div class="q q' + qi + wide + '"' + qStyle + '>' + dn +
             '<span class="ab' + (has ? '' : ' dim') + '"' + abStyle + '>' + escapeHtml(siteAbbr(sid)) + '</span>' +
             '<span class="ns">' + (has ? namesFor(dd.bySite[sid], dd.duties) : '<span class="mt">—</span>') + '</span></div>';
         });
@@ -2123,10 +2148,12 @@ function App() {
     const FSB = Math.round((fs - 0.9) * 10) / 10;
     const AB  = Math.round((fs - 1.6) * 10) / 10;
     const NOTE = Math.round((fs - 0.6) * 10) / 10;
+    const DNUM = Math.max(6, Math.round((fs + 1.5) * 10) / 10);
     const css = QUAD_CSS
       .replace(/__SATW__/g, satw).replace(/__DAYW__/g, dayw)
       .replace(/__FS__/g, String(fs)).replace(/__FSB__/g, String(FSB))
-      .replace(/__AB__/g, String(AB)).replace(/__NOTE__/g, String(NOTE));
+      .replace(/__AB__/g, String(AB)).replace(/__NOTE__/g, String(NOTE))
+      .replace(/__DNUM__/g, String(DNUM));
 
     const legendSites = quadIds.concat(overflowIds)
       .map(sid => escapeHtml(siteAbbr(sid)) + ' ' + escapeHtml(locName(sid)))
@@ -2163,7 +2190,7 @@ function App() {
     // Ladder runs well below what a normal month needs, because a fully-booked month
     // — every clinic day staffed, duty tags, an OFF list and a note on each day, plus
     // a Saturday — measured 829px against a 778px page at the old 7.0 floor.
-    const sizes = [9.0, 8.6, 8.2, 7.8, 7.4, 7.0, 6.6, 6.2, 5.8, 5.4, 5.0];
+    const sizes = [14, 13, 12, 11.5, 11, 10.5, 10, 9.5, 9.0, 8.6, 8.2, 7.8, 7.4, 7.0, 6.6, 6.2, 5.8, 5.4, 5.0];
     const host = document.createElement('iframe');
     host.style.cssText = 'position:fixed;left:-99999px;top:0;border:0;background:#fff';
     host.width = String(PRINT_W);
