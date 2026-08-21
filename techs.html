@@ -224,6 +224,14 @@ const DUTIES = [
   { id:'TR', label:'Training Refraction' },
 ];
 function dutyLabel(id) { const d = DUTIES.find(x => x.id === id); return d ? d.label : ''; }
+// Shared by App and the portal components — App's own fmtPublishedAt is scoped
+// inside the component and cannot be reached from here.
+function fmtStamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate() + ', ' + d.getFullYear() + ' at ' + time;
+}
 function dutySuffix(id) { return id ? '(' + id + ')' : ''; }
 
 const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
@@ -698,6 +706,13 @@ function App() {
         try { u = JSON.parse(raw); } catch(e) { setLoading(false); return; }
         if (!u || !u.username) { setLoading(false); return; }
         setUser(u);
+        if (u.userType === 'staff') {
+          try {
+            const rec = await window.storage.get('user:' + u.username);
+            const parsed = rec && rec.value ? JSON.parse(rec.value) : null;
+            if (parsed && parsed.techId) setMyTechId(parsed.techId);
+          } catch(e) { console.warn('could not resolve viewing technician', e.message); }
+        }
         await loadAll(u.adminUsername || u.username, u.userType === 'staff');
       } catch(e) {
         console.warn('bootstrap failed', e);
@@ -797,6 +812,14 @@ function App() {
 
   // A sub-room borrows its parent's doctors. Stockton - Suite 2 is staffed because
   // Stockton has clinic that day, not because anyone is scheduled to Suite 2.
+  // Doctor names at a site on a given day, either half — what a technician means
+  // by "who am I working with".
+  function doctorsAtSiteOn(dk, siteId) {
+    const cov = getDoctorCoverage(dk);
+    const am = doctorsAtSite(cov, siteId, 'am') || [];
+    const pm = doctorsAtSite(cov, siteId, 'pm') || [];
+    return Array.from(new Set(am.concat(pm)));
+  }
   function doctorsAtSite(cov, siteId, period) {
     if (!cov) return [];
     const site = locById[siteId];
@@ -1274,6 +1297,10 @@ function App() {
 
   // ── Portal accounts & day-view links ───────────────────────────────────────
   const [portalAccounts, setPortalAccounts] = useState({});   // techId -> { username }
+  // Which technician is VIEWING, when this is a portal session. The login response
+  // carries staffId but not techId, so it is read from the account's own user
+  // record — the one key a portal session is always allowed to read.
+  const [myTechId, setMyTechId] = useState(null);
   const [dayLinks, setDayLinks] = useState({});               // techId -> { token, url }
   const [linksLoading, setLinksLoading] = useState(false);
 
@@ -2384,7 +2411,11 @@ function App() {
     <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
       {/* Header */}
       <div style={{borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-surface)',padding:'10px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-        <a href="index.html" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>← Doctors</a>
+        {/* Technicians have no business on the doctor scheduler — their login only
+            grants this page, so offering the link would just lead to a dead end. */}
+        {isAdmin && (
+          <a href="index.html" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>← Doctors</a>
+        )}
         <div style={{fontWeight:800,fontSize:16,whiteSpace:'nowrap'}}>🩺 Technician Scheduler</div>
         <div style={{flex:1}} />
         {!isAdmin && <span style={{fontSize:12,color:'var(--text-muted)',border:'1px solid var(--border-default)',borderRadius:99,padding:'3px 10px'}}>👁 View only</span>}
@@ -2442,7 +2473,8 @@ function App() {
                            staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
                            locName,holidayFor,isTechOff:isPortalTechOff,locations,holidays,
                            doctors,finalPlans,techDayNotes,docDayNotes,docSchedules,theme,
-                           quadSiteIds,siteAbbr,dutyOf:portalDutyOf,notifySettings}} />
+                           quadSiteIds,siteAbbr,dutyOf:portalDutyOf,notifySettings,
+                           techPublished,myTechId,doctorsAtSiteOn}} />
         )}
         {activeTab === 'p-month' && !isAdmin && (
           <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,
@@ -2450,11 +2482,26 @@ function App() {
                           staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
                           locName,holidayFor,isTechOff:isPortalTechOff,targets,holidays,
                           quadSiteIds,siteAbbr,techDayNotes,dutyOf:portalDutyOf,
+                          viewerTechId:myTechId,
+                          publishedNote:(() => {
+                            const p2 = parseDateKey(selectedDate);
+                            const rec = (techPublished || {})[p2.year + '-' + p2.month0];
+                            return rec && rec.publishedAt
+                              ? 'Published ' + fmtStamp(rec.publishedAt)
+                              : 'Published date not recorded for this month';
+                          })(),
                           hint:'Click any day to jump to that week'}} />
         )}
         {activeTab === 'p-docmonth' && !isAdmin && (
           <DoctorMonthView {...{S,isMobile,selectedDate,setSelectedDate,doctors,locations,
-                                docSchedules,finalPlans,docDayNotes,holidays,theme}} />
+                                docSchedules,finalPlans,docDayNotes,holidays,theme,
+                                publishedNote:(() => {
+                                  const p2 = parseDateKey(selectedDate);
+                                  const pl = (finalPlans || {})[p2.year + '-' + p2.month0];
+                                  // The doctor plan carries no publish timestamp — naming the
+                                  // live plan letter is the honest equivalent.
+                                  return pl ? 'Showing published Plan ' + pl : '';
+                                })()}} />
         )}
         {activeTab === 'p-account' && !isAdmin && (
           <PortalAccount {...{S,user,showToast,callTechApi,hashPassword,verifyPasswordLocal,theme}} />
@@ -2681,7 +2728,7 @@ function DayBoard(p) {
 
 function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
                      activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays,
-                     quadSiteIds, siteAbbr, techDayNotes, dutyOf, hint }) {
+                     quadSiteIds, siteAbbr, techDayNotes, dutyOf, hint, viewerTechId, publishedNote }) {
   const dp = parseDateKey(selectedDate);
   const first = new Date(dp.year, dp.month0, 1);
   const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
@@ -2708,6 +2755,9 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
         <button onClick={() => setSelectedDate(todayKeyIn('America/Los_Angeles'))} style={S.btn}>Today</button>
         <span style={{fontSize:12,color:'var(--text-muted)'}}>{hint || 'Click any day to edit it in the week view'}</span>
       </div>
+      {publishedNote && (
+        <div style={{fontSize:11.5,color:'var(--text-muted)',marginTop:-6,marginBottom:10}}>{publishedNote}</div>
+      )}
 
       <div className="mob-scroll">
         <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed',minWidth: 980}}>
@@ -2737,7 +2787,8 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
                                    color: wknd ? 'var(--text-dim)' : 'var(--text-primary)'}}>{d}</div>
                       {(!wknd || anyWork) && (
                         <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
-                                           siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf}} />
+                                           siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,
+                                           viewerTechId}} />
                       )}
                     </td>
                   );
@@ -2759,7 +2810,8 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                     staffedSites, activeTechs, getAssignment, setAssignment, locName, holidayFor,
                     isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
                     techDayNotes, setTechDayNotes, shiftDay, locations, holidays,
-                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty, copyTechDay }) {
+                    docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty, copyTechDay,
+                    viewerTechId, publishedNote, weekSummary, notifySettings }) {
 
   // Monday-first working week; Saturday appears only when something is scheduled.
   const weekDays = useMemo(() => {
@@ -2911,7 +2963,16 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
             Week of {fmtDateShort(shownDays[0])} – {fmtDateShort(shownDays[shownDays.length-1])}
           </div>
           <button onClick={() => shiftDay(7)} style={S.btn}>Next week →</button>
+          {/* Jumps to the current week and selects the current day, so the day panel
+              below opens on today rather than on the week's Monday. */}
+          <button onClick={() => {
+                    const t = todayKeyIn((notifySettings && notifySettings.timezone) || 'America/Los_Angeles');
+                    setSelectedDate(t); setEditDate(t);
+                  }} style={S.btn}>Today</button>
         </div>
+        {publishedNote && (
+          <div style={{fontSize:11.5,color:'var(--text-muted)',marginBottom:8}}>{publishedNote}</div>
+        )}
         <div className="mob-scroll"
              style={{display:'grid',
                      gridTemplateColumns:`repeat(${shownDays.length},1fr)` + ((isAdmin && !satHasWork) ? ' 34px' : ''),
@@ -2936,7 +2997,8 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>{n}</span>
                 </div>
                 <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
-                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,nameSize:12}} />
+                                   siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,nameSize:12,
+                                   viewerTechId}} />
               </div>
             );
           })}
@@ -2959,6 +3021,31 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
 
       {/* Doctor reference — the whole week, each cell drawn exactly as the doctor
           scheduler draws it. Clicking a column switches which day you are editing. */}
+
+      {weekSummary && weekSummary.length > 0 && (
+        <div style={Object.assign({}, S.card, {padding:'12px 14px'})}>
+          <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',
+                       color:'var(--text-muted)',marginBottom:8}}>My week</div>
+          <div style={{display:'flex',flexDirection:'column',gap:7}}>
+            {weekSummary.map(r => (
+              <div key={r.dk} style={{fontSize:13,lineHeight:1.45,
+                                      opacity: r.past ? 0.45 : 1,
+                                      fontWeight: r.today ? 700 : 400}}>
+                <span style={{display:'inline-block',minWidth:74}}>{r.label}</span>
+                {r.off
+                  ? <span style={{fontStyle:'italic',color:'var(--text-muted)'}}>Off</span>
+                  : <React.Fragment>
+                      <span>{r.location}</span>
+                      {r.doctors ? <span style={{color:'var(--text-secondary)'}}>{' · with ' + r.doctors}</span> : null}
+                      {r.duty ? <span style={{color:'#4338ca',fontWeight:700}}>{' · ' + r.duty}</span> : null}
+                    </React.Fragment>}
+                {r.today ? <span style={{color:'#4f46e5',fontWeight:800}}>{'  ◂ today'}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={Object.assign({}, S.card, {padding:12})}>
         <div style={{fontSize:11,fontWeight:800,letterSpacing:0.7,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>
           Doctor schedule — week of {fmtDateShort(shownDays[0])}
@@ -3021,6 +3108,10 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           </div>
         )}
 
+        {/* Assigning is admin-only. A portal technician reads the week grid and the
+            legend below; the pool, the drop zones and the OFF box are controls, not
+            information, so none of it is rendered for them. */}
+        {isAdmin && (<React.Fragment>
         {/* Available pool — also a drop target, so dragging here unassigns */}
         <div data-drop="POOL"
           style={{border:'2px dashed ' + (overZone === 'POOL' ? '#4f46e5' : 'var(--border-default)'),
@@ -3125,6 +3216,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
           </div>
         )}
 
+        </React.Fragment>)}
         <div style={{marginTop:14,paddingTop:10,borderTop:'1px solid var(--border-subtle)',
                      display:'flex',gap:16,flexWrap:'wrap',alignItems:'baseline'}}>
           {DUTIES.map(d => (
@@ -3383,7 +3475,8 @@ function DoctorDayCell({ dk, doctors, locations, docSchedules, finalPlans, docDa
 // the week strip so the screen and the printout agree.
 
 function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSites, locColor,
-                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf, nameSize }) {
+                        siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf, nameSize,
+                        viewerTechId }) {
   const p = parseDateKey(dk);
   const bySite = {};
   activeTechs.forEach(t => {
@@ -3409,6 +3502,22 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
     const d = dutyOf ? dutyOf(dk, t.id) : '';
     return t.name.split(' ')[0] + (d ? dutySuffix(d) : '');
   };
+  // In the technician portal the viewer needs to find themselves at a glance, so
+  // their own name is underlined and their site block gets a ring. The ring is drawn
+  // with box-shadow rather than background, because background is what identifies
+  // the site and what the drag/selected states use.
+  const isMe = t => !!viewerTechId && t.id === viewerTechId;
+  const nameEls = list => list.map((t, i) => (
+    <span key={t.id}>
+      {i > 0 ? ' · ' : ''}
+      <span style={isMe(t) ? {textDecoration:'underline',textUnderlineOffset:2,fontWeight:800} : null}>
+        {fname(t)}
+      </span>
+    </span>
+  ));
+  const meAtSite = sid => !!viewerTechId && (bySite[sid] || []).some(t => t.id === viewerTechId);
+  const meOff = !!viewerTechId && off.some(t => t.id === viewerTechId);
+  const RING = '0 0 0 2px rgba(79,70,229,0.75)';
   const fz = compact ? 9 : 10;
   // `nameSize` lets one call site (the week strip) render bigger technician names
   // without touching the month grid, which is tuned to fit a one-page PDF.
@@ -3432,17 +3541,20 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
   function quad(sid, i) {
     const has = !!bySite[sid];
     const c = locColor(sid);
+    const mine = meAtSite(sid);
     return (
       <div key={sid} style={{padding:padV+'px '+padH+'px',minHeight:minH,
               borderRight: (i % 2 === 0) ? '1px solid var(--border-subtle)' : 'none',
-              borderBottom: (i < 2) ? '1px solid var(--border-subtle)' : 'none'}}>
+              borderBottom: (i < 2) ? '1px solid var(--border-subtle)' : 'none',
+              boxShadow: mine ? RING : 'none', borderRadius: mine ? 3 : 0,
+              position: mine ? 'relative' : 'static', zIndex: mine ? 1 : 'auto'}}>
         <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,letterSpacing:0.2,
                       color:'#fff',background: has ? c.border : 'var(--border-default)',
                       borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
           {siteAbbr(sid)}
         </span>
         {has
-          ? <span style={{fontSize:nfz,fontWeight:600}}>{bySite[sid].map(fname).join(' · ')}</span>
+          ? <span style={{fontSize:nfz,fontWeight:600}}>{nameEls(bySite[sid])}</span>
           : <span style={{fontSize:nfz,color:'var(--text-dim)'}}>—</span>}
       </div>
     );
@@ -3456,21 +3568,24 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
       {overflow.length > 0 && (
         <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-deep)'}}>
           {overflow.map(l => (
-            <span key={l.id} style={{marginRight:7}}>
+            <span key={l.id} style={Object.assign({marginRight:7},
+                    meAtSite(l.id) ? {boxShadow:RING,borderRadius:3,padding:'0 2px'} : null)}>
               <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,color:'#fff',
                             background:locColor(l.id).border,borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>
                 {siteAbbr(l.id)}
               </span>
-              <span style={{fontSize:nfz,fontWeight:600}}>{bySite[l.id].map(fname).join(' · ')}</span>
+              <span style={{fontSize:nfz,fontWeight:600}}>{nameEls(bySite[l.id])}</span>
             </span>
           ))}
         </div>
       )}
       {off.length > 0 && (
-        <div style={{borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',background:'var(--bg-elevated)'}}>
+        <div style={Object.assign({borderTop:'1px solid var(--border-subtle)',padding:'2px 3px',
+                                   background:'var(--bg-elevated)'},
+                                  meOff ? {boxShadow:RING,borderRadius:3} : null)}>
           <span style={{display:'inline-block',fontSize:badgeFz,fontWeight:800,color:'#fff',
                         background:'#6b7280',borderRadius:2,padding:'0 3px',marginRight:3,verticalAlign:1}}>OFF</span>
-          <span style={{fontSize:nfz,fontStyle:'italic',color:'var(--text-muted)'}}>{off.map(fname).join(' · ')}</span>
+          <span style={{fontSize:nfz,fontStyle:'italic',color:'var(--text-muted)'}}>{nameEls(off)}</span>
         </div>
       )}
       {(note || (hol && hol.halfDay === 'am')) && (
@@ -5375,10 +5490,57 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
 // variants (getPortalAssignment / isPortalTechOff / portalDutyOf) — never the
 // live-plan ones an admin edits.
 function PortalWeek(props) {
-  const { S, selectedDate, setSelectedDate, notifySettings } = props;
-  function goToday() {
-    setSelectedDate(todayKeyIn((notifySettings && notifySettings.timezone) || 'America/Los_Angeles'));
-  }
+  const { S, selectedDate, setSelectedDate, notifySettings, techPublished, myTechId,
+          activeTechs, getAssignment, dutyOf, locName, doctorsAtSiteOn } = props;
+  const tz = (notifySettings && notifySettings.timezone) || 'America/Los_Angeles';
+  const today = todayKeyIn(tz);
+  function goToday() { setSelectedDate(today); }
+
+  // Monday-first week, matching the grid above and the /week Telegram command.
+  const monday = (() => {
+    const dow = dkToDate(selectedDate).getDay();
+    return addDays(selectedDate, dow === 0 ? -6 : 1 - dow);
+  })();
+  const weekDks = [0,1,2,3,4,5].map(i => addDays(monday, i));
+
+  // Stamped from the month the week STARTS in — a week straddling two months would
+  // otherwise have no single answer.
+  const publishedNote = (() => {
+    const p = parseDateKey(monday);
+    const rec = (techPublished || {})[p.year + '-' + p.month0];
+    if (rec && rec.publishedAt) return 'Published ' + fmtStamp(rec.publishedAt);
+    return 'Published date not recorded for this month';
+  })();
+
+  // This technician's own week only — never anyone else's assignment.
+  const weekSummary = weekDks.map(dk => {
+    const a = myTechId ? getAssignment(dk, myTechId) : null;
+    const am = a && a.am ? a.am : '', pm = a && a.pm ? a.pm : '';
+    const off = !am && !pm ? false : (am === 'OFF' && pm === 'OFF');
+    const nothing = !am && !pm;
+    const duty = myTechId && dutyOf ? dutyOf(dk, myTechId) : '';
+    let location = '';
+    if (!off && !nothing) {
+      location = am === pm ? locName(am) + ' all day'
+               : (am && pm) ? locName(am) + ' AM, ' + locName(pm) + ' PM'
+               : locName(am || pm);
+    }
+    const sites = Array.from(new Set([am, pm].filter(x => x && x !== 'OFF')));
+    const docs = [];
+    sites.forEach(sid => (doctorsAtSiteOn ? doctorsAtSiteOn(dk, sid) : []).forEach(n => {
+      if (docs.indexOf(n) === -1) docs.push(n);
+    }));
+    return {
+      dk, label: fmtDateShort(dk),
+      off: off || nothing, location,
+      doctors: docs.join(', '),
+      duty: duty ? dutyLabel(duty) : '',
+      today: dk === today,
+      past: dk < today,
+    };
+  // A Saturday with nothing on it is noise in a personal list.
+  }).filter((r, i) => i < 5 || !r.off);
+
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
       <div style={Object.assign({}, S.card, {padding:'8px 12px',display:'flex',justifyContent:'flex-end'})}>
@@ -5386,6 +5548,9 @@ function PortalWeek(props) {
       </div>
       <WeekView {...Object.assign({}, props, {
         isAdmin: false,
+        viewerTechId: myTechId,
+        publishedNote,
+        weekSummary,
         setAssignment: () => {},
         setTechDayNotes: () => {},
         setDuty: () => {},
@@ -5407,7 +5572,7 @@ function PortalWeek(props) {
 // final plan gets an explicit message, never a silently-empty grid (which would
 // be indistinguishable from "nothing scheduled") and never a fallback to a draft.
 function DoctorMonthView({ S, isMobile, selectedDate, setSelectedDate, doctors, locations,
-                           docSchedules, finalPlans, docDayNotes, holidays, theme }) {
+                           docSchedules, finalPlans, docDayNotes, holidays, theme, publishedNote }) {
   const dp = parseDateKey(selectedDate);
   const ym = `${dp.year}-${dp.month0}`;
   const plan = finalPlans[ym];
@@ -5434,6 +5599,9 @@ function DoctorMonthView({ S, isMobile, selectedDate, setSelectedDate, doctors, 
         <button onClick={() => shiftMonth(1)} style={S.btn}>→</button>
         <button onClick={() => setSelectedDate(todayKeyIn('America/Los_Angeles'))} style={S.btn}>Today</button>
       </div>
+      {publishedNote && (
+        <div style={{fontSize:11.5,color:'var(--text-muted)',marginTop:-4,marginBottom:10}}>{publishedNote}</div>
+      )}
 
       {!plan ? (
         <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'14px 16px',fontSize:13,color:'#f59e0b'}}>
