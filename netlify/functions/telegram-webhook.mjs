@@ -279,12 +279,7 @@ export default async (req) => {
       // Cheap admin check (no full loadContext) so the technician path below keeps
       // its original cost when the chat is not an administrator's.
       const admins = await readJson(store, ADMIN + ":techAdmins", []);
-      if (admins.some(a => a.id === techId)) {
-        const ctx = await loadContext(store);
-        const today = todayIn(ctx.settings.timezone);
-        await reply(chatId, renderPracticeSummaryTelegram(ctx, today));
-        return ok();
-      }
+      const isPracticeAdmin = admins.some(a => a.id === techId);
 
       const LINK_SECRET = process.env.LINK_SECRET;
       if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return ok(); }
@@ -298,6 +293,8 @@ export default async (req) => {
       const token = await makeTechToken(techId, contacts[techId].linkNonce, LINK_SECRET);
       const url = dayLinkFor(baseUrlFor(req), token);
 
+      // Identical affordance either way: the signed link resolves by id, and
+      // tech-day renders an administrator the whole-practice view.
       await reply(chatId, "📋 Today's board — everyone, every site.",
         { inline_keyboard: [[{ text: "View full board", url }]] });
       return ok();

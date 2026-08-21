@@ -120,10 +120,9 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
 // adapters — which only ever look at subject/telegramText/emailHtml/emailText/
 // link/kind — need no changes to handle an administrator recipient.
 //
-// `link` is deliberately expected to be null/absent: the signed day-view page
-// (/d, tech-day.mjs) resolves its token against ctx.techs only, so there is no
-// working per-admin link to hand out. The body carries the whole schedule
-// directly instead.
+// `link` is the same signed day-view link technicians receive. The token carries an
+// id rather than a role, and tech-day resolves an administrator's id to the
+// whole-practice board — so the button works without any per-role plumbing.
 export function composeAdminSummary(ctx, dk, admin, kind, link) {
   const dayLabel = fmtShort(dk);
   const heading = kind === "test" ? "Test message" : "Practice schedule";

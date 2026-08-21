@@ -55,17 +55,20 @@ async function buildRecipients(ctx, dk, kind, base, secret, onlyTechIds, prevSum
 // Administrators receive the whole-practice summary on a scheduled send only —
 // never on a change alert, which is a per-person reassignment that means nothing
 // to a manager (callers pass kind === "change" here too, so this filters it out
-// rather than relying on every caller to remember). No day-view link is minted:
-// /d (tech-day.mjs) resolves its token against ctx.techs only, so there is no
-// working per-admin link — composeAdminSummary is built to carry the schedule in
-// the body instead.
-function buildAdminRecipients(ctx, dk, kind) {
+// rather than relying on every caller to remember).
+//
+// They get the same signed day-view link technicians get: the token carries an id,
+// not a role, and tech-day resolves an administrator's id to the whole-practice
+// view. Async for that reason — minting the token is a crypto call.
+async function buildAdminRecipients(ctx, dk, kind, base, secret) {
   if (kind === "change") return [];
-  return activeAdmins(ctx).map(admin => {
+  const out = [];
+  for (const admin of activeAdmins(ctx)) {
     const contact = ctx.contacts[admin.id] || {};
-    const message = composeAdminSummary(ctx, dk, admin, kind, null);
-    return { tech: admin, contact, message };
-  });
+    const link = await linkFor(admin, contact, base, secret, dk);
+    out.push({ tech: admin, contact, message: composeAdminSummary(ctx, dk, admin, kind, link) });
+  }
+  return out;
 }
 
 // `kind`: 'evening' | 'morning' | 'change'.
@@ -84,7 +87,7 @@ export async function runSendJob(store, ctx, opts) {
   }
 
   const recipients = await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
-  const adminRecipients = buildAdminRecipients(ctx, dateKey, kind);
+  const adminRecipients = await buildAdminRecipients(ctx, dateKey, kind, base, secret);
   if (recipients.length === 0 && adminRecipients.length === 0) {
     return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
   }

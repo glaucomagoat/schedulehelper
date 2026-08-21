@@ -273,13 +273,21 @@ export function renderDayPage(ctx, dk, techId, techName, opts) {
     + '</head>'
     + '<body style="margin:0;background:#f0f0f8;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e;">'
     + '<div style="max-width:560px;margin:0 auto;padding:18px 14px 40px;">'
-    + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">Technician schedule</div>'
+    + '<div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:4px;">'
+    + (o.viewerIsAdmin ? 'Practice schedule' : 'Technician schedule') + '</div>'
     + '<h1 style="font-size:20px;margin:0 0 14px;font-weight:800;">' + escapeHtml(fmtLong(dk)) + '</h1>'
     + '<div style="margin-bottom:8px;">' + weekRow + '</div>'
     + monthRow
-    + renderMineHtml(ctx, dk, techId, techName)
+    // An administrator is not scheduled, so the "your assignment" card would read
+    // "No assignment" and say nothing. Name them and go straight to the board.
+    + (o.viewerIsAdmin
+        ? '<div style="border-radius:12px;padding:16px;margin-bottom:18px;background:#4f46e5;color:#ffffff;">'
+            + '<div style="font-size:12px;font-weight:700;letter-spacing:0.8px;opacity:0.85;">'
+            + escapeHtml(String(techName || 'Administrator').toUpperCase()) + '</div>'
+            + '<div style="font-size:22px;font-weight:800;margin-top:6px;">Whole practice</div></div>'
+        : renderMineHtml(ctx, dk, techId, techName))
     + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin-bottom:8px;">EVERYONE TODAY</div>'
-    + renderBoardHtml(ctx, dk, techId)
+    + renderBoardHtml(ctx, dk, o.viewerIsAdmin ? null : techId)
     + '<div style="margin-top:20px;font-size:12px;color:#9ca3af;line-height:1.6;">'
     + 'This schedule can change. Check back the morning of, or watch for a change alert.'
     + '</div></div></body></html>';
@@ -321,9 +329,13 @@ export function renderMonthPage(ctx, ym, techId, techName, opts) {
       // On a page showing EVERYONE, "No assignment" in the collapsed row reads as
       // "nothing is scheduled today" when in fact the whole practice is working. Say
       // it from the viewer's point of view instead, and mark it as quiet text.
-      const rawMine = summaryLine(ctx, dk, techId); // plain text — must be escaped
-      const viewerOff = rawMine === "OFF" || rawMine === "No assignment";
-      const mine = viewerOff ? "You're off" : rawMine;
+      // An administrator is not scheduled, so "You're off" would be nonsense on every
+      // row. Summarise the day's size for them instead.
+      const rawMine = o.viewerIsAdmin ? "" : summaryLine(ctx, dk, techId);
+      const viewerOff = !o.viewerIsAdmin && (rawMine === "OFF" || rawMine === "No assignment");
+      const mine = o.viewerIsAdmin
+        ? (groupBySite(ctx, dk).length + " site" + (groupBySite(ctx, dk).length === 1 ? "" : "s"))
+        : (viewerOff ? "You're off" : rawMine);
       const board = renderBoardHtml(ctx, dk, techId); // already-built/escaped HTML
       return '<details' + (isToday ? ' open' : '') + ' style="margin-bottom:10px;border-radius:10px;'
         + 'overflow:hidden;' + (isToday ? 'border:2px solid #4f46e5;' : 'border:1px solid #e3e6ef;') + 'background:#ffffff;">'

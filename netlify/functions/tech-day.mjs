@@ -71,8 +71,14 @@ export default async (req) => {
   const techId = await verifyTechToken(token, LINK_SECRET, id => (ctx.contacts[id] || {}).linkNonce);
   if (!techId) return errorPage(403, "This link is no longer valid");
 
+  // The token carries an id, not a role. Administrators get the same signed link as
+  // technicians — theirs simply resolves to a whole-practice view with no personal
+  // assignment card and nobody highlighted.
   const tech = ctx.techs.find(t => t.id === techId);
-  if (!tech) return errorPage(404, "This technician is no longer on the schedule");
+  const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId && a.active !== false);
+  if (!tech && !admin) return errorPage(404, "This link is no longer on the schedule");
+  const viewerName = tech ? tech.name : admin.name;
+  const viewerIsAdmin = !tech;
 
   const todayDk = todayIn(ctx.settings.timezone);
   const tomorrowDk = addDays(todayDk, 1);
@@ -86,8 +92,8 @@ export default async (req) => {
   // A well-formed, real `m` wins and renders the month page; anything else (absent,
   // malformed, out-of-range) falls through to the normal day view rather than erroring.
   const html = isValidYm(requestedYm)
-    ? renderMonthPage(ctx, requestedYm, techId, tech.name, { linkBase, todayDk })
-    : renderDayPage(ctx, dk, techId, tech.name, { linkBase, todayDk, tomorrowDk });
+    ? renderMonthPage(ctx, requestedYm, techId, viewerName, { linkBase, todayDk, viewerIsAdmin })
+    : renderDayPage(ctx, dk, techId, viewerName, { linkBase, todayDk, tomorrowDk, viewerIsAdmin });
 
   return new Response(req.method === "HEAD" ? null : html, { status: 200, headers: HTML });
 };
