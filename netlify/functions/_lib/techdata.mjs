@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       readJson(store, ns + "techContacts", {}),
@@ -70,10 +70,16 @@ export async function loadContext(store) {
       readJson(store, ns + "techSites", []),
       readJson(store, ns + "techFinalPlans", {}),
       readJson(store, ns + "techPublished", {}),
+      // Practice managers / higher-level admins. NOT technicians: never scheduled,
+      // never assigned, never counted toward coverage — they only ever receive the
+      // whole-practice summary. Contacts for them live in the SAME techContacts map
+      // above, keyed by their id (which carries an "a" prefix so it can never
+      // collide with a technician's "t" id).
+      readJson(store, ns + "techAdmins", []),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
-    finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans, techPublished,
+    finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans, techPublished, techAdmins,
     // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
     // Doctors only ever appear at real locations, which is why the two differ.
     allSites: (locations || []).concat(techSites || []),
@@ -188,6 +194,14 @@ export function locationName(ctx, id) {
 
 export function activeTechs(ctx) {
   return ctx.techs.filter(t => t.active !== false);
+}
+
+// Administrators eligible to receive the whole-practice summary. Mirrors
+// activeTechs on purpose — same "active !== false" convention — but this list must
+// never be merged into ctx.techs or activeTechs: administrators are not scheduled,
+// do not appear on the grid/OFF list/PDF/coverage counts, and are not technicians.
+export function activeAdmins(ctx) {
+  return (ctx.techAdmins || []).filter(a => a.active !== false);
 }
 
 // Doctors present at a specific site on a specific day, resolving a sub-room's

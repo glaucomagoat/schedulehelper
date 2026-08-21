@@ -561,6 +561,11 @@ function App() {
   // Technician-side data (owned by this app)
   const [techs, setTechs]                 = useState([]);
   const [techContacts, setTechContacts]   = useState({});
+  // Practice managers / higher-level admins. NOT technicians — never scheduled,
+  // never on the grid/OFF list/PDF/coverage. They receive the whole-practice
+  // summary instead of a personal assignment. Contacts for them live in the SAME
+  // techContacts map above, keyed by their id ("a..." vs a technician's "t...").
+  const [techAdmins, setTechAdmins]       = useState([]);
   const [techRules, setTechRules]         = useState([]);
   const [techStaffing, setTechStaffing]   = useState({});
   const [techSchedules, setTechSchedules] = useState({});
@@ -642,6 +647,7 @@ function App() {
 
   useEffect(() => { if (user) saveData('techs', techs); }, [techs]);
   useEffect(() => { if (user) saveData('techContacts', techContacts); }, [techContacts]);
+  useEffect(() => { if (user) saveData('techAdmins', techAdmins); }, [techAdmins]);
   useEffect(() => { if (user) saveData('techRules', techRules); }, [techRules]);
   useEffect(() => { if (user) saveData('techStaffing', techStaffing); }, [techStaffing]);
   useEffect(() => { if (user) saveData('techSchedules', techSchedules); }, [techSchedules]);
@@ -705,16 +711,20 @@ function App() {
     };
     const dOrSkip = k => portal ? Promise.resolve(null) : d(k);
     const [
-      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub,
+      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub, tadm,
       st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
       d('techs'), dOrSkip('techContacts'), dOrSkip('techRules'), d('techStaffing'),
       d('techSchedules'), dOrSkip('techTimeOff'), dOrSkip('techNotifySettings'), dOrSkip('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'), d('techPublished'),
+      // Admin-only, same as techContacts/techRules/etc — a technician portal
+      // session must never see the administrator roster.
+      dOrSkip('techAdmins'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
     if (tk)  setTechs(tk);
     if (tc)  setTechContacts(tc);
+    if (tadm) setTechAdmins(tadm);
     if (tr)  setTechRules(tr);
     if (ts)  setTechStaffing(ts);
     if (tfp) setTechFinalPlans(tfp);
@@ -1481,6 +1491,7 @@ function App() {
 
   // ── Telegram invites ───────────────────────────────────────────────────────
   const [invites, setInvites] = useState({});          // techId -> { url, linked, linkedAt }
+  const [adminInvites, setAdminInvites] = useState({}); // adminId -> { url, linked, linkedAt }
   const [invitesLoading, setInvitesLoading] = useState(false);
   const [botUsername, setBotUsername] = useState(null);
 
@@ -1489,6 +1500,7 @@ function App() {
     try {
       const d = await callTechApi({ action: 'invite-links' });
       setInvites(d.invites || {});
+      setAdminInvites(d.adminInvites || {});
       setBotUsername(d.botUsername || null);
       if (!quiet && d.minted) showToast(`Created ${d.minted} new invite link${d.minted===1?'':'s'}`, 'success');
     } catch(e) {
@@ -2333,10 +2345,11 @@ function App() {
         )}
         {activeTab === 'notify' && isAdmin && (
           <NotifyPanel {...{S,notifySettings,setNotifySettings,techs,techContacts,setTechContacts,notifyLog,showToast,
+                            techAdmins,setTechAdmins,
                             dayLinks,linksLoading,loadDayLinks,rotateDayLink,
                             selectedDate,setSelectedDate,sendDay,sendChanges,previewChanges,sendTest,sendInvite,sending,
                             channelStatus,loadChannelStatus,reloadNotifyLog,
-                            invites,invitesLoading,loadInvites,botUsername,unreachable}} />
+                            invites,adminInvites,invitesLoading,loadInvites,botUsername,unreachable}} />
         )}
 
         {/* ── Technician portal — read-only, always the PUBLISHED snapshot ──── */}
@@ -4252,10 +4265,11 @@ function TimeOffPanel({ S, techTimeOff, setTechTimeOff, techs, showToast }) {
 // ── Notifications ────────────────────────────────────────────────────────────
 
 function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts, setTechContacts, notifyLog, showToast,
+                       techAdmins, setTechAdmins,
                        dayLinks, linksLoading, loadDayLinks, rotateDayLink,
                        selectedDate, setSelectedDate, sendDay, sendChanges, previewChanges, sendTest, sendInvite, sending,
                        channelStatus, loadChannelStatus, reloadNotifyLog,
-                       invites, invitesLoading, loadInvites, botUsername, unreachable }) {
+                       invites, adminInvites, invitesLoading, loadInvites, botUsername, unreachable }) {
   const set = (k,v) => setNotifySettings(Object.assign({}, notifySettings, {[k]:v}));
 
   useEffect(() => { if (!channelStatus) loadChannelStatus(); }, []);
@@ -4264,6 +4278,26 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
   const [qrFor, setQrFor] = useState(null);            // techId whose QR is open
   const emailOn = !!(channelStatus && (channelStatus.configured || []).includes('email'));
   const qrAvailable = typeof qrcode === 'function';
+
+  // ── Administrators ──────────────────────────────────────────────────────────
+  const adminList = techAdmins || [];
+  const [adminForm, setAdminForm] = useState({ name: '', role: '' });
+  const [adminQrFor, setAdminQrFor] = useState(null);   // adminId whose QR is open
+
+  function addAdmin() {
+    const name = adminForm.name.trim();
+    if (!name) { showToast('Name is required', 'error'); return; }
+    setTechAdmins(adminList.concat([{ id: newId('a'), name, role: adminForm.role.trim(), active: true }]));
+    setAdminForm({ name: '', role: '' });
+  }
+  function toggleAdminActive(a) {
+    setTechAdmins(adminList.map(x => x.id === a.id ? Object.assign({}, x, { active: x.active === false }) : x));
+  }
+  function removeAdmin(a) {
+    if (!confirm(`Remove ${a.name}? They will stop receiving the practice summary.`)) return;
+    setTechAdmins(adminList.filter(x => x.id !== a.id));
+    const c = Object.assign({}, techContacts); delete c[a.id]; setTechContacts(c);
+  }
 
   const [logDate, setLogDate] = useState(selectedDate);
   const entry = notifyLog[logDate] || {};
@@ -4581,6 +4615,137 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
                               </div>
                               <div style={{fontSize:11,color:'var(--text-dim)',marginTop:8}}>
                                 This link is personal to {t.name} — it binds whoever opens it to their assignments, so don't post it anywhere shared.
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={Object.assign({}, S.card, {overflow:'hidden'})}>
+        <div style={{padding:'14px 16px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Administrators</span>
+          {botUsername && <span style={{fontSize:12,color:'var(--text-muted)'}}>@{botUsername}</span>}
+          <div style={{flex:1}} />
+          <button onClick={() => loadInvites(false)} disabled={invitesLoading} style={S.btn}>
+            {invitesLoading ? 'Loading…' : '↻ Refresh invites'}
+          </button>
+        </div>
+        <div style={{padding:'6px 16px 12px',fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          Practice managers and other administrators are not scheduled themselves — they get the whole practice's
+          schedule (every site, its doctors, and its technicians) instead of a personal assignment.
+        </div>
+
+        <div style={{padding:'0 16px 14px',display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+          <div>
+            <label style={S.label}>Name</label>
+            <input value={adminForm.name} onChange={e => setAdminForm(Object.assign({}, adminForm, {name:e.target.value}))}
+                   placeholder="Jane Doe" style={S.input} />
+          </div>
+          <div>
+            <label style={S.label}>Role (optional)</label>
+            <input value={adminForm.role} onChange={e => setAdminForm(Object.assign({}, adminForm, {role:e.target.value}))}
+                   placeholder="Practice Manager" style={S.input} />
+          </div>
+          <button onClick={addAdmin} style={S.btnP}>Add administrator</button>
+        </div>
+
+        <div className="mob-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:640}}>
+            <thead><tr>
+              <th style={S.th}>Administrator</th><th style={S.th}>Role</th><th style={S.th}>Telegram</th>
+              <th style={S.th}>Invite</th><th style={S.th}>Active</th><th style={S.th}></th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {adminList.length === 0 && (
+                <tr><td style={Object.assign({}, S.td,{color:'var(--text-muted)'})} colSpan={7}>No administrators yet.</td></tr>
+              )}
+              {adminList.map(a => {
+                const c = techContacts[a.id] || {};
+                const inv = adminInvites[a.id];
+                const linked = !!c.telegramChatId || !!(inv && inv.linked);
+                return (
+                  <React.Fragment key={a.id}>
+                    <tr style={{opacity: a.active === false ? 0.5 : 1, background: linked ? 'transparent' : 'rgba(245,158,11,0.06)'}}>
+                      <td style={Object.assign({}, S.td, {fontWeight:600})}>{a.name}</td>
+                      <td style={Object.assign({}, S.td, {fontSize:13,color:'var(--text-muted)'})}>{a.role || '—'}</td>
+                      <td style={Object.assign({}, S.td, {fontSize:13})}>
+                        {linked
+                          ? <span style={{color:'#10b981',fontWeight:700}}>✓ linked</span>
+                          : <span style={{color:'#f59e0b',fontWeight:700}}>⚠ not linked</span>}
+                      </td>
+                      <td style={S.td}>
+                        {!inv ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>—</span>
+                        ) : linked ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>done</span>
+                        ) : (
+                          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                            <button onClick={() => setAdminQrFor(adminQrFor === a.id ? null : a.id)}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>
+                              {adminQrFor === a.id ? 'Hide QR' : '📷 QR'}
+                            </button>
+                            <button onClick={() => {
+                                      navigator.clipboard.writeText(inv.url)
+                                        .then(() => showToast('Invite link copied', 'success'))
+                                        .catch(() => showToast('Copy failed — open the QR and read the link below it', 'error'));
+                                    }}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12})}>Copy link</button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={S.td}>
+                        <button onClick={() => toggleAdminActive(a)}
+                          style={{background:'transparent',border:'none',cursor:'pointer',fontSize:18,fontFamily:'inherit'}}>
+                          {a.active === false ? '⚪️' : '🟢'}
+                        </button>
+                      </td>
+                      <td style={S.td}>
+                        <button onClick={() => sendTest(a.id)} disabled={!!sending || !linked}
+                                title={linked ? 'Send this administrator a test message' : 'Not linked yet'}
+                                style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
+                                  opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                      </td>
+                      <td style={S.td}>
+                        <button onClick={() => removeAdmin(a)} style={S.btnD}>Remove</button>
+                      </td>
+                    </tr>
+                    {adminQrFor === a.id && inv && (
+                      <tr>
+                        <td colSpan={7} style={{padding:'14px 16px 18px',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-deep)'}}>
+                          <div style={{display:'flex',gap:18,alignItems:'flex-start',flexWrap:'wrap'}}>
+                            {(() => {
+                              const uri = qrDataUri(inv.url, 190);
+                              return uri
+                                ? <img src={uri} alt={'Telegram invite QR for ' + a.name}
+                                       style={{width:190,height:190,borderRadius:10,flexShrink:0,background:'#fff'}} />
+                                : <div style={{width:190,height:190,display:'flex',alignItems:'center',justifyContent:'center',
+                                               border:'1px dashed var(--border-default)',borderRadius:10,fontSize:12,
+                                               color:'var(--text-muted)',textAlign:'center',padding:12}}>
+                                    QR unavailable — use the link
+                                  </div>;
+                            })()}
+                            <div style={{flex:1,minWidth:220}}>
+                              <div style={{fontWeight:700,marginBottom:6}}>Onboarding {a.name}</div>
+                              <ol style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.8,paddingLeft:18,margin:'0 0 10px'}}>
+                                <li>They install Telegram and sign in</li>
+                                <li>They point their phone camera at this code</li>
+                                <li>Telegram opens — they tap <strong>Start</strong></li>
+                              </ol>
+                              <div style={{fontSize:11,fontFamily:'"Space Mono",monospace',color:'var(--text-muted)',
+                                           wordBreak:'break-all',background:'var(--input-bg)',padding:'7px 9px',borderRadius:6}}>
+                                {inv.url}
+                              </div>
+                              <div style={{fontSize:11,color:'var(--text-dim)',marginTop:8}}>
+                                This link is personal to {a.name} — it binds whoever opens it to the whole-practice
+                                summary, so don't post it anywhere shared.
                               </div>
                             </div>
                           </div>

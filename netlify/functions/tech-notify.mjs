@@ -9,7 +9,7 @@ import {
 import {
   makeTechToken, newNonce, dayLinkFor, makeInviteToken, inviteLinkFor,
 } from "./_lib/links.mjs";
-import { composeDayMessage, composeInviteEmail } from "./_lib/compose.mjs";
+import { composeDayMessage, composeInviteEmail, composeAdminSummary } from "./_lib/compose.mjs";
 import { sendToTech, configuredChannels } from "./_lib/notify.mjs";
 import { runSendJob, describeAssignment } from "./_lib/sendjob.mjs";
 import { changedTechs } from "./_lib/sendlog.mjs";
@@ -164,15 +164,25 @@ export default async (req) => {
       return json({ success: true, dateKey: dk, changed: list });
     }
 
-    // Dry run to one technician. Deliberately does NOT touch the log or the snapshot —
-    // a test must never make the system think the roster has been notified.
+    // Dry run to one technician OR administrator. Deliberately does NOT touch the
+    // log or the snapshot — a test must never make the system think the roster has
+    // been notified.
     case "send-test": {
       const techId = String(body.techId || "");
       const tech = ctx.techs.find(t => t.id === techId);
-      if (!tech) return json({ error: "Unknown technician" }, 404);
+      const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId);
+      if (!tech && !admin) return json({ error: "Unknown technician" }, 404);
       const dk = isValidDateKey(body.dateKey) ? body.dateKey : todayIn(ctx.settings.timezone);
 
       const contact = ctx.contacts[techId] || {};
+      if (admin) {
+        // No day-view link for an administrator — see composeAdminSummary's note:
+        // /d resolves its token against ctx.techs only.
+        const message = composeAdminSummary(ctx, dk, admin, "test", null);
+        const results = await sendToTech(admin, contact, message, ctx.settings);
+        results.forEach(r => { r.isAdmin = true; });
+        return json({ success: true, test: true, subject: message.subject, results });
+      }
       const link = await linkFor(tech, contact, base, LINK_SECRET, dk);
       const message = composeDayMessage(ctx, dk, tech, "test", link, null);
       const results = await sendToTech(tech, contact, message, ctx.settings);
@@ -183,6 +193,10 @@ export default async (req) => {
     // linked. A bot cannot message someone first, so these links are the ONLY route
     // into the channel — and when email is not configured they have to be delivered
     // by hand (QR code, printout, forwarded text). The admin UI renders them.
+    //
+    // Administrator invites ride along in a clearly separate `adminInvites` map —
+    // same shape, same contacts blob, but never merged into `invites` so the client
+    // can never accidentally render an administrator in a technician list.
     case "invite-links": {
       const botUsername = process.env.TELEGRAM_BOT_USERNAME;
       if (!botUsername) return json({ error: "TELEGRAM_BOT_USERNAME is not set" }, 500);
@@ -193,6 +207,11 @@ export default async (req) => {
         if (t.active === false) continue;
         if (!contacts[t.id]) contacts[t.id] = {};
         if (!contacts[t.id].linkNonce) { contacts[t.id].linkNonce = newNonce(); minted++; }
+      }
+      for (const a of (ctx.techAdmins || [])) {
+        if (a.active === false) continue;
+        if (!contacts[a.id]) contacts[a.id] = {};
+        if (!contacts[a.id].linkNonce) { contacts[a.id].linkNonce = newNonce(); minted++; }
       }
       if (minted) await writeJson(store, contactsKey, contacts);
 
@@ -206,7 +225,19 @@ export default async (req) => {
           linkedAt: contacts[t.id].telegramLinkedAt || null,
         };
       }
-      return json({ success: true, botUsername, minted, invites });
+
+      const adminInvites = {};
+      for (const a of (ctx.techAdmins || [])) {
+        if (a.active === false) continue;
+        const token = await makeInviteToken(a.id, contacts[a.id].linkNonce, LINK_SECRET);
+        adminInvites[a.id] = {
+          url: inviteLinkFor(botUsername, token),
+          linked: !!contacts[a.id].telegramChatId,
+          linkedAt: contacts[a.id].telegramLinkedAt || null,
+        };
+      }
+
+      return json({ success: true, botUsername, minted, invites, adminInvites });
     }
 
     // Email a technician their invite. Kept working for when email is configured, but

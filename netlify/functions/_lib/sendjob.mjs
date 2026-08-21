@@ -3,9 +3,9 @@
 // 6pm automatic send and a manual send produce the same message and the same
 // log entry — if they drifted, the delivery log would stop being trustworthy.
 
-import { activeTechs, todayIn, assignmentsFor } from "./techdata.mjs";
+import { activeTechs, activeAdmins, todayIn, assignmentsFor } from "./techdata.mjs";
 import { makeTechToken, dayLinkFor } from "./links.mjs";
-import { composeDayMessage } from "./compose.mjs";
+import { composeDayMessage, composeAdminSummary } from "./compose.mjs";
 import { sendToMany, summarize } from "./notify.mjs";
 import { recordSend, buildSnapshot, changedTechs } from "./sendlog.mjs";
 
@@ -52,6 +52,22 @@ async function buildRecipients(ctx, dk, kind, base, secret, onlyTechIds, prevSum
   return out;
 }
 
+// Administrators receive the whole-practice summary on a scheduled send only —
+// never on a change alert, which is a per-person reassignment that means nothing
+// to a manager (callers pass kind === "change" here too, so this filters it out
+// rather than relying on every caller to remember). No day-view link is minted:
+// /d (tech-day.mjs) resolves its token against ctx.techs only, so there is no
+// working per-admin link — composeAdminSummary is built to carry the schedule in
+// the body instead.
+function buildAdminRecipients(ctx, dk, kind) {
+  if (kind === "change") return [];
+  return activeAdmins(ctx).map(admin => {
+    const contact = ctx.contacts[admin.id] || {};
+    const message = composeAdminSummary(ctx, dk, admin, kind, null);
+    return { tech: admin, contact, message };
+  });
+}
+
 // `kind`: 'evening' | 'morning' | 'change'.
 export async function runSendJob(store, ctx, opts) {
   const { dateKey, kind, base, secret } = opts;
@@ -68,11 +84,20 @@ export async function runSendJob(store, ctx, opts) {
   }
 
   const recipients = await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
-  if (recipients.length === 0) {
+  const adminRecipients = buildAdminRecipients(ctx, dateKey, kind);
+  if (recipients.length === 0 && adminRecipients.length === 0) {
     return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
   }
 
-  const results = await sendToMany(recipients, ctx.settings);
+  const techResults = recipients.length ? await sendToMany(recipients, ctx.settings) : [];
+  const adminResults = adminRecipients.length ? await sendToMany(adminRecipients, ctx.settings) : [];
+  // Tag every admin delivery attempt so the log can never be misread as a
+  // technician's, even though an admin id already carries a distinct "a" prefix
+  // (techIds are "t...") — belt and braces for any reader that checks a flag
+  // rather than sniffing the id shape.
+  adminResults.forEach(r => { r.isAdmin = true; });
+
+  const results = techResults.concat(adminResults);
   const snapshot = buildSnapshot(ctx, dateKey);
   await recordSend(store, dateKey, kind, results, snapshot, todayIn(ctx.settings.timezone));
 

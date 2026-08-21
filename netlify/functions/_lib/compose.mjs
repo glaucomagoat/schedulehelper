@@ -6,7 +6,9 @@
 // in full on a lock screen, in a mail-app list row, and on a watch face — no open
 // required. The body then carries what an SMS never could: the entire day's board.
 
-import { summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines } from "./dayboard.mjs";
+import {
+  summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines, renderPracticeSummaryTelegram,
+} from "./dayboard.mjs";
 import { fmtShort, fmtLong, escapeHtml, todayIn } from "./techdata.mjs";
 
 function button(url, label) {
@@ -82,7 +84,7 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     + escapeHtml(fmtLong(dk)) + "\n\n"
     + assignmentBlock
     + (kind === "change" ? "\n\n" + escapeHtml(CHANGE_EXPLAINER) : "")
-    + "\n\n<i>Commands: /today /tomorrow /thisweek /board</i>";
+    + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
 
 
   const changeExplainerHtml = (kind === "change")
@@ -110,6 +112,48 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     + "\nThis schedule can change during the day — the link above is always current.";
 
   return { subject, summary, telegramText, emailHtml, emailText, link, kind, dateKey: dk };
+}
+
+// Whole-practice summary for an administrator — every site's doctors AND
+// technicians, never a personal assignment (administrators are not scheduled).
+// Returns the exact same shape composeDayMessage does, so sendToTech/the channel
+// adapters — which only ever look at subject/telegramText/emailHtml/emailText/
+// link/kind — need no changes to handle an administrator recipient.
+//
+// `link` is deliberately expected to be null/absent: the signed day-view page
+// (/d, tech-day.mjs) resolves its token against ctx.techs only, so there is no
+// working per-admin link to hand out. The body carries the whole schedule
+// directly instead.
+export function composeAdminSummary(ctx, dk, admin, kind, link) {
+  const dayLabel = fmtShort(dk);
+  const heading = kind === "test" ? "Test message" : "Practice schedule";
+  const subject = (kind === "test" ? "[test] " : "") + "Practice schedule — " + dayLabel;
+
+  const telegramText =
+    renderPracticeSummaryTelegram(ctx, dk)
+    + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
+
+  const headerHtml = '<div style="border-radius:12px;padding:16px;margin-bottom:18px;background:#4f46e5;color:#ffffff;">'
+    + '<div style="font-size:12px;font-weight:700;letter-spacing:0.8px;opacity:0.85;">'
+    + escapeHtml(String((admin && admin.name) || "Administrator").toUpperCase()) + ' &middot; ' + escapeHtml(dayLabel) + '</div>'
+    + '<div style="font-size:20px;font-weight:800;margin-top:6px;line-height:1.25;">Whole-practice schedule</div>'
+    + '</div>';
+
+  const emailHtml = emailShell(
+    headerHtml
+    + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin:0 0 8px;">EVERYONE ON '
+    + escapeHtml(dayLabel.toUpperCase()) + '</div>'
+    + renderBoardHtml(ctx, dk, null),
+    link
+  );
+
+  const emailText =
+    heading + "\n" + fmtLong(dk) + "\n\n"
+    + "Whole-practice schedule — every site with its doctors and technicians."
+    + (link ? "\nFull schedule: " + link + "\n" : "")
+    + "\nThis schedule can change during the day.";
+
+  return { subject, telegramText, emailHtml, emailText, link, kind, dateKey: dk };
 }
 
 export function composeInviteEmail(tech, inviteUrl, practiceName) {

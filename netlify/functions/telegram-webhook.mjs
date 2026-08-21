@@ -8,10 +8,10 @@
 
 import {
   techStore, loadContext, readJson, writeJson, ADMIN, todayIn,
-  addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml,
+  addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml, activeTechs, assignmentsFor,
 } from "./_lib/techdata.mjs";
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
-import { summaryLine, personalTelegramLines } from "./_lib/dayboard.mjs";
+import { summaryLine, personalTelegramLines, renderPracticeSummaryTelegram } from "./_lib/dayboard.mjs";
 
 // A Response body can be read only once, so this MUST build a new object per
 // return. Netlify reuses the module across invocations in a warm container, so a
@@ -124,6 +124,9 @@ export default async (req) => {
       if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return ok(); }
 
       const contacts = await readJson(store, contactsKey, {});
+      // The nonce getter is id-agnostic — it just looks up whatever id the token
+      // names in the shared contacts map — so the same verifyInviteToken call binds
+      // either a technician's or an administrator's invite with no branching here.
       const techId = await verifyInviteToken(payload, LINK_SECRET, id => (contacts[id] || {}).linkNonce);
       if (!techId) {
         await reply(chatId, "That invite link is not valid any more. Please ask the scheduling coordinator for a new one.");
@@ -132,7 +135,11 @@ export default async (req) => {
 
       const ctx = await loadContext(store);
       const tech = ctx.techs.find(t => t.id === techId);
-      if (!tech) { await reply(chatId, "That technician is no longer on the schedule."); return ok(); }
+      // Administrators are NOT technicians (never scheduled, never on the grid) —
+      // resolved separately, and only when techId did not match a technician.
+      const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId);
+      const person = tech || admin;
+      if (!person) { await reply(chatId, "That account is no longer on the schedule."); return ok(); }
 
       contacts[techId] = Object.assign({}, contacts[techId] || {}, {
         telegramChatId: String(chatId),
@@ -146,13 +153,18 @@ export default async (req) => {
       await writeJson(store, contactsKey, contacts);
 
       await reply(chatId,
-        "✅ Linked, " + tech.name.split(" ")[0] + ".\n\n"
-        + "You'll get your site assignment here the night before and again in the morning, "
-        + "plus an alert if anything changes.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's.");
+        "✅ Linked, " + person.name.split(" ")[0] + ".\n\n"
+        + (admin
+            ? "You'll get the whole practice's schedule here the night before and again in the morning.\n\nSend /today for today's schedule, /week for the full week, or /board to see it now."
+            : "You'll get your site assignment here the night before and again in the morning, "
+              + "plus an alert if anything changes.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's."));
       return ok();
     }
 
     if (text.startsWith("/stop")) {
+      // Works unchanged for an administrator too: this scans the shared contacts
+      // map by chatId, never by technician-specific lookup, so no branching is
+      // needed here at all.
       const contacts = await readJson(store, contactsKey, {});
       const techId = Object.keys(contacts).find(id => String(contacts[id].telegramChatId) === String(chatId));
       if (techId) {
@@ -167,13 +179,24 @@ export default async (req) => {
     if (text.startsWith("/today") || text.startsWith("/tomorrow")) {
       const ctx = await loadContext(store);
       const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
-      const tech = ctx.techs.find(t => t.id === techId);
+      if (!techId) { await reply(chatId, "This chat is not linked yet. Use your personal invite link first."); return ok(); }
       const today = todayIn(ctx.settings.timezone);
       const isTomorrow = text.startsWith("/tomorrow");
       const dk = isTomorrow
         ? new Date(Date.parse(today + "T00:00:00Z") + 86400000).toISOString().slice(0, 10)
         : today;
+
+      // Administrators are not scheduled — they get the whole-practice view. Its
+      // header already names the actual date (fmtLong via renderPracticeSummaryTelegram),
+      // which is exactly the "name the date, not just Today" rule the personal
+      // reply below follows too.
+      const admin = (ctx.techAdmins || []).find(a => a.id === techId);
+      if (admin) {
+        await reply(chatId, renderPracticeSummaryTelegram(ctx, dk));
+        return ok();
+      }
+
+      const tech = ctx.techs.find(t => t.id === techId);
       const summary = summaryLine(ctx, dk, tech.id);
       const detailLines = personalTelegramLines(ctx, dk, tech.id);
       // Name the actual date, not just "Today". Someone reading a notification hours
@@ -190,13 +213,40 @@ export default async (req) => {
     if (text.startsWith("/thisweek") || text.startsWith("/week")) {
       const ctx = await loadContext(store);
       const techId = Object.keys(ctx.contacts).find(id => String(ctx.contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
+      if (!techId) { await reply(chatId, "This chat is not linked yet. Use your personal invite link first."); return ok(); }
 
       const today = todayIn(ctx.settings.timezone);
-      // Monday-first, matching the week the scheduler itself works in. Saturday is
-      // included only when this technician actually has something on it — most
-      // weeks don't run a Saturday clinic, and a bare "OFF" line adds nothing.
+      // Monday-first, matching the week the scheduler itself works in.
       const monday = addDays(today, dayOfWeek(today) === 0 ? -6 : 1 - dayOfWeek(today));
+
+      // Administrators are not scheduled — they get the whole-practice view for
+      // each day of the week rather than a personal line, sent as one message per
+      // day (renderPracticeSummaryTelegram's output can already run long for a
+      // single day; stacking every site for 5-6 days into one Telegram message
+      // risks the 4096-char limit, so this reuses the exact same per-day renderer
+      // the /today command uses instead of inventing a condensed week format).
+      // "Does this week run a Saturday" is asked the same way the personal /week
+      // view below asks it — whether ANY active technician actually works it —
+      // rather than introducing a second definition of a working Saturday.
+      const admin = (ctx.techAdmins || []).find(a => a.id === techId);
+      if (admin) {
+        const satDk = addDays(monday, 5);
+        const satAssignments = assignmentsFor(ctx, satDk);
+        const satWorked = activeTechs(ctx).some(t => {
+          const a = satAssignments[t.id];
+          return a && ((a.am && a.am !== "OFF") || (a.pm && a.pm !== "OFF"));
+        });
+        const weekDays = [0, 1, 2, 3, 4].map(i => addDays(monday, i)).concat(satWorked ? [satDk] : []);
+        await reply(chatId, "<b>This week — whole practice</b>");
+        for (const wdk of weekDays) {
+          await reply(chatId, renderPracticeSummaryTelegram(ctx, wdk));
+        }
+        return ok();
+      }
+
+      // Saturday is included only when this technician actually has something on
+      // it — most weeks don't run a Saturday clinic, and a bare "OFF" line adds
+      // nothing.
       const days = [0, 1, 2, 3, 4, 5].map(i => addDays(monday, i));
       const rows = days
         .map((dk, i) => ({ dk, i, line: summaryLine(ctx, dk, techId) }))
@@ -224,7 +274,17 @@ export default async (req) => {
     if (text.startsWith("/board")) {
       const contacts = await readJson(store, contactsKey, {});
       const techId = Object.keys(contacts).find(id => String(contacts[id].telegramChatId) === String(chatId));
-      if (!techId) { await reply(chatId, "This chat is not linked to a technician yet. Use your personal invite link first."); return ok(); }
+      if (!techId) { await reply(chatId, "This chat is not linked yet. Use your personal invite link first."); return ok(); }
+
+      // Cheap admin check (no full loadContext) so the technician path below keeps
+      // its original cost when the chat is not an administrator's.
+      const admins = await readJson(store, ADMIN + ":techAdmins", []);
+      if (admins.some(a => a.id === techId)) {
+        const ctx = await loadContext(store);
+        const today = todayIn(ctx.settings.timezone);
+        await reply(chatId, renderPracticeSummaryTelegram(ctx, today));
+        return ok();
+      }
 
       const LINK_SECRET = process.env.LINK_SECRET;
       if (!LINK_SECRET) { await reply(chatId, "This service is not configured yet. Please tell the scheduling coordinator."); return ok(); }

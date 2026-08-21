@@ -92,6 +92,55 @@ export function personalInlineDetail(ctx, dk, techId) {
   return bits.length ? escapeHtml(bits.join(" · ")) : "";
 }
 
+// One AM/PM pair collapsed to a single scannable line: identical names both
+// halves collapse to one list; otherwise "AM: ... · PM: ...", with an empty half
+// simply omitted. "" when there is nothing on either half.
+function periodPair(am, pm) {
+  const a = (am || []).join(", "), p = (pm || []).join(", ");
+  if (!a && !p) return "";
+  if (a === p) return escapeHtml(a);
+  const parts = [];
+  if (a) parts.push("AM: " + escapeHtml(a));
+  if (p) parts.push("PM: " + escapeHtml(p));
+  return parts.join(" · ");
+}
+
+// Whole-practice Telegram summary for one day — administrators are not scheduled
+// themselves, so there is no personal assignment to lead with; instead this is
+// every site with any activity, its doctors, and its technicians. Built entirely
+// from groupBySite (itself built on activeTechs / assignmentsFor / doctorCoverage /
+// doctorsAt) so this can never drift from what the board itself shows.
+export function renderPracticeSummaryTelegram(ctx, dk) {
+  const header = "<b>Practice schedule</b>\n" + escapeHtml(fmtLong(dk));
+  const sites = groupBySite(ctx, dk);
+  if (!sites.length) {
+    return header + "\n\nNothing is scheduled for this day.";
+  }
+  const blocks = sites.map(s => {
+    const lines = ["📍 <b>" + escapeHtml(s.name) + "</b>"];
+    const docs = periodPair(s.doctors.am, s.doctors.pm);
+    if (docs) lines.push("👥 Doctors — " + docs);
+    const techNamesAm = s.techs.am.map(t => t.name);
+    const techNamesPm = s.techs.pm.map(t => t.name);
+    const techs = periodPair(techNamesAm, techNamesPm);
+    if (techs) lines.push("👥 Techs — " + techs);
+    if (!docs && !techs) lines.push("<i>Nothing scheduled</i>");
+    return lines.join("\n");
+  });
+  // Who is off belongs in a manager's summary as much as who is working — it is the
+  // half that tells them why a site is thin. groupBySite only returns staffed sites,
+  // so this is gathered separately.
+  const dayAssign = assignmentsFor(ctx, dk);
+  const offNames = activeTechs(ctx)
+    .filter(t => { const a = dayAssign[t.id]; return a && a.am === "OFF" && a.pm === "OFF"; })
+    .map(t => t.name);
+  const offBlock = offNames.length
+    ? "\n\n🛑 <b>Off</b> — " + escapeHtml(offNames.join(", "))
+    : "";
+
+  return header + "\n\n" + blocks.join("\n\n") + offBlock;
+}
+
 function chip(text, highlight) {
   return '<span style="display:inline-block;font-size:13px;font-weight:600;padding:3px 10px;margin:0 4px 4px 0;'
     + 'border-radius:99px;background:' + (highlight ? '#4f46e5' : '#eef0f7') + ';color:' + (highlight ? '#ffffff' : '#3b4252') + ';">'
