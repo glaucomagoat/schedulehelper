@@ -658,6 +658,14 @@ function App() {
   // them for genuine user edits. A timer here would race React's scheduler.
   useEffect(() => { if (!loading && user) hydrated.current = true; }, [loading, user]);
 
+  // The default tab id ('board') only exists in the admin tab set. Land a
+  // technician on the portal's own first tab instead of a blank content pane.
+  useEffect(() => {
+    if (!user) return;
+    const isStaffUser = user.userType === 'staff';
+    if (isStaffUser && activeTab === 'board') setActiveTab('p-week');
+  }, [user]);
+
   // ── Bootstrap ──────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -669,7 +677,7 @@ function App() {
         try { u = JSON.parse(raw); } catch(e) { setLoading(false); return; }
         if (!u || !u.username) { setLoading(false); return; }
         setUser(u);
-        await loadAll(u.adminUsername || u.username);
+        await loadAll(u.adminUsername || u.username, u.userType === 'staff');
       } catch(e) {
         console.warn('bootstrap failed', e);
       } finally {
@@ -684,17 +692,24 @@ function App() {
     return () => window.removeEventListener('session-expired', on);
   }, []);
 
-  async function loadAll(ns) {
+  // `portal` is true for a technician (userType 'staff') session. storage-proxy
+  // flatly denies staff reads of techContacts, techRules, techTimeOff, and the
+  // notify settings/log — a technician has no business seeing another tech's
+  // contact info, admin scheduling rules, time-off reasons, or the notify
+  // configuration. Skipping those calls entirely (rather than letting them 403)
+  // is what keeps the portal from spewing failed-request console noise.
+  async function loadAll(ns, portal) {
     const d = async k => {
       try { const r = await window.storage.get(`${ns}:${k}`); return r ? JSON.parse(r.value) : null; }
       catch(e) { return null; }
     };
+    const dOrSkip = k => portal ? Promise.resolve(null) : d(k);
     const [
       tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub,
       st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
-      d('techs'), d('techContacts'), d('techRules'), d('techStaffing'),
-      d('techSchedules'), d('techTimeOff'), d('techNotifySettings'), d('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'), d('techPublished'),
+      d('techs'), dOrSkip('techContacts'), dOrSkip('techRules'), d('techStaffing'),
+      d('techSchedules'), dOrSkip('techTimeOff'), dOrSkip('techNotifySettings'), dOrSkip('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'), d('techPublished'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
@@ -887,8 +902,26 @@ function App() {
 
   // Copy the live plan into the published snapshot — this is the only thing that
   // changes what technicians see.
+  // What gets published is the EFFECTIVE schedule: approved leave is folded in as OFF
+  // before the snapshot is written. That keeps the snapshot self-contained, so the
+  // read-only technician portal can show who is off without being handed techTimeOff,
+  // whose free-text reason can be medical. It also means approving leave changes the
+  // effective days, which is what makes the plan read as having unpublished changes.
+  function techPlanEffectiveDays(plan) {
+    const src = techPlanDays(plan);
+    const out = {};
+    Object.keys(src).forEach(dk => {
+      const day = {};
+      Object.keys(src[dk] || {}).forEach(tid => {
+        day[tid] = isTechOff(tid, dk) ? { am: 'OFF', pm: 'OFF' } : src[dk][tid];
+      });
+      out[dk] = day;
+    });
+    return out;
+  }
+
   function publishTechPlan(plan) {
-    const days = JSON.parse(JSON.stringify(techPlanDays(plan)));
+    const days = JSON.parse(JSON.stringify(techPlanEffectiveDays(plan)));
     setTechPublished(prev => Object.assign({}, prev, {
       [techMonthKey]: { plan, publishedAt: Date.now(), days }
     }));
@@ -964,8 +997,8 @@ function App() {
     if (!finalTechPlanForMonth) return false;
     if (!publishedForMonth || !publishedForMonth.days) return false;
     if (publishedForMonth.plan && publishedForMonth.plan !== finalTechPlanForMonth) return true;
-    return canonicalDays(techPlanDays(finalTechPlanForMonth)) !== canonicalDays(publishedForMonth.days);
-  }, [finalTechPlanForMonth, publishedForMonth, techSchedules, techMonthKey]);
+    return canonicalDays(techPlanEffectiveDays(finalTechPlanForMonth)) !== canonicalDays(publishedForMonth.days);
+  }, [finalTechPlanForMonth, publishedForMonth, techSchedules, techMonthKey, techTimeOff]);
 
   function fmtPublishedAt(ts) {
     if (!ts) return '';
@@ -1176,6 +1209,44 @@ function App() {
     return out;
   }, [lastSnapshot, selectedDate, techSchedules, activeTechs]);
 
+  // ── Technician portal (read-only) ───────────────────────────────────────────
+  // Everything above (getAssignment, dutyOf, ...) reads the LIVE working plan —
+  // exactly what an admin is editing. A technician must never see that: they see
+  // only what has been published. This mirrors publishedDayFor() in
+  // netlify/functions/_lib/techdata.mjs EXACTLY (same month-key shape, same
+  // snapshot-vs-legacy-fallback order) so the client can never show something the
+  // server itself would not hand a technician.
+  //
+  // The published snapshot already has approved time off folded in as OFF, so
+  // unlike getAssignment() above, nothing here re-applies techTimeOff — the portal
+  // has no access to that blob anyway (see loadAll's `portal` guard).
+  function portalPublishedDay(dk) {
+    const ym = techMonthKeyFor(dk);
+    const finalPlan = techFinalPlans[ym] || null;
+    if (!finalPlan) return {};
+    const pub = techPublished[ym];
+    if (pub && pub.days && (!pub.plan || pub.plan === finalPlan)) {
+      return Object.assign({}, pub.days[dk] || {});
+    }
+    const key = techScheduleKeyFor(dk, finalPlan);
+    return Object.assign({}, (techSchedules[key] || {})[dk] || {});
+  }
+  function getPortalAssignment(dk, techId) {
+    return portalPublishedDay(dk)[techId] || { am: '', pm: '' };
+  }
+  // A technician reads as "off" when the published snapshot says so directly —
+  // there is no separate time-off record to consult here.
+  function isPortalTechOff(techId, dk) {
+    const a = getPortalAssignment(dk, techId);
+    return a.am === 'OFF' && a.pm === 'OFF';
+  }
+  function portalDutyOf(dk, techId) {
+    return (portalPublishedDay(dk)[techId] || {}).duty || '';
+  }
+  const portalStaffedSites = useMemo(
+    () => allSites.filter(l => !!techStaffing[l.id]),
+    [allSites, techStaffing]);
+
   // ── Portal accounts & day-view links ───────────────────────────────────────
   const [portalAccounts, setPortalAccounts] = useState({});   // techId -> { username }
   const [dayLinks, setDayLinks] = useState({});               // techId -> { token, url }
@@ -1194,10 +1265,49 @@ function App() {
     return d;
   }
 
-  async function hashPassword(pw) {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  const PBKDF2_ITERATIONS = 600000;
+  function _b64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); }
+  function _unb64(str) {
+    const bin = atob(str); const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
   }
+  async function _pbkdf2(pw, salt, iterations) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name:'PBKDF2', salt, iterations, hash:'SHA-256' }, key, 256);
+    return new Uint8Array(bits);
+  }
+  function _timingSafeEqual(a, b) {
+    if (a.length !== b.length) return false;
+    let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+    return d === 0;
+  }
+  async function hashPassword(pw) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await _pbkdf2(pw, salt, PBKDF2_ITERATIONS);
+    return 'pbkdf2$' + PBKDF2_ITERATIONS + '$' + _b64(salt) + '$' + _b64(hash);
+  }
+  // Used only to confirm the CURRENT password before changing it. Understands the
+  // legacy formats so an account that has not logged in since the upgrade still works.
+  async function verifyPasswordLocal(stored, pw) {
+    if (typeof stored !== 'string' || !stored) return false;
+    if (stored.startsWith('pbkdf2$')) {
+      const parts = stored.split('$');
+      if (parts.length !== 4) return false;
+      const iters = parseInt(parts[1], 10);
+      if (!Number.isFinite(iters) || iters < 1000) return false;
+      let salt, expected;
+      try { salt = _unb64(parts[2]); expected = _unb64(parts[3]); } catch (e) { return false; }
+      return _timingSafeEqual(await _pbkdf2(pw, salt, iters), expected);
+    }
+    if (/^[0-9a-f]{64}$/.test(stored)) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+      const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      return hex === stored;
+    }
+    return stored === pw;
+  }
+
 
   // Reverse lookup techId -> portal username, mirroring the staffPortal: pattern
   // the doctor scheduler uses (index.html:1556-1583).
@@ -2038,7 +2148,10 @@ function App() {
     // Rendered offscreen at exactly the printable area, then shrunk until it fits one
     // page. Measuring anywhere other than the true page size is what previously let a
     // sheet overflow and collide.
-    const sizes = [9.0, 8.6, 8.2, 7.8, 7.4, 7.0];
+    // Ladder runs well below what a normal month needs, because a fully-booked month
+    // — every clinic day staffed, duty tags, an OFF list and a note on each day, plus
+    // a Saturday — measured 829px against a 778px page at the old 7.0 floor.
+    const sizes = [9.0, 8.6, 8.2, 7.8, 7.4, 7.0, 6.6, 6.2, 5.8, 5.4, 5.0];
     const host = document.createElement('iframe');
     host.style.cssText = 'position:fixed;left:-99999px;top:0;border:0;background:#fff';
     host.width = String(PRINT_W);
@@ -2069,15 +2182,25 @@ function App() {
         const target = doc.body;
         // scale 3 puts an 8.2px glyph at ~25px before the PDF scales it back down —
         // roughly 300dpi on an 11in sheet, which stays crisp on paper.
+        const sheetH = Math.max(PRINT_H, target.scrollHeight);
         const canvas = await html2canvas(target, {
           scale: 3, backgroundColor: '#ffffff', logging: false,
-          width: PRINT_W, height: Math.max(PRINT_H, target.scrollHeight),
+          width: PRINT_W, height: sheetH,
           windowWidth: PRINT_W, windowHeight: PRINT_H,
         });
         const pdf = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'in', format: 'letter' });
         const margin = 5 / 25.4;                 // the 5mm the layout already assumes
-        const w = 11 - margin * 2, h = 8.5 - margin * 2;
-        pdf.addImage(canvas.toDataURL('image/jpeg', 0.94), 'JPEG', margin, margin, w, h, undefined, 'FAST');
+        const availW = 11 - margin * 2, availH = 8.5 - margin * 2;
+
+        // Fit the sheet to the page preserving its aspect ratio. Stretching a
+        // taller-than-page sheet onto a fixed height (what this did before) squashed
+        // every glyph vertically on a dense month. Scaling both axes by the same
+        // factor keeps the type shaped correctly and simply renders it smaller, which
+        // is the guarantee: one page, nothing clipped, nothing distorted.
+        const fit = Math.min(availW / (PRINT_W / 96), availH / (sheetH / 96));
+        const w = (PRINT_W / 96) * fit, h = (sheetH / 96) * fit;
+        const x = margin + (availW - w) / 2, y = margin + (availH - h) / 2;
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.94), 'JPEG', x, y, w, h, undefined, 'FAST');
         pdf.save('Technician Schedule — ' + label + '.pdf');
         showToast('Downloaded “Technician Schedule — ' + label + '.pdf”', 'success');
         return;
@@ -2141,17 +2264,24 @@ function App() {
     );
   }
 
-  const TABS = [
+  // Admin and technician portal are entirely different tab sets — a technician
+  // never gets the editing board (that reads the LIVE draft plan, which they must
+  // never see) or any admin-only panel. See PortalWeek/PortalMonth/DoctorMonthView/
+  // PortalAccount below.
+  const TABS = isAdmin ? [
     { id:'board',    icon:'📋', label:'Schedule' },
-    ...(isAdmin ? [
-      { id:'techs',    icon:'👥', label:`Technicians (${techs.length})` },
-      { id:'staffing', icon:'📍', label:'Locations' },
-      { id:'timeoff',  icon:'🏖', label:`Time Off (${techTimeOff.length})` },
-      { id:'notify',   icon:'🔔', label:'Notifications' },
-    ] : []),
+    { id:'techs',    icon:'👥', label:`Technicians (${techs.length})` },
+    { id:'staffing', icon:'📍', label:'Locations' },
+    { id:'timeoff',  icon:'🏖', label:`Time Off (${techTimeOff.length})` },
+    { id:'notify',   icon:'🔔', label:'Notifications' },
     // Generate and Rules are intentionally not listed: assignments are made by hand
     // for now. GeneratePanel / RulesPanel and their state remain intact so putting
     // either tab back is a one-line change.
+  ] : [
+    { id:'p-week',     icon:'📆', label:'My week' },
+    { id:'p-month',    icon:'🗓',  label:'Tech month' },
+    { id:'p-docmonth', icon:'🩺', label:'Doctor month' },
+    { id:'p-account',  icon:'👤', label:'My account' },
   ];
 
   return (
@@ -2178,7 +2308,7 @@ function App() {
       </div>
 
       <div style={{flex:1,padding:isMobile?12:20,maxWidth:1400,width:'100%',margin:'0 auto'}}>
-        {activeTab === 'board' && (
+        {activeTab === 'board' && isAdmin && (
           <DayBoard {...{S,LC,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,boardView,setBoardView,editDate,setEditDate,techStaffing,holidays,
                          activeTechs,locations,activeSites,targets,coverage,coverageIssues,getAssignment,setAssignment,
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
@@ -2207,6 +2337,30 @@ function App() {
                             selectedDate,setSelectedDate,sendDay,sendChanges,previewChanges,sendTest,sendInvite,sending,
                             channelStatus,loadChannelStatus,reloadNotifyLog,
                             invites,invitesLoading,loadInvites,botUsername,unreachable}} />
+        )}
+
+        {/* ── Technician portal — read-only, always the PUBLISHED snapshot ──── */}
+        {activeTab === 'p-week' && !isAdmin && (
+          <PortalWeek {...{S,locColor,isMobile,selectedDate,setSelectedDate,editDate,setEditDate,
+                           staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
+                           locName,holidayFor,isTechOff:isPortalTechOff,locations,holidays,
+                           doctors,finalPlans,techDayNotes,docDayNotes,docSchedules,theme,
+                           quadSiteIds,siteAbbr,dutyOf:portalDutyOf,notifySettings}} />
+        )}
+        {activeTab === 'p-month' && !isAdmin && (
+          <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,
+                          openDay:dk => { setSelectedDate(dk); setActiveTab('p-week'); },
+                          staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
+                          locName,holidayFor,isTechOff:isPortalTechOff,targets,holidays,
+                          quadSiteIds,siteAbbr,techDayNotes,dutyOf:portalDutyOf,
+                          hint:'Click any day to jump to that week'}} />
+        )}
+        {activeTab === 'p-docmonth' && !isAdmin && (
+          <DoctorMonthView {...{S,isMobile,selectedDate,setSelectedDate,doctors,locations,
+                                docSchedules,finalPlans,docDayNotes,holidays,theme}} />
+        )}
+        {activeTab === 'p-account' && !isAdmin && (
+          <PortalAccount {...{S,user,showToast,callTechApi,hashPassword,verifyPasswordLocal,theme}} />
         )}
       </div>
 
@@ -2430,7 +2584,7 @@ function DayBoard(p) {
 
 function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
                      activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays,
-                     quadSiteIds, siteAbbr, techDayNotes, dutyOf }) {
+                     quadSiteIds, siteAbbr, techDayNotes, dutyOf, hint }) {
   const dp = parseDateKey(selectedDate);
   const first = new Date(dp.year, dp.month0, 1);
   const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
@@ -2455,7 +2609,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
         <div style={{fontWeight:800,fontSize:17,minWidth:150}}>{MONTHS[dp.month0]} {dp.year}</div>
         <button onClick={() => shiftMonth(1)} style={S.btn}>→</button>
         <button onClick={() => setSelectedDate(todayKeyIn('America/Los_Angeles'))} style={S.btn}>Today</button>
-        <span style={{fontSize:12,color:'var(--text-muted)'}}>Click any day to edit it in the week view</span>
+        <span style={{fontSize:12,color:'var(--text-muted)'}}>{hint || 'Click any day to edit it in the week view'}</span>
       </div>
 
       <div className="mob-scroll">
@@ -2860,7 +3014,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                 <div style={{fontWeight:800,fontSize:14,color:'var(--text-muted)',marginBottom:6}}>OFF</div>
                 {offHere.length === 0
                   ? <span style={{fontSize:11,color:'var(--text-dim)',fontStyle:'italic'}}>
-                      drop here to mark someone off for the day
+                      {isAdmin ? 'drop here to mark someone off for the day' : 'nobody off'}
                     </span>
                   : offHere.map(t => <TechChip key={t.id} t={t} placed />)}
               </div>
@@ -3142,7 +3296,15 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
     if (!s || s === 'OFF') return;
     (bySite[s] = bySite[s] || []).push(t);
   });
-  const off = activeTechs.filter(t => isTechOff(t.id, dk));
+  // OFF has two sources and both must show: approved leave, AND anyone explicitly
+  // dropped into the OFF box (their stored assignment is OFF/OFF). Filtering on leave
+  // alone is why the week and month views used to hide people the printout listed.
+  // Someone with no assignment at all is NOT off — they are simply unscheduled.
+  const off = activeTechs.filter(t => {
+    if (isTechOff(t.id, dk)) return true;
+    const a = getAssignment(dk, t.id);
+    return a.am === 'OFF' && a.pm === 'OFF';
+  });
   const hol = holidayFor(dk);
   const note = techDayNotes[dk];
   const overflow = staffedSites.filter(l => quadSiteIds.indexOf(l.id) === -1 && bySite[l.id]);
@@ -4589,6 +4751,276 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Technician portal: My week ──────────────────────────────────────────────
+// A thin, fully read-only wrapper around the exact same WeekView the admin uses —
+// isAdmin:false there already strips every drag/drop, right-click, and editing
+// affordance, and its own embedded "doctor schedule for the week" panel is exactly
+// the reference this tab needs underneath the technician grid. This wrapper only
+// adds a Today button (WeekView itself only offers Prev/Next) and forces every
+// mutator to a no-op so nothing here can ever write.
+//
+// getAssignment / isTechOff / dutyOf passed in from App are the PUBLISHED-only
+// variants (getPortalAssignment / isPortalTechOff / portalDutyOf) — never the
+// live-plan ones an admin edits.
+function PortalWeek(props) {
+  const { S, selectedDate, setSelectedDate, notifySettings } = props;
+  function goToday() {
+    setSelectedDate(todayKeyIn((notifySettings && notifySettings.timezone) || 'America/Los_Angeles'));
+  }
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <div style={Object.assign({}, S.card, {padding:'8px 12px',display:'flex',justifyContent:'flex-end'})}>
+        <button onClick={goToday} style={S.btn}>Today</button>
+      </div>
+      <WeekView {...Object.assign({}, props, {
+        isAdmin: false,
+        setAssignment: () => {},
+        setTechDayNotes: () => {},
+        setDuty: () => {},
+        copyTechDay: () => {},
+        timeOffFor: () => null,
+        targets: {},
+        coverage: null,
+        pinnedToday: {},
+        shiftDay: n => setSelectedDate(addDays(selectedDate, n)),
+      })} />
+    </div>
+  );
+}
+
+// ── Technician portal: Doctor month ─────────────────────────────────────────
+// The whole month's PUBLISHED doctor schedule. "Published" here means exactly
+// what doctorCoverage() in techdata.mjs means: finalPlans[ym] names the live
+// plan letter, and only that letter's data is ever shown — a month with no
+// final plan gets an explicit message, never a silently-empty grid (which would
+// be indistinguishable from "nothing scheduled") and never a fallback to a draft.
+function DoctorMonthView({ S, isMobile, selectedDate, setSelectedDate, doctors, locations,
+                           docSchedules, finalPlans, docDayNotes, holidays, theme }) {
+  const dp = parseDateKey(selectedDate);
+  const ym = `${dp.year}-${dp.month0}`;
+  const plan = finalPlans[ym];
+  const first = new Date(dp.year, dp.month0, 1);
+  const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < first.getDay(); i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  function shiftMonth(n) {
+    const dt = new Date(dp.year, dp.month0 + n, 1);
+    setSelectedDate(dateKey(dt.getFullYear(), dt.getMonth(), 1));
+  }
+
+  return (
+    <div style={Object.assign({}, S.card, {padding:isMobile?8:14})}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+        <button onClick={() => shiftMonth(-1)} style={S.btn}>←</button>
+        <div style={{fontWeight:800,fontSize:17,minWidth:150}}>{MONTHS[dp.month0]} {dp.year}</div>
+        <button onClick={() => shiftMonth(1)} style={S.btn}>→</button>
+        <button onClick={() => setSelectedDate(todayKeyIn('America/Los_Angeles'))} style={S.btn}>Today</button>
+      </div>
+
+      {!plan ? (
+        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'14px 16px',fontSize:13,color:'#f59e0b'}}>
+          ⚠ No doctor schedule has been published for {MONTHS[dp.month0]} {dp.year} yet.
+        </div>
+      ) : (
+        <div className="mob-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',tableLayout:'fixed',minWidth:980}}>
+            <thead><tr>
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i) => (
+                <th key={d} style={{fontSize:11,fontWeight:800,letterSpacing:0.8,textTransform:'uppercase',
+                                    color: (i===0||i===6) ? 'var(--text-dim)' : 'var(--text-muted)',
+                                    padding:'4px 6px',borderBottom:'2px solid var(--border-default)',textAlign:'left',
+                                    width:(i===0||i===6)?'8%':'16.8%'}}>{d}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {weeks.map((w,wi) => (
+                <tr key={wi}>
+                  {w.map((d,di) => {
+                    if (d === null) return <td key={di} style={{border:'1px solid var(--border-subtle)',background:'var(--cell-offmonth)'}} />;
+                    const dk = dateKey(dp.year, dp.month0, d);
+                    const wknd = di===0 || di===6;
+                    return (
+                      <td key={di}
+                        style={{border:'2px solid ' + (dk === selectedDate ? '#4f46e5' : 'var(--border-subtle)'),
+                                background: wknd ? 'var(--cell-weekend)' : 'var(--bg-surface)',
+                                verticalAlign:'top',padding:'3px 4px'}}>
+                        <DoctorDayCell {...{dk,doctors,locations,docSchedules,finalPlans,docDayNotes,holidays,theme,isWk:false}} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Technician portal: My account ───────────────────────────────────────────
+// Two self-service actions and nothing else: change my own password, and connect
+// my own Telegram. Both are scoped to the caller by construction — the password
+// change reads/writes user:<own username> (the only key storage-proxy lets a
+// staff session write at all), and the invite is minted server-side from the
+// caller's OWN session (see tech-notify.mjs's my-invite action), never from
+// anything this page sends.
+function PortalAccount({ S, user, showToast, callTechApi, hashPassword, verifyPasswordLocal }) {
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
+  const [pwMsg, setPwMsg] = useState(null);      // { kind: 'error'|'success', text }
+  const [pwBusy, setPwBusy] = useState(false);
+
+  async function changePassword() {
+    const { current, next, confirm } = pwForm;
+    setPwMsg(null);
+    if (!current || !next || !confirm) { setPwMsg({ kind:'error', text:'Please fill in all three fields.' }); return; }
+    if (next.length < 8) { setPwMsg({ kind:'error', text:'New password must be at least 8 characters.' }); return; }
+    if (next !== confirm) { setPwMsg({ kind:'error', text:'New password and confirmation do not match.' }); return; }
+    setPwBusy(true);
+    try {
+      const raw = await window.storage.get(`user:${user.username}`);
+      if (!raw) { setPwMsg({ kind:'error', text:'Account not found.' }); return; }
+      const record = JSON.parse(raw.value);
+      const ok = await verifyPasswordLocal(record.password, current);
+      if (!ok) { setPwMsg({ kind:'error', text:'Current password is incorrect.' }); return; }
+      record.password = await hashPassword(next);
+      await window.storage.set(`user:${user.username}`, JSON.stringify(record));
+      setPwMsg({ kind:'success', text:'Password changed successfully.' });
+      setPwForm({ current:'', next:'', confirm:'' });
+    } catch(e) {
+      setPwMsg({ kind:'error', text:'Something went wrong: ' + e.message });
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
+  const [invite, setInvite] = useState(null);    // { url, linked } once loaded
+  const [inviteErr, setInviteErr] = useState(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function loadInvite() {
+    setInviteBusy(true);
+    setInviteErr(null);
+    try {
+      const d = await callTechApi({ action: 'my-invite' });
+      setInvite({ url: d.url, linked: !!d.linked });
+    } catch(e) {
+      setInviteErr(e.message);
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+  useEffect(() => { loadInvite(); }, []);
+
+  function copyInviteLink() {
+    if (!invite || !invite.url) return;
+    navigator.clipboard.writeText(invite.url)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })
+      .catch(() => showToast('Copy failed — select and copy the link shown below', 'error'));
+  }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16,maxWidth:520}}>
+      <div style={Object.assign({}, S.card, {padding:18})}>
+        <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>Change my password</div>
+        <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14}}>
+          Signed in as <strong>{user.username}</strong>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          <div>
+            <label style={S.label}>Current password</label>
+            <input type="password" value={pwForm.current} autoComplete="current-password"
+              onChange={e => setPwForm(p => Object.assign({}, p, { current: e.target.value }))}
+              style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          <div>
+            <label style={S.label}>New password</label>
+            <input type="password" value={pwForm.next} autoComplete="new-password"
+              onChange={e => setPwForm(p => Object.assign({}, p, { next: e.target.value }))}
+              placeholder="at least 8 characters"
+              style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          <div>
+            <label style={S.label}>Confirm new password</label>
+            <input type="password" value={pwForm.confirm} autoComplete="new-password"
+              onChange={e => setPwForm(p => Object.assign({}, p, { confirm: e.target.value }))}
+              style={Object.assign({}, S.input, {width:'100%'})} />
+          </div>
+          {pwMsg && (
+            <div style={{fontSize:13,fontWeight:600,color: pwMsg.kind === 'error' ? '#ef4444' : '#10b981'}}>
+              {pwMsg.kind === 'error' ? '⚠ ' : '✅ '}{pwMsg.text}
+            </div>
+          )}
+          <button onClick={changePassword} disabled={pwBusy} style={Object.assign({}, S.btnP, {alignSelf:'flex-start'})}>
+            {pwBusy ? 'Changing…' : 'Change password'}
+          </button>
+        </div>
+      </div>
+
+      <div style={Object.assign({}, S.card, {padding:18})}>
+        <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>Connect Telegram</div>
+        <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.5}}>
+          Link your Telegram account to receive your schedule and any changes automatically.
+        </div>
+
+        {inviteBusy && !invite && !inviteErr && (
+          <div style={{fontSize:13,color:'var(--text-muted)'}}>Loading…</div>
+        )}
+
+        {inviteErr && (
+          <div style={{fontSize:13,color:'#ef4444'}}>
+            ⚠ {inviteErr}
+            <div style={{marginTop:8}}>
+              <button onClick={loadInvite} style={S.btn}>Try again</button>
+            </div>
+          </div>
+        )}
+
+        {invite && invite.linked && (
+          <div style={{fontSize:13,color:'#10b981',fontWeight:600}}>
+            ✓ Your Telegram is connected — schedule notifications will be sent there.
+          </div>
+        )}
+
+        {invite && !invite.linked && (
+          <div style={{display:'flex',gap:18,alignItems:'flex-start',flexWrap:'wrap'}}>
+            {(() => {
+              const uri = qrDataUri(invite.url, 190);
+              return uri
+                ? <img src={uri} alt="Telegram invite QR code"
+                       style={{width:190,height:190,borderRadius:10,flexShrink:0,background:'#fff'}} />
+                : <div style={{width:190,height:190,display:'flex',alignItems:'center',justifyContent:'center',
+                               border:'1px dashed var(--border-default)',borderRadius:10,fontSize:12,
+                               color:'var(--text-muted)',textAlign:'center',padding:12}}>
+                    QR unavailable — use the link
+                  </div>;
+            })()}
+            <div style={{flex:1,minWidth:220}}>
+              <ol style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.8,paddingLeft:18,margin:'0 0 10px'}}>
+                <li>Install Telegram and sign in</li>
+                <li>Point your phone camera at this code, or use the link below</li>
+                <li>Telegram opens — tap <strong>Start</strong></li>
+              </ol>
+              <div style={{fontSize:11,fontFamily:'"Space Mono",monospace',color:'var(--text-muted)',
+                           wordBreak:'break-all',background:'var(--input-bg)',padding:'7px 9px',borderRadius:6,marginBottom:8}}>
+                {invite.url}
+              </div>
+              <button onClick={copyInviteLink} style={S.btn}>{copied ? '✓ Copied' : 'Copy link'}</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

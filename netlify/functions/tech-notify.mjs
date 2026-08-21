@@ -1,7 +1,7 @@
 // Admin-authenticated technician operations: link management now, message sending
 // in the notification phase. Every action requires an admin session JWT.
 
-import { requireAdmin } from "./_lib/auth.mjs";
+import { requireAdmin, verifySession } from "./_lib/auth.mjs";
 import {
   techStore, loadContext, readJson, writeJson, ADMIN,
   isValidDateKey, todayIn,
@@ -32,9 +32,6 @@ function baseUrlFor(req) {
 export default async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const gate = await requireAdmin(req);
-  if (gate.error) return gate.error;
-
   const LINK_SECRET = process.env.LINK_SECRET;
   if (!LINK_SECRET) return json({ error: "Server misconfigured — LINK_SECRET not set" }, 500);
 
@@ -42,9 +39,54 @@ export default async (req) => {
   try { body = await req.json(); } catch (e) { return json({ error: "Invalid JSON body" }, 400); }
 
   const store = techStore();
-  const ctx = await loadContext(store);
   const base = baseUrlFor(req);
   const contactsKey = ADMIN + ":techContacts";
+
+  // Self-service Telegram invite — the one action here a technician calls for
+  // themselves, so it deliberately does NOT go through requireAdmin. It verifies the
+  // caller's own session and then resolves techId from THEIR OWN user record, never
+  // from the request body — that is what makes it impossible for one technician to
+  // request another's invite link, no matter what they pass in.
+  if (body.action === "my-invite") {
+    const SESSION_SECRET = process.env.SESSION_SECRET;
+    if (!SESSION_SECRET) return json({ error: "Server misconfigured — SESSION_SECRET not set" }, 500);
+
+    let session;
+    try {
+      session = await verifySession(req.headers.get("x-session-token") || "", SESSION_SECRET);
+    } catch (e) {
+      return json({ error: "Unauthorized — " + e.message }, 401);
+    }
+
+    const rawUser = await store.get("user:" + session.sub);
+    if (!rawUser) return json({ error: "Forbidden — no account found" }, 403);
+    let userRec;
+    try { userRec = JSON.parse(rawUser); } catch (e) { return json({ error: "Forbidden — invalid account record" }, 403); }
+    // techId comes ONLY from the caller's own record, and only a technician
+    // account belonging to THIS practice may use this endpoint.
+    if (!userRec.techId || userRec.adminUsername !== ADMIN) {
+      return json({ error: "Forbidden — not a technician account for this practice" }, 403);
+    }
+    const techId = userRec.techId;
+
+    const botUsername = process.env.TELEGRAM_BOT_USERNAME;
+    if (!botUsername) return json({ error: "TELEGRAM_BOT_USERNAME is not set" }, 500);
+
+    const contacts = await readJson(store, contactsKey, {});
+    if (!contacts[techId]) contacts[techId] = {};
+    if (!contacts[techId].linkNonce) {
+      contacts[techId].linkNonce = newNonce();
+      await writeJson(store, contactsKey, contacts);
+    }
+    const token = await makeInviteToken(techId, contacts[techId].linkNonce, LINK_SECRET);
+    const url = inviteLinkFor(botUsername, token);
+    return json({ success: true, url, linked: !!contacts[techId].telegramChatId });
+  }
+
+  const gate = await requireAdmin(req);
+  if (gate.error) return gate.error;
+
+  const ctx = await loadContext(store);
 
   switch (body.action) {
     // Mint a linkNonce for any tech that lacks one, then hand back every active

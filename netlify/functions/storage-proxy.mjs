@@ -203,11 +203,22 @@ function isKeyReadable(key, session) {
     if (key.startsWith('staffPortal:')) return true;
     if (key.startsWith('techPortal:')) return true;
     const STAFF_READABLE = ['staff', 'locations', 'holidays', 'schedules', 'finalPlans', 'dayNotes'];
-    // Technician portal keys. techContacts is DELIBERATELY EXCLUDED — it holds every
-    // tech's email address and Telegram chat ID, which a read-only portal user has no
-    // business enumerating. techRules / techTimeOff are excluded for the same reason
-    // vacations and medicalLeaves are: they are admin-only scheduling context.
-    const TECH_READABLE = ['techs', 'techSchedules', 'techStaffing'];
+    // Technician portal keys.
+    //
+    // techPublished is what a technician actually views — the snapshot the coordinator
+    // published. techSchedules stays readable for the legacy months finalised before
+    // publishing existed; techFinalPlans says which plan letter is live.
+    //
+    // DELIBERATELY EXCLUDED, and each for a reason:
+    //   techContacts  — every tech's email address and Telegram chat ID. A technician
+    //                   gets their OWN invite through the my-invite endpoint, which
+    //                   returns one link and never the roster.
+    //   techTimeOff   — carries a free-text `reason` that can be medical. Time off is
+    //                   baked into the published snapshot as OFF, so the portal shows
+    //                   who is off without exposing why.
+    //   techRules     — admin-only scheduling context, same as vacations/medicalLeaves.
+    const TECH_READABLE = ['techs', 'techSchedules', 'techStaffing',
+                           'techFinalPlans', 'techPublished', 'techSites', 'techDayNotes'];
     return STAFF_READABLE.some(sub => key === `${adminNs}:${sub}`)
         || TECH_READABLE.some(sub => key === `${adminNs}:${sub}`);
   }

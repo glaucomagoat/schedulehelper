@@ -8,7 +8,7 @@
 
 import {
   techStore, loadContext, readJson, writeJson, ADMIN, todayIn,
-  addDays, dayOfWeek, fmtShort, escapeHtml,
+  addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml,
 } from "./_lib/techdata.mjs";
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
 import { summaryLine, personalTelegramLines } from "./_lib/dayboard.mjs";
@@ -176,7 +176,13 @@ export default async (req) => {
         : today;
       const summary = summaryLine(ctx, dk, tech.id);
       const detailLines = personalTelegramLines(ctx, dk, tech.id);
-      await reply(chatId, "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n📍 " + escapeHtml(summary)
+      // Name the actual date, not just "Today". Someone reading a notification hours
+      // later, or scrolling back through the chat, cannot tell which day a bare
+      // "Today" referred to.
+      await reply(chatId,
+        "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n"
+        + escapeHtml(fmtLong(dk)) + "\n\n"
+        + "📍 " + escapeHtml(summary)
         + (detailLines.length ? "\n" + detailLines.join("\n") : ""));
       return ok();
     }
