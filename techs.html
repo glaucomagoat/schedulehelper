@@ -379,6 +379,20 @@ function getLastName(fullName) {
 // in this file goes through React's own escaping.
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// Default portal username for a technician: first name + first letter of last
+// name, lowercased, with anything that isn't a-z0-9 stripped. A single-word
+// name just becomes that word. Used to prefill the create-account modal and to
+// generate candidates for the bulk-create flow — actual collision resolution
+// against taken usernames happens where each of those is used.
+function defaultTechUsername(fullName) {
+  const clean = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  const first = clean(parts[0]);
+  const lastInitial = parts.length > 1 ? clean(parts[parts.length - 1]).slice(0, 1) : '';
+  return (first + lastInitial).slice(0, 20);
+}
+
 // ── Claude API ───────────────────────────────────────────────────────────────
 // Talks to the SAME edge function the doctor scheduler uses
 // (netlify/edge-functions/claude-proxy.mjs). That proxy is generic — it verifies the
@@ -1348,13 +1362,14 @@ function App() {
     } catch(e) {}
   }
 
-  async function createTechPortalAccount(tech) {
-    const base = (tech.name || 'tech').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'tech';
-    const username = base + Math.floor(100 + Math.random() * 900);
-    const password = Math.random().toString(36).slice(2, 10);
+  // Admin picks the username and password in a modal (TechsPanel renders it);
+  // this just does the write + audit once the modal has validated everything.
+  // Returns {ok:true, username} or {ok:false, error} — never throws, so the
+  // modal can show the error inline instead of a toast.
+  async function createTechPortalAccount(tech, username, password) {
     try {
       const existing = await window.storage.get('user:' + username).catch(() => null);
-      if (existing) { showToast('Username collision — try again', 'error'); return; }
+      if (existing) return { ok: false, error: 'That username is already taken.' };
       await window.storage.set('user:' + username, JSON.stringify({
         username, userType: 'staff', techId: tech.id,
         adminUsername: dataNs, created: Date.now(),
@@ -1363,26 +1378,68 @@ function App() {
       await window.storage.set('techPortal:' + tech.id, JSON.stringify({ username }));
       setPortalAccounts(prev => Object.assign({}, prev, { [tech.id]: { username } }));
       addAuditEntry(`Created technician login "${username}" for ${tech.name}`);
-      // Shown once and never stored in the clear — copy it before dismissing.
-      window.prompt(`Portal login for ${tech.name} — copy this now, it is not stored:`, `${username} / ${password}`);
+      return { ok: true, username };
     } catch(e) {
-      showToast('Could not create login: ' + e.message, 'error');
+      return { ok: false, error: e.message || 'Could not create login' };
     }
   }
 
-  async function resetTechPortalPassword(tech) {
+  // Same idea for the "create for everyone missing an account" flow: one shared
+  // password, one call per technician, collisions resolved against BOTH the
+  // usernames already claimed earlier in this same loop and whatever is already
+  // in storage. Never aborts the whole batch on one failure — every technician
+  // gets its own ok/error result so the modal can report per-row.
+  async function createTechPortalAccountsBulk(techList, password) {
+    const claimed = new Set();
+    const results = [];
+    for (const tech of techList) {
+      const base = defaultTechUsername(tech.name) || 'tech';
+      let candidate = base, n = 2;
+      for (;;) {
+        if (!claimed.has(candidate)) {
+          const existing = await window.storage.get('user:' + candidate).catch(() => null);
+          if (!existing) break;
+        }
+        candidate = base + n; n++;
+      }
+      claimed.add(candidate);
+      try {
+        await window.storage.set('user:' + candidate, JSON.stringify({
+          username: candidate, userType: 'staff', techId: tech.id,
+          adminUsername: dataNs, created: Date.now(),
+          password: await hashPassword(password),
+        }));
+        await window.storage.set('techPortal:' + tech.id, JSON.stringify({ username: candidate }));
+        results.push({ techId: tech.id, name: tech.name, username: candidate, ok: true });
+      } catch(e) {
+        results.push({ techId: tech.id, name: tech.name, username: candidate, ok: false, error: e.message || 'Could not create login' });
+      }
+    }
+    const okList = results.filter(r => r.ok);
+    if (okList.length) {
+      setPortalAccounts(prev => {
+        const next = Object.assign({}, prev);
+        okList.forEach(r => { next[r.techId] = { username: r.username }; });
+        return next;
+      });
+      addAuditEntry(`Bulk-created ${okList.length} technician login${okList.length===1?'':'s'}: ${okList.map(r => r.username).join(', ')}`);
+    }
+    return results;
+  }
+
+  // Admin types the new password in a modal; this just writes it + audits.
+  async function resetTechPortalPassword(tech, password) {
     const acct = portalAccounts[tech.id];
-    if (!acct) return;
-    const password = Math.random().toString(36).slice(2, 10);
+    if (!acct) return { ok: false, error: 'No account found for this technician.' };
     try {
       const r = await window.storage.get('user:' + acct.username);
       const rec = JSON.parse(r.value);
       rec.password = await hashPassword(password);
       await window.storage.set('user:' + acct.username, JSON.stringify(rec));
       addAuditEntry(`Reset technician password for ${tech.name}`);
-      window.prompt(`New password for ${acct.username} — copy this now:`, password);
+      return { ok: true, username: acct.username };
     } catch(e) {
-      showToast('Could not reset password: ' + e.message, 'error');
+      return { ok: false, error: e.message || 'Could not reset password' };
     }
   }
 
@@ -2361,7 +2418,7 @@ function App() {
         )}
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
-                           portalAccounts,createTechPortalAccount,resetTechPortalPassword}} />
+                           portalAccounts,createTechPortalAccount,resetTechPortalPassword,createTechPortalAccountsBulk}} />
         )}
         {activeTab === 'staffing' && isAdmin && (
           <StaffingPanel {...{S,allSites,locations,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
@@ -3604,11 +3661,19 @@ function Pre({ ok, label }) {
 // ── Technicians ──────────────────────────────────────────────────────────────
 
 function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, doctors, showToast,
-                      portalAccounts, createTechPortalAccount, resetTechPortalPassword }) {
+                      portalAccounts, createTechPortalAccount, resetTechPortalPassword, createTechPortalAccountsBulk }) {
   const blank = { id:'', name:'', level:'Tech', roles:[], skills:[], homeLocationId:'',
                   pinnedDoctorIds:[], backupForDoctorIds:[], notes:'', active:true };
   const [form, setForm] = useState(blank);
   const [editing, setEditing] = useState(false);
+
+  // ── Portal account modals ─────────────────────────────────────────────────
+  const [acctModal, setAcctModal] = useState(null);   // { tech } — create one login
+  const [resetModal, setResetModal] = useState(null); // { tech, username } — reset one password
+  const [bulkModal, setBulkModal] = useState(false);   // create-for-everyone flow
+  const bulkCandidates = useMemo(
+    () => techs.filter(t => t.active !== false && !portalAccounts[t.id]),
+    [techs, portalAccounts]);
 
   function save() {
     if (!form.name.trim()) { showToast('Name is required', 'error'); return; }
@@ -3672,6 +3737,9 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <span style={{fontWeight:700}}>Import from your roster</span>
           <div style={{flex:1}} />
+          <button onClick={() => setBulkModal(true)} style={S.btn}>
+            🔑 Create accounts for all
+          </button>
           <button onClick={() => setShowImport(v => !v)} style={S.btn}>
             {showImport ? 'Close' : '📋 Paste roster'}
           </button>
@@ -3827,12 +3895,12 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
                       {portalAccounts[t.id] ? (
                         <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                           <code style={{background:'var(--bg-elevated)',padding:'2px 6px',borderRadius:4}}>{portalAccounts[t.id].username}</code>
-                          <button onClick={() => resetTechPortalPassword(t)}
+                          <button onClick={() => setResetModal({ tech: t, username: portalAccounts[t.id].username })}
                                   style={{background:'none',border:'none',cursor:'pointer',fontSize:11,color:'var(--text-muted)',
                                           textDecoration:'underline',fontFamily:'inherit',padding:0}}>reset</button>
                         </div>
                       ) : (
-                        <button onClick={() => createTechPortalAccount(t)}
+                        <button onClick={() => setAcctModal({ tech: t })}
                                 style={Object.assign({}, S.btn, {padding:'4px 9px',fontSize:12})}>Create</button>
                       )}
                     </td>
@@ -3854,6 +3922,354 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
             </tbody>
           </table>
         </div>
+      </div>
+
+      {acctModal && (
+        <CreateAccountModal S={S} tech={acctModal.tech}
+          onClose={() => setAcctModal(null)}
+          onSubmit={(tech, username, password) => createTechPortalAccount(tech, username, password)} />
+      )}
+
+      {resetModal && (
+        <ResetPasswordModal S={S} tech={resetModal.tech} username={resetModal.username}
+          onClose={() => setResetModal(null)}
+          onSubmit={(tech, password) => resetTechPortalPassword(tech, password)} />
+      )}
+
+      {bulkModal && (
+        <BulkCreateAccountsModal S={S} candidates={bulkCandidates}
+          onClose={() => setBulkModal(false)}
+          onSubmit={(list, password) => createTechPortalAccountsBulk(list, password)} />
+      )}
+    </div>
+  );
+}
+
+// Create-account modal (Task 1): admin picks the username (prefilled with the
+// default first-name + last-initial pattern) and password, we validate before
+// ever calling onSubmit, and the credentials are shown exactly once afterwards
+// in a copyable panel — never a window.prompt.
+function CreateAccountModal({ S, tech, onClose, onSubmit }) {
+  const [username, setUsername] = useState(defaultTechUsername(tech.name));
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null); // { username, password }
+
+  async function handleSubmit() {
+    setError('');
+    const uname = username.trim().toLowerCase();
+    if (!/^[a-z0-9]{3,20}$/.test(uname)) {
+      setError('Username must be 3-20 characters, lowercase letters and numbers only.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const existing = await window.storage.get('user:' + uname).catch(() => null);
+      if (existing) {
+        setError('That username is already taken.');
+        setSubmitting(false);
+        return;
+      }
+      const res = await onSubmit(tech, uname, password);
+      if (!res || !res.ok) {
+        setError((res && res.error) || 'Could not create login.');
+        setSubmitting(false);
+        return;
+      }
+      setResult({ username: uname, password });
+    } catch(e) {
+      setError(e.message || 'Could not create login.');
+    }
+    setSubmitting(false);
+  }
+
+  return (
+    <div onClick={submitting ? undefined : onClose}
+         style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                 display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+           style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                   borderRadius:14,padding:'20px 22px',maxWidth:440,width:'100%',
+                   boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+        {result ? (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+              Login created for {tech.name}
+            </div>
+            <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
+              Copy this now — the password is not stored anywhere and cannot be shown again.
+            </div>
+            <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',
+                         borderRadius:8,padding:'12px 14px',fontFamily:'"Space Mono",monospace',
+                         fontSize:14,userSelect:'all',marginBottom:16}}>
+              {'Username: ' + result.username}<br/>
+              {'Password: ' + result.password}
+            </div>
+            <div style={{display:'flex',justifyContent:'flex-end'}}>
+              <button onClick={onClose} style={S.btnP}>Done</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:14}}>
+              Create portal login for {tech.name}
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>Username</label>
+              <input value={username}
+                     onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20))}
+                     style={Object.assign({}, S.input, {width:'100%'})} />
+              <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>
+                3-20 characters, lowercase letters and numbers only.
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                     style={Object.assign({}, S.input, {width:'100%'})} />
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>Confirm password</label>
+              <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+                     style={Object.assign({}, S.input, {width:'100%'})} />
+            </div>
+            {error && (
+              <div style={{fontSize:13,color:'#ef4444',marginBottom:12}}>{error}</div>
+            )}
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={onClose} style={S.btn}>Cancel</button>
+              <button onClick={handleSubmit} disabled={submitting} style={S.btnP}>
+                {submitting ? 'Creating…' : 'Create login'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Reset-password modal (Task 3): admin types the new password, we hash it via
+// the same hashPassword the rest of the app uses (passed through onSubmit,
+// which is the App-level resetTechPortalPassword), and confirm success.
+function ResetPasswordModal({ S, tech, username, onClose, onSubmit }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function handleSubmit() {
+    setError('');
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await onSubmit(tech, password);
+      if (!res || !res.ok) {
+        setError((res && res.error) || 'Could not reset password.');
+        setSubmitting(false);
+        return;
+      }
+      setDone(true);
+    } catch(e) {
+      setError(e.message || 'Could not reset password.');
+    }
+    setSubmitting(false);
+  }
+
+  return (
+    <div onClick={submitting ? undefined : onClose}
+         style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                 display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+           style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                   borderRadius:14,padding:'20px 22px',maxWidth:420,width:'100%',
+                   boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+        {done ? (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>Password reset</div>
+            <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:16}}>
+              {tech.name}'s new password has been set. Let them know it privately — it will not be shown again.
+            </div>
+            <div style={{display:'flex',justifyContent:'flex-end'}}>
+              <button onClick={onClose} style={S.btnP}>Done</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:14}}>
+              Reset password for {tech.name} ({username})
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>New password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                     style={Object.assign({}, S.input, {width:'100%'})} />
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={S.label}>Confirm password</label>
+              <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+                     style={Object.assign({}, S.input, {width:'100%'})} />
+            </div>
+            {error && <div style={{fontSize:13,color:'#ef4444',marginBottom:12}}>{error}</div>}
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={onClose} style={S.btn}>Cancel</button>
+              <button onClick={handleSubmit} disabled={submitting} style={S.btnP}>
+                {submitting ? 'Saving…' : 'Set password'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Bulk create-accounts modal (Task 2): one shared password for every active
+// technician who doesn't yet have a login. The preview list below is computed
+// locally just to show what usernames will likely be used; the authoritative
+// collision resolution (against storage too) happens in createTechPortalAccountsBulk,
+// and its real per-technician results are what gets shown in the results panel.
+function BulkCreateAccountsModal({ S, candidates, onClose, onSubmit }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [results, setResults] = useState(null);
+
+  const preview = useMemo(() => {
+    const claimed = new Set();
+    return candidates.map(t => {
+      const base = defaultTechUsername(t.name) || 'tech';
+      let candidate = base, n = 2;
+      while (claimed.has(candidate)) { candidate = base + n; n++; }
+      claimed.add(candidate);
+      return { tech: t, username: candidate };
+    });
+  }, [candidates]);
+
+  async function handleSubmit() {
+    setError('');
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await onSubmit(candidates, password);
+      setResults(res);
+    } catch(e) {
+      setError(e.message || 'Could not create accounts.');
+    }
+    setSubmitting(false);
+  }
+
+  const okResults = results ? results.filter(r => r.ok) : [];
+  const failedResults = results ? results.filter(r => !r.ok) : [];
+  const resultsText = okResults.map(r => r.name + ' — ' + r.username).join('\n');
+
+  return (
+    <div onClick={submitting ? undefined : onClose}
+         style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                 display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+           style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                   borderRadius:14,padding:'20px 22px',maxWidth:560,width:'100%',
+                   maxHeight:'85vh',overflowY:'auto',
+                   boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+        {results ? (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>
+              Accounts created
+            </div>
+            <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:10}}>
+              Copy this now — the shared password is not stored anywhere and cannot be shown again.
+              Shared password: <code style={{background:'var(--bg-elevated)',padding:'2px 6px',borderRadius:4}}>{password}</code>
+            </div>
+            <textarea readOnly value={resultsText}
+                      rows={Math.min(10, Math.max(3, okResults.length))}
+                      onClick={e => e.target.select()}
+                      style={Object.assign({}, S.input, {width:'100%',resize:'vertical',
+                                                          fontFamily:'"Space Mono",monospace',fontSize:13,marginBottom:12})} />
+            {failedResults.length > 0 && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:13,fontWeight:700,color:'#ef4444',marginBottom:4}}>Failed:</div>
+                {failedResults.map(r => (
+                  <div key={r.techId} style={{fontSize:12,color:'#ef4444'}}>
+                    {r.name}: {r.error}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:12}}>
+              {okResults.length} of {results.length} account{results.length===1?'':'s'} created.
+            </div>
+            <div style={{display:'flex',justifyContent:'flex-end'}}>
+              <button onClick={onClose} style={S.btnP}>Done</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:10}}>
+              Create accounts for all technicians
+            </div>
+            {candidates.length === 0 ? (
+              <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>
+                Every active technician already has a portal login.
+              </div>
+            ) : (
+              <React.Fragment>
+                <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:10}}>
+                  This creates a login for {candidates.length} active technician{candidates.length===1?'':'s'} who
+                  don't have one yet, using the usernames below.
+                </div>
+                <div style={{maxHeight:180,overflowY:'auto',border:'1px solid var(--border-subtle)',
+                             borderRadius:8,marginBottom:14}}>
+                  {preview.map(p => (
+                    <div key={p.tech.id} style={{padding:'6px 10px',borderBottom:'1px solid var(--border-subtle)',
+                                                  display:'flex',justifyContent:'space-between',fontSize:13}}>
+                      <span>{p.tech.name}</span>
+                      <code style={{color:'var(--text-muted)'}}>{p.username}</code>
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:8,
+                             padding:'10px 12px',fontSize:12,color:'#f59e0b',lineHeight:1.6,marginBottom:14}}>
+                  Everyone above will share this one password until they change it. Usernames are
+                  predictable (first name plus last initial), so until passwords are changed, anyone
+                  who guesses a colleague's username could sign in as them.
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={S.label}>Shared password</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                         style={Object.assign({}, S.input, {width:'100%'})} />
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={S.label}>Confirm password</label>
+                  <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+                         style={Object.assign({}, S.input, {width:'100%'})} />
+                </div>
+                {error && <div style={{fontSize:13,color:'#ef4444',marginBottom:12}}>{error}</div>}
+              </React.Fragment>
+            )}
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={onClose} style={S.btn}>Cancel</button>
+              {candidates.length > 0 && (
+                <button onClick={handleSubmit} disabled={submitting} style={S.btnP}>
+                  {submitting ? 'Creating…' : ('Create ' + candidates.length + ' account' + (candidates.length===1?'':'s'))}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
