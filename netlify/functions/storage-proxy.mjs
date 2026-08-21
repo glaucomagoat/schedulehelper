@@ -103,9 +103,70 @@ async function verifyToken(token, secret) {
   return payload;
 }
 
-async function hashPassword(pw) {
+// Password hashing. Format: pbkdf2$<iterations>$<saltB64>$<hashB64>
+//
+// A bare SHA-256 was used here previously: unsalted, so identical passwords produced
+// identical digests and rainbow tables applied directly, and fast enough to brute
+// force at GPU speed. Anyone who ever read the blob store recovered the plaintext,
+// and people reuse passwords. PBKDF2 with a per-user salt fixes both.
+//
+// This exact implementation is duplicated in index.html, which also writes password
+// records (admin-created logins, self-service password change). The two MUST agree
+// on the format — keep them in step.
+const PBKDF2_ITERATIONS = 600000;   // OWASP guidance for PBKDF2-HMAC-SHA256
+
+function b64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); }
+function unb64(str) {
+  const bin = atob(str); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function pbkdf2(pw, salt, iterations) {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await globalThis.crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256);
+  return new Uint8Array(bits);
+}
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+  return d === 0;
+}
+async function legacySha256(pw) {
   const buf = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(pw) {
+  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2(pw, salt, PBKDF2_ITERATIONS);
+  return 'pbkdf2$' + PBKDF2_ITERATIONS + '$' + b64(salt) + '$' + b64(hash);
+}
+
+// Accepts the current format and both legacy ones, so nobody is locked out by this
+// change. `needsUpgrade` tells the caller to re-hash on a successful login.
+async function verifyPassword(stored, pw) {
+  if (typeof stored !== 'string' || !stored) return { ok: false, needsUpgrade: false };
+  if (stored.startsWith('pbkdf2$')) {
+    const parts = stored.split('$');
+    if (parts.length !== 4) return { ok: false, needsUpgrade: false };
+    const iters = parseInt(parts[1], 10);
+    if (!Number.isFinite(iters) || iters < 1000) return { ok: false, needsUpgrade: false };
+    let salt, expected;
+    try { salt = unb64(parts[2]); expected = unb64(parts[3]); }
+    catch (e) { return { ok: false, needsUpgrade: false }; }
+    const actual = await pbkdf2(pw, salt, iters);
+    return { ok: timingSafeEqual(actual, expected), needsUpgrade: iters < PBKDF2_ITERATIONS };
+  }
+  if (/^[0-9a-f]{64}$/.test(stored)) {
+    const legacy = await legacySha256(pw);
+    return {
+      ok: timingSafeEqual(new TextEncoder().encode(legacy), new TextEncoder().encode(stored)),
+      needsUpgrade: true,
+    };
+  }
+  return { ok: stored === pw, needsUpgrade: true };   // pre-hash plaintext record
 }
 
 function issueToken(username, userType, adminUsername, secret) {
@@ -275,13 +336,13 @@ export default async (req) => {
         return new Response(JSON.stringify({ error: "Invalid username or password" }), { status: 401, headers: cors });
       }
       const record = JSON.parse(raw);
-      const h = await hashPassword(password);
-      if (record.password !== h) {
-        // Plaintext legacy account — migrate hash on the fly
-        if (record.password !== password) {
-          return new Response(JSON.stringify({ error: "Invalid username or password" }), { status: 401, headers: cors });
-        }
-        record.password = h;
+      const check = await verifyPassword(record.password, password);
+      if (!check.ok) {
+        return new Response(JSON.stringify({ error: "Invalid username or password" }), { status: 401, headers: cors });
+      }
+      // Legacy SHA-256 or plaintext record: re-hash now that we hold the plaintext.
+      if (check.needsUpgrade) {
+        record.password = await hashPassword(password);
         await store.set(`user:${username}`, JSON.stringify(record));
       }
       const u = {
@@ -395,7 +456,14 @@ export default async (req) => {
       const realTokenBytes = globalThis.crypto.getRandomValues(new Uint8Array(24));
       const resetToken = Array.from(realTokenBytes).map(b => b.toString(16).padStart(2, '0')).join('');
       await store.set(`reset:${resetToken}`, JSON.stringify({ username: foundUsername, expiry: Date.now() + 60 * 60 * 1000 }));
-      return new Response(JSON.stringify({ success: true, resetToken }), { status: 200, headers: cors });
+      // The token is DELIBERATELY not returned. This endpoint takes no credentials,
+      // so handing the token back meant anyone who knew a registered email address
+      // could mint a reset link for that account and take it over in two requests.
+      // It goes to the function log instead, which only the site owner can read:
+      // Netlify dashboard > Logs > Functions > storage-proxy.
+      console.log("PASSWORD RESET requested for user '" + foundUsername + "' — reset path: /?reset="
+        + resetToken + " (valid 1 hour)");
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: cors });
     } catch(e) {
       console.error('Forgot-password error:', e);
       return new Response(JSON.stringify({ error: "Server error" }), { status: 500, headers: cors });
