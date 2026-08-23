@@ -223,8 +223,10 @@ export default async (req) => {
         if (!contacts[a.id]) contacts[a.id] = {};
         if (!contacts[a.id].linkNonce) { contacts[a.id].linkNonce = newNonce(); minted++; }
       }
+      // Not filtered on `d.active` — that flag gates AI generation, not presence, so
+      // an inactive doctor (still in clinic, just excluded from auto-scheduling) must
+      // still be able to receive an invite. See notifiableDoctors in techdata.mjs.
       for (const d of (ctx.doctors || [])) {
-        if (d.active === false) continue;
         if (!contacts[d.id]) contacts[d.id] = {};
         if (!contacts[d.id].linkNonce) { contacts[d.id].linkNonce = newNonce(); minted++; }
       }
@@ -254,7 +256,6 @@ export default async (req) => {
 
       const doctorInvites = {};
       for (const d of (ctx.doctors || [])) {
-        if (d.active === false) continue;
         const token = await makeInviteToken(d.id, contacts[d.id].linkNonce, LINK_SECRET);
         doctorInvites[d.id] = {
           url: inviteLinkFor(botUsername, token),
@@ -304,6 +305,26 @@ export default async (req) => {
         botUsername: process.env.TELEGRAM_BOT_USERNAME || null,
         baseUrl: base,
       });
+    }
+
+    // Unlink one person's Telegram, admin-gated (unlike self-service "my-invite"
+    // above). Works for ANY id in techContacts — technician, administrator, or
+    // doctor — the map doesn't distinguish and neither does this. Clears only the
+    // chat id and the "telegram" channel; linkNonce is left alone on purpose so
+    // their existing invite link still works if they choose to re-link. Harmless
+    // (not a 404) when the id has no record or is already unlinked.
+    case "unlink-contact": {
+      const id = String(body.id || "");
+      if (!id) return json({ error: "id is required" }, 400);
+      const contacts = await readJson(store, contactsKey, {});
+      if (contacts[id]) {
+        delete contacts[id].telegramChatId;
+        if (Array.isArray(contacts[id].channels)) {
+          contacts[id].channels = contacts[id].channels.filter(c => c !== "telegram");
+        }
+        await writeJson(store, contactsKey, contacts);
+      }
+      return json({ success: true });
     }
 
     default:

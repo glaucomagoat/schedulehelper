@@ -3,7 +3,7 @@
 // 6pm automatic send and a manual send produce the same message and the same
 // log entry — if they drifted, the delivery log would stop being trustworthy.
 
-import { activeTechs, activeAdmins, activeDoctors, todayIn, assignmentsFor } from "./techdata.mjs";
+import { activeTechs, activeAdmins, notifiableDoctors, todayIn, assignmentsFor, doctorAssignmentFor } from "./techdata.mjs";
 import { makeTechToken, dayLinkFor } from "./links.mjs";
 import { composeDayMessage, composeAdminSummary, composeDoctorMessage } from "./compose.mjs";
 import { sendToMany, summarize } from "./notify.mjs";
@@ -76,13 +76,23 @@ async function buildAdminRecipients(ctx, dk, kind, base, secret) {
 // this filters `kind === "change"` out itself rather than relying on every caller to
 // remember (same defensive pattern buildAdminRecipients uses).
 //
-// Every ACTIVE doctor from ctx.doctors is a candidate — no separate roster. They get
-// the same signed day-view link technicians and administrators get: the token
-// carries an id, not a role.
+// Every doctor from ctx.doctors is a candidate — no separate roster, and NOT filtered
+// on `active` (see notifiableDoctors' comment: that flag gates AI generation, not
+// presence). They get the same signed day-view link technicians and administrators
+// get: the token carries an id, not a role.
+//
+// A doctor with no assignment at all that day — neither an am nor a pm site — is
+// skipped entirely rather than sent a message that just says "Not scheduled". That
+// applies to every doctor, active or not; a doctor who IS scheduled that day is
+// unaffected regardless of their `active` flag.
 async function buildDoctorRecipients(ctx, dk, kind, base, secret) {
   if (kind === "change") return [];
   const out = [];
-  for (const doctor of activeDoctors(ctx)) {
+  for (const doctor of notifiableDoctors(ctx)) {
+    const a = doctorAssignmentFor(ctx, dk, doctor.id);
+    const hasAmSite = !!(a.am && a.am !== "OFF");
+    const hasPmSite = !!(a.pm && a.pm !== "OFF");
+    if (!hasAmSite && !hasPmSite) continue;
     const contact = ctx.contacts[doctor.id] || {};
     const link = await linkFor(doctor, contact, base, secret, dk);
     out.push({ tech: doctor, contact, message: composeDoctorMessage(ctx, dk, doctor, kind, link) });

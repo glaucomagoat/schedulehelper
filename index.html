@@ -6731,6 +6731,8 @@ function DoctorNotifyPanel({ staff, isMobile }) {
   const [qrFor, setQrFor] = React.useState(null);           // doctorId whose QR is open
   const [sending, setSending] = React.useState(null);        // doctorId currently sending a test
   const [loadError, setLoadError] = React.useState('');
+  const [pendingUnlink, setPendingUnlink] = React.useState(null); // doctor object pending unlink confirmation
+  const [unlinking, setUnlinking] = React.useState(false);
 
   async function callTechApi(payload) {
     const token = localStorage.getItem('sessionToken') || '';
@@ -6788,9 +6790,29 @@ function DoctorNotifyPanel({ staff, isMobile }) {
       .catch(() => alert('Copy failed — open the QR and read the link below it'));
   }
 
-  const activeDoctors = (staff || []).filter(s => s.active !== false);
+  // Unlink is admin-gated on the server too, but the confirmation lives here so a
+  // stray click can never silently disconnect someone. Cancel does nothing; confirming
+  // clears their Telegram chat id and refreshes invite state so the row flips to
+  // "not linked" right away.
+  async function doUnlink(doctorId) {
+    setUnlinking(true);
+    try {
+      await callTechApi({ action: 'unlink-contact', id: doctorId });
+      await loadInvites();
+    } catch (e) {
+      setLoadError('Could not unlink: ' + e.message);
+    } finally {
+      setUnlinking(false);
+      setPendingUnlink(null);
+    }
+  }
+
+  // Every doctor on the roster, not just the ones the AI schedules — `active` gates
+  // AI generation, not presence, so an inactive doctor still needs to be reachable
+  // (and listed) for notifications. See notifiableDoctors in techdata.mjs.
+  const allDoctors = staff || [];
   const qrAvailable = typeof qrcode === 'function';
-  const unreachable = activeDoctors.filter(d => !((doctorInvites[d.id] || {}).linked));
+  const unreachable = allDoctors.filter(d => !((doctorInvites[d.id] || {}).linked));
 
   const thStyle = {textAlign:'left',padding:'8px 12px',fontSize:12,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,borderBottom:'1px solid var(--border-default)'};
   const tdStyle = {padding:'10px 12px',fontSize:14,borderBottom:'1px solid var(--border-subtle)',color:'var(--text-primary)'};
@@ -6878,16 +6900,25 @@ function DoctorNotifyPanel({ staff, isMobile }) {
               <th style={thStyle}></th>
             </tr></thead>
             <tbody>
-              {activeDoctors.length === 0 && (
-                <tr><td style={tdStyle} colSpan={4}>No active doctors.</td></tr>
+              {allDoctors.length === 0 && (
+                <tr><td style={tdStyle} colSpan={4}>No doctors.</td></tr>
               )}
-              {activeDoctors.map(d => {
+              {allDoctors.map(d => {
                 const inv = doctorInvites[d.id];
                 const linked = !!(inv && inv.linked);
+                const notAutoScheduled = d.active === false;
                 return (
                   <React.Fragment key={d.id}>
                     <tr style={{background: linked ? 'transparent' : 'rgba(245,158,11,0.06)'}}>
-                      <td style={Object.assign({}, tdStyle, {fontWeight:600})}>{d.name}</td>
+                      <td style={Object.assign({}, tdStyle, {fontWeight:600})}>
+                        {d.name}
+                        {notAutoScheduled && (
+                          <span style={{marginLeft:8,fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:'var(--border-default)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}
+                            title="Excluded from AI-generated schedules, but still notifiable">
+                            not auto-scheduled
+                          </span>
+                        )}
+                      </td>
                       <td style={Object.assign({}, tdStyle, {fontSize:13})}>
                         {linked
                           ? <span style={{color:'#10b981',fontWeight:700}}>✓ linked</span>
@@ -6908,11 +6939,19 @@ function DoctorNotifyPanel({ staff, isMobile }) {
                         )}
                       </td>
                       <td style={tdStyle}>
-                        <Btn variant="ghost" onClick={()=>sendTest(d.id)} disabled={!!sending || !linked}
-                          title={linked ? 'Send this doctor a test message' : 'Not linked yet'}
-                          style={{padding:'4px 10px',fontSize:12,opacity:linked?1:0.4,cursor:linked?'pointer':'not-allowed'}}>
-                          {sending===d.id ? 'Sending…' : 'Test'}
-                        </Btn>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <Btn variant="ghost" onClick={()=>sendTest(d.id)} disabled={!!sending || !linked}
+                            title={linked ? 'Send this doctor a test message' : 'Not linked yet'}
+                            style={{padding:'4px 10px',fontSize:12,opacity:linked?1:0.4,cursor:linked?'pointer':'not-allowed'}}>
+                            {sending===d.id ? 'Sending…' : 'Test'}
+                          </Btn>
+                          {linked && (
+                            <Btn variant="ghost" onClick={()=>setPendingUnlink(d)}
+                              style={{padding:'4px 10px',fontSize:12,color:'#ef4444'}}>
+                              Unlink
+                            </Btn>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {qrFor === d.id && inv && (
@@ -6956,6 +6995,27 @@ function DoctorNotifyPanel({ staff, isMobile }) {
           </table>
         </div>
       </div>
+
+      {pendingUnlink && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>{ if (!unlinking) setPendingUnlink(null); }}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Unlink Telegram" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:420,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>🔌</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Unlink Telegram?</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+              {'This disconnects '}
+              <b style={{color:'var(--text-primary)'}}>{pendingUnlink.name}</b>
+              {' from Telegram. They will stop receiving notifications until they open their invite link again.'}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" disabled={unlinking} onClick={()=>setPendingUnlink(null)}>Cancel</Btn>
+              <Btn variant="danger" disabled={unlinking} onClick={()=>doUnlink(pendingUnlink.id)}>
+                {unlinking ? 'Unlinking…' : 'Unlink'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

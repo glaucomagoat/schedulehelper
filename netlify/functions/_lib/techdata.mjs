@@ -277,12 +277,17 @@ export function doctorCoverage(ctx, dk) {
   return out;
 }
 
-// Administrators eligible to receive the whole-practice summary, mirrored for
-// doctors: every ACTIVE doctor (ctx.doctors, the `staff` blob) is implicitly a
-// notification candidate — there is no separate roster to maintain. Kept here so
-// sendjob.mjs and tech-notify.mjs never diverge on what "active doctor" means.
-export function activeDoctors(ctx) {
-  return (ctx.doctors || []).filter(d => d.active !== false);
+// Every doctor (ctx.doctors, the `staff` blob) is a notification candidate — there is
+// no separate roster to maintain. Deliberately NOT filtered on `d.active`: in the
+// doctor scheduler `active` means "include this doctor when the AI generates future
+// schedules", not "no longer here". A doctor who is `active: false` can still be on
+// the published plan and physically in clinic, so filtering on it here would make
+// them unreachable for notifications even though they're the one working that day.
+// Named "notifiable", not "active", so the name itself can't be misread the same way
+// the old filter was. Kept here so sendjob.mjs and tech-notify.mjs never diverge on
+// who counts.
+export function notifiableDoctors(ctx) {
+  return ctx.doctors || [];
 }
 
 // One doctor's own PUBLISHED assignment for a day — site ids or "OFF"/"" per period.
