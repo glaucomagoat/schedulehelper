@@ -80,7 +80,10 @@ export default async (req) => {
   // administrator's link.
   const tech = ctx.techs.find(t => t.id === techId);
   const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId && a.active !== false);
-  const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId && d.active !== false);
+  // Doctors are NOT filtered on `active` here: that flag gates AI generation, not
+  // presence, so an inactive-but-scheduled doctor following the "View full board"
+  // link in their own notification must not be told the link is dead.
+  const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId);
   if (!tech && !admin && !doctor) return errorPage(404, "This link is no longer on the schedule");
   const viewerName = tech ? tech.name : (admin ? admin.name : doctor.name);
   const viewerIsAdmin = !tech && !!(admin || doctor);

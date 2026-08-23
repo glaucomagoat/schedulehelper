@@ -179,7 +179,11 @@ export default async (req) => {
       // Doctors are neither — resolved last, from ctx.doctors (the `staff` blob).
       // Their id prefix ("s...") can never collide with a technician's ("t...") or
       // an administrator's ("a..."), so this chain never has to guess.
-      const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId && d.active !== false);
+      // NOT filtered on `active`: that flag gates AI generation, not presence (see
+      // notifiableDoctors in techdata.mjs). Filtering here told an inactive-but-
+      // scheduled doctor their account was gone and refused to bind them, which
+      // made them permanently unreachable no matter what the admin panel showed.
+      const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId);
       const person = tech || admin || doctor;
       if (!person) { await reply(chatId, "That account is no longer on the schedule."); return ok(); }
 
