@@ -8,7 +8,7 @@
 
 import {
   techStore, loadContext, readJson, writeJson, ADMIN, todayIn,
-  addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml, activeTechs, assignmentsFor,
+  addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml, activeTechs, assignmentsFor, dayNoteFor,
 } from "./_lib/techdata.mjs";
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
 import { summaryLine, personalTelegramLines, renderPracticeSummaryTelegram } from "./_lib/dayboard.mjs";
@@ -202,11 +202,13 @@ export default async (req) => {
       // Name the actual date, not just "Today". Someone reading a notification hours
       // later, or scrolling back through the chat, cannot tell which day a bare
       // "Today" referred to.
+      const note = dayNoteFor(ctx, dk);
       await reply(chatId,
         "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n"
         + escapeHtml(fmtLong(dk)) + "\n\n"
         + "📍 " + escapeHtml(summary)
-        + (detailLines.length ? "\n" + detailLines.join("\n") : ""));
+        + (detailLines.length ? "\n" + detailLines.join("\n") : "")
+        + (note ? "\n📌 " + escapeHtml(note) : ""));
       return ok();
     }
 
@@ -260,8 +262,10 @@ export default async (req) => {
         const head = "<b>" + escapeHtml(fmtShort(d.dk)) + "</b>"
           + (d.dk === today ? " ◂ today" : "");
         if (off) return head + "\n<i>Off</i>";
+        const dnote = dayNoteFor(ctx, d.dk);
         return [head, "📍 " + escapeHtml(d.line)]
           .concat(personalTelegramLines(ctx, d.dk, techId))
+          .concat(dnote ? ["📌 " + escapeHtml(dnote)] : [])
           .join("\n");
       }).join("\n\n");
 

@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins, techDayNotes, docDayNotes] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       readJson(store, ns + "techContacts", {}),
@@ -76,10 +76,15 @@ export async function loadContext(store) {
       // above, keyed by their id (which carries an "a" prefix so it can never
       // collide with a technician's "t" id).
       readJson(store, ns + "techAdmins", []),
+      // Day notes, both sides. The technician board keys them by date; the doctor
+      // scheduler keys them by schedule key first, then date.
+      readJson(store, ns + "techDayNotes", {}),
+      readJson(store, ns + "dayNotes", {}),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
     finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans, techPublished, techAdmins,
+    techDayNotes, docDayNotes,
     // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
     // Doctors only ever appear at real locations, which is why the two differ.
     allSites: (locations || []).concat(techSites || []),
@@ -215,6 +220,27 @@ export function doctorsAt(ctx, dk, lid) {
   const site = all.find(s => s.id === lid);
   const sourceId = (site && site.parentLocationId) ? site.parentLocationId : lid;
   return cov[sourceId] || { am: [], pm: [] };
+}
+
+// The note attached to one day, from either scheduler. A coordinator writes these
+// for exactly the reason they belong in a notification — "staff meeting 7:45",
+// "Dr Kim out after 3" — so they ride along with the assignment rather than living
+// only on the printed sheet. Both sides are included, deduplicated when identical.
+export function dayNoteFor(ctx, dk) {
+  const out = [];
+  const techNote = (ctx.techDayNotes || {})[dk];
+  if (techNote && String(techNote).trim()) out.push(String(techNote).trim());
+
+  const p = parseDateKey(dk);
+  const plan = (ctx.finalPlans || {})[p.year + "-" + p.month0];
+  if (plan) {
+    const key = "schedule-" + p.year + "-" + p.month0 + "-" + plan;
+    const docNote = ((ctx.docDayNotes || {})[key] || {})[dk];
+    if (docNote && String(docNote).trim() && out.indexOf(String(docNote).trim()) === -1) {
+      out.push(String(docNote).trim());
+    }
+  }
+  return out.join(" · ");
 }
 
 // Mirrors the DUTIES constant in techs.html — keep the two in step.

@@ -9,7 +9,7 @@
 import {
   summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines, renderPracticeSummaryTelegram,
 } from "./dayboard.mjs";
-import { fmtShort, fmtLong, escapeHtml, todayIn } from "./techdata.mjs";
+import { fmtShort, fmtLong, escapeHtml, todayIn, dayNoteFor } from "./techdata.mjs";
 
 function button(url, label) {
   return '<div style="margin:18px 0;"><a href="' + escapeHtml(url) + '" '
@@ -79,10 +79,16 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
     : "📍 <b>" + escapeHtml(summary) + "</b>"
         + (detailLines.length ? "\n" + detailLines.join("\n") : "");
 
+  // A note on the day is exactly the kind of thing someone writes because people
+  // need to know it — a 7:45 meeting, a doctor leaving early — so it rides with the
+  // assignment rather than living only on the printed sheet.
+  const dayNote = dayNoteFor(ctx, dk);
+
   const telegramText =
     "<b>" + escapeHtml(heading) + "</b>\n"
     + escapeHtml(fmtLong(dk)) + "\n\n"
     + assignmentBlock
+    + (dayNote ? "\n📌 " + escapeHtml(dayNote) : "")
     + (kind === "change" ? "\n\n" + escapeHtml(CHANGE_EXPLAINER) : "")
     + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
 
@@ -93,8 +99,14 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
         + escapeHtml(CHANGE_EXPLAINER) + '</div>'
     : "";
 
+  const noteHtml = dayNote
+    ? '<div style="font-size:14px;color:#8a5a00;background:#fff8e6;border:1px solid #f0b429;'
+        + 'border-radius:8px;padding:9px 12px;margin:0 0 16px;">📌 ' + escapeHtml(dayNote) + '</div>'
+    : "";
+
   const emailHtml = emailShell(
     renderMineHtml(ctx, dk, tech.id, tech.name)
+    + noteHtml
     + changeExplainerHtml
     + '<div style="font-size:12px;font-weight:800;letter-spacing:0.8px;color:#6b7280;margin:0 0 8px;">EVERYONE ON '
     + escapeHtml(dayLabel.toUpperCase()) + '</div>'
@@ -107,6 +119,7 @@ export function composeDayMessage(ctx, dk, tech, kind, link, prevSummary) {
   const emailText =
     heading + "\n" + fmtLong(dk) + "\n\n"
     + summary + "\n"
+    + (dayNote ? "Note: " + dayNote + "\n" : "")
     + (kind === "change" ? "\n" + CHANGE_EXPLAINER + "\n" : "")
     + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
     + "\nThis schedule can change during the day — the link above is always current.";

@@ -75,9 +75,15 @@ button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2p
    these tiles set their border inline, so a border-color rule would never apply. */
 .hov-tile:hover{box-shadow:0 0 0 2px rgba(129,140,248,0.55),0 2px 10px rgba(99,102,241,0.20)}
 .hov-tile:active{transform:translateY(1px)}
+/* Header pills sit on a transparent/white ground with an inline border, so a
+   brightness filter has nothing to act on and a border-color rule would be
+   beaten by the inline style. Tint and ring with box-shadow instead. */
+.hov-pill{transition:box-shadow .12s ease}
+.hov-pill:hover{box-shadow:inset 0 0 0 999px rgba(129,140,248,0.12),0 0 0 1px rgba(129,140,248,0.55)}
+.hov-pill:active{transform:translateY(1px)}
 
 @media (prefers-reduced-motion: reduce){
-  .hov-row,.hov-tile{transition:none}
+  .hov-row,.hov-tile,.hov-pill{transition:none}
   .hov-tile:active{transform:none}
 }
 
@@ -849,6 +855,11 @@ window.ScheduleHelper = function StaffScheduler() {
   // Plan system: A, B, C per month
   const [activePlan, setActivePlan] = useState('A');
   const [finalPlans, setFinalPlans] = useState({}); // { "2026-1": "A", ... }
+  // When each month's plan was published, so downstream views (the technician
+  // portal's doctor month) can say which version they are showing rather than
+  // guessing. Kept in its own blob because finalPlans' shape is depended on by
+  // the server, this app, and techs.html alike.
+  const [finalPlanStamps, setFinalPlanStamps] = useState({}); // { "2026-1": epochMs }
   const [planHistory, setPlanHistory] = useState({}); // { [scheduleKey]: [{ts, desc}] }
   const [showHistory, setShowHistory] = useState(true);
   const [accountAudit, setAccountAudit] = useState([]); // [{ts, desc, by}] — per-tenant account change log
@@ -1187,9 +1198,11 @@ window.ScheduleHelper = function StaffScheduler() {
 
   function setFinalPlan(plan) {
     setFinalPlans(prev => ({ ...prev, [monthKey]: plan }));
+    setFinalPlanStamps(prev => ({ ...prev, [monthKey]: Date.now() }));
   }
   function clearFinalPlan() {
     setFinalPlans(prev => { const n = { ...prev }; delete n[monthKey]; return n; });
+    setFinalPlanStamps(prev => { const n = { ...prev }; delete n[monthKey]; return n; });
   }
 
   function toggleTheme() {
@@ -1337,7 +1350,7 @@ window.ScheduleHelper = function StaffScheduler() {
   // clearing does not trigger cloud writes.
   function resetAllUserState() {
     setStaff([]); setLocations([]); setRules([]); setVacations([]); setMedicalLeaves([]); setHolidays([]);
-    setSchedules({}); setDayNotes({}); setFinalPlans({}); setPlanHistory({}); setChatMessages([]);
+    setSchedules({}); setDayNotes({}); setFinalPlans({}); setFinalPlanStamps({}); setPlanHistory({}); setChatMessages([]);
     setAccountAudit([]);
     // Clear visibility + allow the init-once effects to run again for the next account (M5)
     setVisibleStaff(new Set()); setVisibleLocations(new Set());
@@ -1396,6 +1409,7 @@ window.ScheduleHelper = function StaffScheduler() {
       const ml = await d('medicalLeaves'); if (ml) setMedicalLeaves(ml);
       const h = await d('holidays'); if (h) setHolidays(h); else setHolidays(PRESET_HOLIDAYS);
       const fp = await d('finalPlans'); if (fp) setFinalPlans(fp);
+      const fps = await d('finalPlanStamps'); if (fps) setFinalPlanStamps(fps);
       const dn = await d('dayNotes'); if (dn) setDayNotes(dn);
       const ph = await d('planHistory'); if (ph) setPlanHistory(ph);
       const aa = await d('accountAudit'); if (aa) setAccountAudit(aa);
@@ -1422,6 +1436,7 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('schedules', schedules); }, [schedules]);
   useEffect(() => { if (user) saveData('finalPlans', finalPlans); }, [finalPlans]);
   useEffect(() => { if (user) saveData('dayNotes', dayNotes); }, [dayNotes]);
+  useEffect(() => { if (user) saveData('finalPlanStamps', finalPlanStamps); }, [finalPlanStamps]);
 
   // Clear any stale AI status banner when switching month/plan (L5)
   useEffect(() => { if (!generating) setAiLog(''); }, [scheduleKey]);
@@ -4222,17 +4237,17 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
           </span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
-          <a href="techs.html" title="Technician scheduler"
+          <a href="techs.html" title="Technician scheduler" className="hov-pill"
             style={{background:'none',border:`1px solid var(--border-interactive)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',textDecoration:'none',display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap'}}>
             🩺 {isMobile ? 'Techs' : 'Technicians'}
           </a>
           {isDev && !isMobile && <Btn variant="ghost" onClick={resetDevData} style={{fontSize:12,padding:'5px 12px',color:'#f59e0b',borderColor:'#92400e'}}>🔄 Reset Presets</Btn>}
-          <button onClick={toggleTheme}
+          <button onClick={toggleTheme} className="hov-pill"
             style={{background:'none',border:`1px solid var(--border-interactive)`,borderRadius:20,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:700,color:'var(--text-muted)',fontFamily:'"DM Sans",sans-serif',display:'flex',alignItems:'center',gap:5}}>
             {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
           </button>
           <div data-profile-menu style={{position:'relative'}}>
-            <div onClick={()=>setShowProfileMenu(p=>!p)}
+            <div onClick={()=>setShowProfileMenu(p=>!p)} className="hov-pill"
               style={{display:'flex',alignItems:'center',gap:6,padding:isMobile?'6px 10px':'7px 14px',background:showProfileMenu?'var(--border-subtle)':'transparent',border:'1px solid '+(showProfileMenu?'#3a3a5a':'transparent'),borderRadius:10,cursor:'pointer',transition:'all 0.15s'}}>
               <div style={{width:isMobile?32:28,height:isMobile?32:28,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:isMobile?15:13,fontWeight:700,color:'#fff',flexShrink:0}}>
                 {user.username[0].toUpperCase()}

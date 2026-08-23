@@ -73,9 +73,15 @@ button:focus-visible, a:focus-visible, [data-hoverable]:focus-visible{outline:2p
    these tiles set their border inline, so a border-color rule would never apply. */
 .hov-tile:hover{box-shadow:0 0 0 2px rgba(129,140,248,0.55),0 2px 10px rgba(99,102,241,0.20)}
 .hov-tile:active{transform:translateY(1px)}
+/* Header pills sit on a transparent/white ground with an inline border, so a
+   brightness filter has nothing to act on and a border-color rule would be
+   beaten by the inline style. Tint and ring with box-shadow instead. */
+.hov-pill{transition:box-shadow .12s ease}
+.hov-pill:hover{box-shadow:inset 0 0 0 999px rgba(129,140,248,0.12),0 0 0 1px rgba(129,140,248,0.55)}
+.hov-pill:active{transform:translateY(1px)}
 
 @media (prefers-reduced-motion: reduce){
-  .hov-row,.hov-tile{transition:none}
+  .hov-row,.hov-tile,.hov-pill{transition:none}
   .hov-tile:active{transform:none}
 }
 
@@ -741,7 +747,7 @@ function App() {
     };
     const dOrSkip = k => portal ? Promise.resolve(null) : d(k);
     const [
-      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub, tadm,
+      tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub, tadm, fps,
       st, loc, fp, sch, hol, ddn
     ] = await Promise.all([
       d('techs'), dOrSkip('techContacts'), dOrSkip('techRules'), d('techStaffing'),
@@ -749,6 +755,7 @@ function App() {
       // Admin-only, same as techContacts/techRules/etc — a technician portal
       // session must never see the administrator roster.
       dOrSkip('techAdmins'),
+      d('finalPlanStamps'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
     ]);
     if (tsi) setTechSites(tsi);
@@ -759,6 +766,7 @@ function App() {
     if (ts)  setTechStaffing(ts);
     if (tfp) setTechFinalPlans(tfp);
     if (tpub) setTechPublished(tpub);
+    if (fps) setFinalPlanStamps(fps);
     if (tsch) {
       // One-time migration: keys written before plans existed (tech-YYYY-M) become
       // plan A. Done in memory and saved back, so it only ever happens once.
@@ -1301,6 +1309,8 @@ function App() {
   // carries staffId but not techId, so it is read from the account's own user
   // record — the one key a portal session is always allowed to read.
   const [myTechId, setMyTechId] = useState(null);
+  // When each doctor plan was published, written by the doctor scheduler.
+  const [finalPlanStamps, setFinalPlanStamps] = useState({});
   const [dayLinks, setDayLinks] = useState({});               // techId -> { token, url }
   const [linksLoading, setLinksLoading] = useState(false);
 
@@ -2414,12 +2424,12 @@ function App() {
         {/* Technicians have no business on the doctor scheduler — their login only
             grants this page, so offering the link would just lead to a dead end. */}
         {isAdmin && (
-          <a href="index.html" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>← Doctors</a>
+          <a href="index.html" className="hov-pill" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap',borderRadius:8,padding:'4px 8px'}}>← Doctors</a>
         )}
         <div style={{fontWeight:800,fontSize:16,whiteSpace:'nowrap'}}>🩺 Technician Scheduler</div>
         <div style={{flex:1}} />
         {!isAdmin && <span style={{fontSize:12,color:'var(--text-muted)',border:'1px solid var(--border-default)',borderRadius:99,padding:'3px 10px'}}>👁 View only</span>}
-        <button onClick={toggleTheme} style={Object.assign({}, S.btn, {padding:'6px 10px'})} title="Toggle theme">{theme==='dark'?'☀️':'🌙'}</button>
+        <button onClick={toggleTheme} className="hov-pill" style={Object.assign({}, S.btn, {padding:'6px 10px'})} title="Toggle theme">{theme==='dark'?'☀️':'🌙'}</button>
       </div>
 
       {/* Tabs */}
@@ -2497,10 +2507,16 @@ function App() {
                                 docSchedules,finalPlans,docDayNotes,holidays,theme,
                                 publishedNote:(() => {
                                   const p2 = parseDateKey(selectedDate);
-                                  const pl = (finalPlans || {})[p2.year + '-' + p2.month0];
-                                  // The doctor plan carries no publish timestamp — naming the
-                                  // live plan letter is the honest equivalent.
-                                  return pl ? 'Showing published Plan ' + pl : '';
+                                  const ym = p2.year + '-' + p2.month0;
+                                  const pl = (finalPlans || {})[ym];
+                                  if (!pl) return '';
+                                  const at = (finalPlanStamps || {})[ym];
+                                  // Months published before the doctor scheduler started
+                                  // stamping have no time to show; name the plan instead of
+                                  // inventing one.
+                                  return at
+                                    ? 'Plan ' + pl + ' · published ' + fmtStamp(at)
+                                    : 'Showing published Plan ' + pl;
                                 })()}} />
         )}
         {activeTab === 'p-account' && !isAdmin && (

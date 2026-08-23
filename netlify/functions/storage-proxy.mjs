@@ -202,7 +202,12 @@ function isKeyReadable(key, session) {
     if (key === `user:${username}`) return true;
     if (key.startsWith('staffPortal:')) return true;
     if (key.startsWith('techPortal:')) return true;
-    const STAFF_READABLE = ['staff', 'locations', 'holidays', 'schedules', 'finalPlans', 'dayNotes'];
+    // finalPlanStamps says WHEN each doctor plan was published — the technician
+    // portal shows it so a reader knows which version they are looking at. It is
+    // a bare timestamp per month; it exposes nothing a reader of finalPlans and
+    // schedules cannot already see.
+    const STAFF_READABLE = ['staff', 'locations', 'holidays', 'schedules', 'finalPlans',
+                            'finalPlanStamps', 'dayNotes'];
     // Technician portal keys.
     //
     // techPublished is what a technician actually views — the snapshot the coordinator

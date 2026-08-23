@@ -6,7 +6,7 @@
 
 import {
   activeTechs, assignmentsFor, doctorCoverage, doctorsAt, DUTY_LABELS, locationName,
-  fmtLong, fmtShort, escapeHtml, parseDateKey, dayOfWeek, addDays,
+  fmtLong, fmtShort, escapeHtml, parseDateKey, dayOfWeek, addDays, dayNoteFor,
 } from "./techdata.mjs";
 
 // The one-line version of a person's day. Used for the email SUBJECT and the
@@ -138,7 +138,10 @@ export function renderPracticeSummaryTelegram(ctx, dk) {
     ? "\n\n🛑 <b>Off</b> — " + escapeHtml(offNames.join(", "))
     : "";
 
-  return header + "\n\n" + blocks.join("\n\n") + offBlock;
+  const note = dayNoteFor(ctx, dk);
+  const noteBlock = note ? "\n\n📌 " + escapeHtml(note) : "";
+
+  return header + noteBlock + "\n\n" + blocks.join("\n\n") + offBlock;
 }
 
 function chip(text, highlight) {
