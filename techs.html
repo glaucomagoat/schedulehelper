@@ -587,13 +587,15 @@ function App() {
   const [activeTab, setActiveTab] = useState('board');
   const [toast, setToast] = useState(null);
 
-  // Sidebar: pinned = user's chosen state; hovered = temporary peek while the
-  // pointer is over it. Rendered width is expanded when either is true. Default
-  // is expanded (pinned=true); after 2 minutes idle it auto-retracts.
-  const [sidebarPinned, setSidebarPinned] = useState(true);
+  // Sidebar: pinned = user's chosen mode, persisted in localStorage so it carries
+  // across reloads (and across the doctor/technician apps on this shared origin);
+  // hovered = temporary peek while the pointer is over it. Rendered width is
+  // expanded when either is true. Default is retracted (pinned=false).
+  const [sidebarPinned, setSidebarPinned] = useState(() => {
+    try { return localStorage.getItem('sidebarPinned') === '1'; } catch (e) { return false; }
+  });
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const sidebarCollapsed = !(sidebarPinned || sidebarHovered);
-  const sidebarTimerRef = useRef(null);
 
   // Technician-side data (owned by this app)
   const [techs, setTechs]                 = useState([]);
@@ -814,24 +816,12 @@ function App() {
     if (user) localStorage.setItem('theme:' + user.username, next);
   }
 
-  function clearSidebarTimer() {
-    if (sidebarTimerRef.current) { clearTimeout(sidebarTimerRef.current); sidebarTimerRef.current = null; }
-  }
-  function restartSidebarTimer() {
-    clearSidebarTimer();
-    sidebarTimerRef.current = setTimeout(() => setSidebarPinned(false), 120000); // 2 minutes
-  }
-  // Pinned state drives the auto-retract timer: pin on -> (re)start the 2-minute
-  // countdown, pin off -> nothing to count down. Hover never touches this effect,
-  // so a peek never restarts or cancels the timer.
-  useEffect(() => {
-    if (isMobile) return;
-    if (sidebarPinned) restartSidebarTimer(); else clearSidebarTimer();
-    return clearSidebarTimer;
-  }, [sidebarPinned, isMobile]);
-
   function toggleSidebar() {
-    setSidebarPinned(p => !p);
+    setSidebarPinned(p => {
+      const next = !p;
+      try { localStorage.setItem('sidebarPinned', next ? '1' : '0'); } catch (e) {}
+      return next;
+    });
   }
   const LC = theme === 'dark' ? LOCATION_COLORS : LOCATION_COLORS_LIGHT;
   function locColor(id) { return LC[id] || { bg:'var(--bg-elevated)', border:'var(--border-default)', text:'var(--text-secondary)' }; }
@@ -2496,7 +2486,7 @@ function App() {
             <div style={{flex:1,overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',userSelect:'none'}}>
             <div style={{flex:1,padding:'20px 0'}}>
               {TABS.map(tab => (
-                <div key={tab.id} onClick={()=>{setActiveTab(tab.id); if (sidebarPinned) restartSidebarTimer();}} className="hov-row"
+                <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
                   title={tab.label}
                   style={{padding:sidebarCollapsed?'12px 0':'12px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
                     color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',
@@ -2511,10 +2501,19 @@ function App() {
                 </div>
               ))}
             </div>
+            <div onClick={toggleSidebar} className="hov-row"
+              title={sidebarPinned ? 'Sidebar stays open — click to auto-hide it' : 'Sidebar auto-hides — click to keep it open'}
+              style={{cursor:'pointer',borderTop:'1px solid var(--border-subtle)',padding:sidebarCollapsed?'12px 0':'12px 20px',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap',userSelect:'none'}}>
+              <span style={{flexShrink:0,display:'flex',alignItems:'center',lineHeight:1}}>{sidebarPinned?'📌':'👆'}</span>
+              <span style={{opacity:sidebarCollapsed?0:1,maxWidth:sidebarCollapsed?0:180,overflow:'hidden',transition:'opacity 0.15s,max-width 0.25s cubic-bezier(0.4,0,0.2,1)',display:'inline-block',whiteSpace:'nowrap'}}>
+                {sidebarPinned?'Pinned open':'Hover to open'}
+              </span>
             </div>
-            <button onClick={toggleSidebar} title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
-              style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50%',background:'var(--bg-surface)',border:'1px solid var(--border-default)',boxShadow:'0 2px 8px rgba(0,0,0,0.15)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'var(--text-muted)',zIndex:10,transition:'opacity 0.2s',padding:0,lineHeight:1}}>
-              {sidebarCollapsed?'▶':'◀'}
+            </div>
+            <button onClick={toggleSidebar} aria-pressed={sidebarPinned}
+              title={sidebarPinned ? 'Sidebar stays open — click to auto-hide it' : 'Sidebar auto-hides — click to keep it open'}
+              style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50%',background:sidebarPinned?'#6366f1':'var(--bg-surface)',color:sidebarPinned?'#fff':'var(--text-muted)',border:sidebarPinned?'1px solid #6366f1':'1px solid var(--border-default)',boxShadow:'0 2px 8px rgba(0,0,0,0.15)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,zIndex:10,transition:'opacity 0.2s,background 0.2s,color 0.2s,border-color 0.2s',padding:0,lineHeight:1}}>
+              {sidebarPinned?'◀':'▶'}
             </button>
           </div>
         )}
