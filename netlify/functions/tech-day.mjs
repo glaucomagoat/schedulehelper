@@ -73,12 +73,17 @@ export default async (req) => {
 
   // The token carries an id, not a role. Administrators get the same signed link as
   // technicians — theirs simply resolves to a whole-practice view with no personal
-  // assignment card and nobody highlighted.
+  // assignment card and nobody highlighted. Doctors (ctx.doctors, the `staff` blob,
+  // "s..." ids) resolve the same way — their push messages already carry their own
+  // location and who is with them, so the linked page just needs to open to
+  // *something* useful rather than 404: the whole-practice board, same as an
+  // administrator's link.
   const tech = ctx.techs.find(t => t.id === techId);
   const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId && a.active !== false);
-  if (!tech && !admin) return errorPage(404, "This link is no longer on the schedule");
-  const viewerName = tech ? tech.name : admin.name;
-  const viewerIsAdmin = !tech;
+  const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId && d.active !== false);
+  if (!tech && !admin && !doctor) return errorPage(404, "This link is no longer on the schedule");
+  const viewerName = tech ? tech.name : (admin ? admin.name : doctor.name);
+  const viewerIsAdmin = !tech && !!(admin || doctor);
 
   const todayDk = todayIn(ctx.settings.timezone);
   const tomorrowDk = addDays(todayDk, 1);

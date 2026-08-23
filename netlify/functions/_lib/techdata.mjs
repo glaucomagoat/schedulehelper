@@ -57,6 +57,10 @@ export async function loadContext(store) {
   const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins, techDayNotes, docDayNotes] =
     await Promise.all([
       readJson(store, ns + "techs", []),
+      // Contact/notification state for every notifiable person, keyed by id:
+      // technicians ("t..."), administrators ("a..."), AND doctors ("s...", the
+      // `staff` blob's id prefix). The three prefixes can never collide, so one map
+      // is enough — there is no separate doctor-contacts blob and never should be.
       readJson(store, ns + "techContacts", {}),
       readJson(store, ns + "techSchedules", {}),
       readJson(store, ns + "techStaffing", {}),
@@ -271,6 +275,49 @@ export function doctorCoverage(ctx, dk) {
     });
   });
   return out;
+}
+
+// Administrators eligible to receive the whole-practice summary, mirrored for
+// doctors: every ACTIVE doctor (ctx.doctors, the `staff` blob) is implicitly a
+// notification candidate — there is no separate roster to maintain. Kept here so
+// sendjob.mjs and tech-notify.mjs never diverge on what "active doctor" means.
+export function activeDoctors(ctx) {
+  return (ctx.doctors || []).filter(d => d.active !== false);
+}
+
+// One doctor's own PUBLISHED assignment for a day — site ids or "OFF"/"" per period.
+// Deliberately reads the FINAL plan only, exactly like doctorCoverage: a doctor must
+// never be notified about a draft that could still change before publish. No final
+// plan for the month, or no entry for this doctor on this day, resolves to
+// { am: "", pm: "" } rather than throwing — "nothing to report" is a valid answer.
+export function doctorAssignmentFor(ctx, dk, doctorId) {
+  const p = parseDateKey(dk);
+  const plan = ctx.finalPlans[p.year + "-" + p.month0];
+  if (!plan) return { am: "", pm: "" };
+  const key = "schedule-" + p.year + "-" + p.month0 + "-" + plan;
+  const day = (ctx.docSchedules[key] || {})[dk];
+  const per = (day || {})[doctorId] || {};
+  return { am: per.am || "", pm: per.pm || "" };
+}
+
+// Technicians working AT a given site in a given period ("am"/"pm"), by name.
+// Resolves sub-rooms the same way doctorsAt does: a technician assigned to
+// "Stockton - Suite 2" is working WITH the Stockton doctor, so they count toward
+// that site too. Excludes OFF. Built on assignmentsFor/activeTechs so this can never
+// drift from what the technician board itself shows.
+export function techsWithDoctor(ctx, dk, siteId, period) {
+  if (!siteId || siteId === "OFF") return [];
+  const day = assignmentsFor(ctx, dk);
+  const all = ctx.allSites || ctx.locations || [];
+  return activeTechs(ctx)
+    .filter(t => {
+      const lid = (day[t.id] || {})[period];
+      if (!lid || lid === "OFF") return false;
+      if (lid === siteId) return true;
+      const site = all.find(x => x.id === lid);
+      return !!(site && site.parentLocationId === siteId);
+    })
+    .map(t => t.name);
 }
 
 export function escapeHtml(s) {

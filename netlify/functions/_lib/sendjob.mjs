@@ -3,9 +3,9 @@
 // 6pm automatic send and a manual send produce the same message and the same
 // log entry — if they drifted, the delivery log would stop being trustworthy.
 
-import { activeTechs, activeAdmins, todayIn, assignmentsFor } from "./techdata.mjs";
+import { activeTechs, activeAdmins, activeDoctors, todayIn, assignmentsFor } from "./techdata.mjs";
 import { makeTechToken, dayLinkFor } from "./links.mjs";
-import { composeDayMessage, composeAdminSummary } from "./compose.mjs";
+import { composeDayMessage, composeAdminSummary, composeDoctorMessage } from "./compose.mjs";
 import { sendToMany, summarize } from "./notify.mjs";
 import { recordSend, buildSnapshot, changedTechs } from "./sendlog.mjs";
 
@@ -71,6 +71,25 @@ async function buildAdminRecipients(ctx, dk, kind, base, secret) {
   return out;
 }
 
+// Doctors receive the evening/morning sends only — NEVER a change alert. A change
+// message is a technician's reassignment; it means nothing to a doctor's own day, so
+// this filters `kind === "change"` out itself rather than relying on every caller to
+// remember (same defensive pattern buildAdminRecipients uses).
+//
+// Every ACTIVE doctor from ctx.doctors is a candidate — no separate roster. They get
+// the same signed day-view link technicians and administrators get: the token
+// carries an id, not a role.
+async function buildDoctorRecipients(ctx, dk, kind, base, secret) {
+  if (kind === "change") return [];
+  const out = [];
+  for (const doctor of activeDoctors(ctx)) {
+    const contact = ctx.contacts[doctor.id] || {};
+    const link = await linkFor(doctor, contact, base, secret, dk);
+    out.push({ tech: doctor, contact, message: composeDoctorMessage(ctx, dk, doctor, kind, link) });
+  }
+  return out;
+}
+
 // `kind`: 'evening' | 'morning' | 'change'.
 export async function runSendJob(store, ctx, opts) {
   const { dateKey, kind, base, secret } = opts;
@@ -88,19 +107,22 @@ export async function runSendJob(store, ctx, opts) {
 
   const recipients = await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
   const adminRecipients = await buildAdminRecipients(ctx, dateKey, kind, base, secret);
-  if (recipients.length === 0 && adminRecipients.length === 0) {
+  const doctorRecipients = await buildDoctorRecipients(ctx, dateKey, kind, base, secret);
+  if (recipients.length === 0 && adminRecipients.length === 0 && doctorRecipients.length === 0) {
     return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
   }
 
   const techResults = recipients.length ? await sendToMany(recipients, ctx.settings) : [];
   const adminResults = adminRecipients.length ? await sendToMany(adminRecipients, ctx.settings) : [];
-  // Tag every admin delivery attempt so the log can never be misread as a
-  // technician's, even though an admin id already carries a distinct "a" prefix
+  const doctorResults = doctorRecipients.length ? await sendToMany(doctorRecipients, ctx.settings) : [];
+  // Tag every admin/doctor delivery attempt so the log can never be misread as a
+  // technician's, even though their ids already carry distinct "a"/"s" prefixes
   // (techIds are "t...") — belt and braces for any reader that checks a flag
   // rather than sniffing the id shape.
   adminResults.forEach(r => { r.isAdmin = true; });
+  doctorResults.forEach(r => { r.isDoctor = true; });
 
-  const results = techResults.concat(adminResults);
+  const results = techResults.concat(adminResults).concat(doctorResults);
   const snapshot = buildSnapshot(ctx, dateKey);
   await recordSend(store, dateKey, kind, results, snapshot, todayIn(ctx.settings.timezone));
 

@@ -9,6 +9,7 @@
 import {
   techStore, loadContext, readJson, writeJson, ADMIN, todayIn,
   addDays, dayOfWeek, fmtShort, fmtLong, escapeHtml, activeTechs, assignmentsFor, dayNoteFor,
+  doctorAssignmentFor, techsWithDoctor, locationName,
 } from "./_lib/techdata.mjs";
 import { verifyInviteToken, makeTechToken, newNonce, dayLinkFor } from "./_lib/links.mjs";
 import { summaryLine, personalTelegramLines, renderPracticeSummaryTelegram } from "./_lib/dayboard.mjs";
@@ -55,6 +56,43 @@ function secretOk(req) {
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ got.charCodeAt(i);
   return diff === 0;
+}
+
+// A doctor's own day, in the shape /today, /tomorrow and /week all need: the
+// location summary (both halves stated when they differ — see compose.mjs's
+// composeDoctorMessage, which this mirrors) plus who is working with them there.
+// Kept local rather than reusing composeDoctorMessage because that also builds the
+// subject/heading/footer a push notification needs, none of which belongs in a
+// direct reply to a command someone just typed.
+function doctorDaySummary(ctx, dk, doctor) {
+  const a = doctorAssignmentFor(ctx, dk, doctor.id);
+  const amOff = !a.am || a.am === "OFF";
+  const pmOff = !a.pm || a.pm === "OFF";
+  const isOff = amOff && pmOff;
+
+  let summary;
+  if (isOff) summary = "Not scheduled";
+  else if (a.am === a.pm) summary = locationName(ctx, a.am) + " all day";
+  else if (amOff) summary = locationName(ctx, a.pm) + " PM (off AM)";
+  else if (pmOff) summary = locationName(ctx, a.am) + " AM (off PM)";
+  else summary = locationName(ctx, a.am) + " AM, " + locationName(ctx, a.pm) + " PM";
+
+  const amTechs = amOff ? [] : techsWithDoctor(ctx, dk, a.am, "am");
+  const pmTechs = pmOff ? [] : techsWithDoctor(ctx, dk, a.pm, "pm");
+  const sameAllDay = !isOff && a.am === a.pm;
+
+  const lines = [];
+  if (!isOff) {
+    if (sameAllDay) {
+      if (amTechs.length) lines.push("👥 With: " + escapeHtml(amTechs.join(", ")));
+    } else {
+      const parts = [];
+      if (!amOff) parts.push("AM: " + (amTechs.length ? escapeHtml(amTechs.join(", ")) : "no techs assigned"));
+      if (!pmOff) parts.push("PM: " + (pmTechs.length ? escapeHtml(pmTechs.join(", ")) : "no techs assigned"));
+      if (parts.length) lines.push("👥 " + parts.join(" · "));
+    }
+  }
+  return { isOff, summary, lines };
 }
 
 const SEEN_UPDATES_KEY = ADMIN + ":telegramSeenUpdates";
@@ -138,7 +176,11 @@ export default async (req) => {
       // Administrators are NOT technicians (never scheduled, never on the grid) —
       // resolved separately, and only when techId did not match a technician.
       const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId);
-      const person = tech || admin;
+      // Doctors are neither — resolved last, from ctx.doctors (the `staff` blob).
+      // Their id prefix ("s...") can never collide with a technician's ("t...") or
+      // an administrator's ("a..."), so this chain never has to guess.
+      const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId && d.active !== false);
+      const person = tech || admin || doctor;
       if (!person) { await reply(chatId, "That account is no longer on the schedule."); return ok(); }
 
       contacts[techId] = Object.assign({}, contacts[techId] || {}, {
@@ -156,8 +198,10 @@ export default async (req) => {
         "✅ Linked, " + person.name.split(" ")[0] + ".\n\n"
         + (admin
             ? "You'll get the whole practice's schedule here the night before and again in the morning.\n\nSend /today for today's schedule, /week for the full week, or /board to see it now."
-            : "You'll get your site assignment here the night before and again in the morning, "
-              + "plus an alert if anything changes.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's."));
+            : doctor
+              ? "You'll get your own site assignment here the night before and again in the morning, along with who is working with you there.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's."
+              : "You'll get your site assignment here the night before and again in the morning, "
+                + "plus an alert if anything changes.\n\nSend /today for your assignment, /week for the full week, or /board to see everyone's."));
       return ok();
     }
 
@@ -193,6 +237,21 @@ export default async (req) => {
       const admin = (ctx.techAdmins || []).find(a => a.id === techId);
       if (admin) {
         await reply(chatId, renderPracticeSummaryTelegram(ctx, dk));
+        return ok();
+      }
+
+      // A doctor gets their own location(s) and who is working with them there —
+      // never a technician's personal assignment line.
+      const doctor = (ctx.doctors || []).find(d => d.id === techId);
+      if (doctor) {
+        const d = doctorDaySummary(ctx, dk, doctor);
+        const note = dayNoteFor(ctx, dk);
+        await reply(chatId,
+          "<b>" + (isTomorrow ? "Tomorrow" : "Today") + "</b>\n"
+          + escapeHtml(fmtLong(dk)) + "\n\n"
+          + (d.isOff ? "<b>" + escapeHtml(d.summary) + "</b>" : "📍 " + escapeHtml(d.summary))
+          + (d.lines.length ? "\n" + d.lines.join("\n") : "")
+          + (note ? "\n📌 " + escapeHtml(note) : ""));
         return ok();
       }
 
@@ -243,6 +302,32 @@ export default async (req) => {
         for (const wdk of weekDays) {
           await reply(chatId, renderPracticeSummaryTelegram(ctx, wdk));
         }
+        return ok();
+      }
+
+      // A doctor gets their own week — same per-day shape /today uses, never a
+      // technician's personal line. Saturday is included only when they actually
+      // have something on it that week, same rule the technician view below uses.
+      const doctor = (ctx.doctors || []).find(dr => dr.id === techId);
+      if (doctor) {
+        const days = [0, 1, 2, 3, 4, 5].map(i => addDays(monday, i));
+        const rows = days
+          .map((dk, i) => ({ dk, i, d: doctorDaySummary(ctx, dk, doctor) }))
+          .filter(r => r.i < 5 || !r.d.isOff);
+
+        const body = rows.map(r => {
+          const head = "<b>" + escapeHtml(fmtShort(r.dk)) + "</b>" + (r.dk === today ? " ◂ today" : "");
+          if (r.d.isOff) return head + "\n<i>" + escapeHtml(r.d.summary) + "</i>";
+          const dnote = dayNoteFor(ctx, r.dk);
+          return [head, "📍 " + escapeHtml(r.d.summary)]
+            .concat(r.d.lines)
+            .concat(dnote ? ["📌 " + escapeHtml(dnote)] : [])
+            .join("\n");
+        }).join("\n\n");
+
+        const range = escapeHtml(fmtShort(rows.length ? rows[0].dk : days[0])
+          + " – " + fmtShort(rows.length ? rows[rows.length - 1].dk : days[4]));
+        await reply(chatId, "<b>This week</b>\n<i>" + range + "</i>\n\n" + body);
         return ok();
       }
 

@@ -9,7 +9,10 @@
 import {
   summaryLine, renderMineHtml, renderBoardHtml, personalTelegramLines, renderPracticeSummaryTelegram,
 } from "./dayboard.mjs";
-import { fmtShort, fmtLong, escapeHtml, todayIn, dayNoteFor } from "./techdata.mjs";
+import {
+  fmtShort, fmtLong, escapeHtml, todayIn, dayNoteFor,
+  doctorAssignmentFor, techsWithDoctor, locationName,
+} from "./techdata.mjs";
 
 function button(url, label) {
   return '<div style="margin:18px 0;"><a href="' + escapeHtml(url) + '" '
@@ -166,6 +169,132 @@ export function composeAdminSummary(ctx, dk, admin, kind, link) {
     + "\nThis schedule can change during the day.";
 
   return { subject, telegramText, emailHtml, emailText, link, kind, dateKey: dk };
+}
+
+// A doctor's own message — their own site(s) plus who is working with them there.
+// Doctors get the evening/morning sends only, NEVER a change alert (callers must
+// filter `kind === "change"` out before reaching here — see buildDoctorRecipients
+// in sendjob.mjs). Returns the exact same shape composeDayMessage does, so the
+// channel adapters need no changes to handle a doctor recipient.
+//
+// `link` is the same signed day-view link technicians and administrators receive —
+// the token carries an id, not a role.
+export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
+  const dayLabel = fmtShort(dk);
+  const when = kind === "evening" ? "Tomorrow" : kind === "morning" ? "Today" : "";
+
+  const a = doctorAssignmentFor(ctx, dk, doctor.id);
+  const amOff = !a.am || a.am === "OFF";
+  const pmOff = !a.pm || a.pm === "OFF";
+  const isOff = amOff && pmOff;
+
+  // Mirrors summaryLine's "state both halves when they differ" rule exactly — the
+  // single most important requirement here. A doctor working Manteca AM and
+  // Stockton PM must never see a summary that only names one of them.
+  let summary;
+  if (isOff) {
+    summary = "Not scheduled";
+  } else if (a.am === a.pm) {
+    summary = locationName(ctx, a.am) + " all day";
+  } else if (amOff) {
+    summary = locationName(ctx, a.pm) + " PM (off AM)";
+  } else if (pmOff) {
+    summary = locationName(ctx, a.am) + " AM (off PM)";
+  } else {
+    summary = locationName(ctx, a.am) + " AM, " + locationName(ctx, a.pm) + " PM";
+  }
+
+  let subject, heading;
+  if (kind === "test") {
+    subject = "[test] " + dayLabel + " — " + summary;
+    heading = "Test message";
+  } else {
+    subject = when + " " + dayLabel + " — " + summary;
+    heading = when + "'s assignment";
+  }
+
+  // Who is working WITH the doctor, at their own site(s) — resolved through
+  // techsWithDoctor so a technician borrowed into a sub-room still counts.
+  const amTechs = amOff ? [] : techsWithDoctor(ctx, dk, a.am, "am");
+  const pmTechs = pmOff ? [] : techsWithDoctor(ctx, dk, a.pm, "pm");
+  const sameAllDay = !isOff && a.am === a.pm;
+
+  // A doctor at one site all day can still have DIFFERENT technicians morning and
+  // afternoon — half-days are normal. Collapsing to one list would silently drop the
+  // PM-only technician from the message, so the halves are only merged when the
+  // rosters genuinely match.
+  const sameTechsBothHalves = amTechs.length === pmTechs.length
+    && amTechs.every((n, i) => n === pmTechs[i]);
+
+  const telegramDetailLines = [];
+  if (!isOff) {
+    if (sameAllDay && sameTechsBothHalves) {
+      if (amTechs.length) telegramDetailLines.push("👥 With: " + escapeHtml(amTechs.join(", ")));
+    } else {
+      const parts = [];
+      if (!amOff) parts.push("AM: " + (amTechs.length ? escapeHtml(amTechs.join(", ")) : "no techs assigned"));
+      if (!pmOff) parts.push("PM: " + (pmTechs.length ? escapeHtml(pmTechs.join(", ")) : "no techs assigned"));
+      if (parts.length) telegramDetailLines.push("👥 " + parts.join(" · "));
+    }
+  }
+
+  const dayNote = dayNoteFor(ctx, dk);
+
+  const telegramText =
+    "<b>" + escapeHtml(heading) + "</b>\n"
+    + escapeHtml(fmtLong(dk)) + "\n\n"
+    + (isOff ? "<b>" + escapeHtml(summary) + "</b>" : "📍 <b>" + escapeHtml(summary) + "</b>")
+    + (telegramDetailLines.length ? "\n" + telegramDetailLines.join("\n") : "")
+    + (dayNote ? "\n📌 " + escapeHtml(dayNote) : "")
+    + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
+
+  const cardHtml = '<div style="border-radius:12px;padding:16px;margin-bottom:18px;'
+    + 'background:' + (isOff ? '#f3f4f6' : '#4f46e5') + ';color:' + (isOff ? '#4b5563' : '#ffffff') + ';">'
+    + '<div style="font-size:12px;font-weight:700;letter-spacing:0.8px;opacity:0.85;">'
+    + escapeHtml(String(doctor.name || "").toUpperCase()) + ' &middot; ' + escapeHtml(dayLabel) + '</div>'
+    + '<div style="font-size:22px;font-weight:800;margin-top:6px;line-height:1.25;">' + escapeHtml(summary) + '</div>'
+    + '</div>';
+
+  let techsHtml = "";
+  if (!isOff) {
+    if (sameAllDay) {
+      if (amTechs.length) {
+        techsHtml = '<div style="font-size:14px;color:#3b4252;margin:0 0 16px;"><b>With:</b> ' + escapeHtml(amTechs.join(", ")) + '</div>';
+      }
+    } else {
+      const rows = [];
+      if (!amOff) rows.push('<div style="margin-bottom:4px;"><b>AM:</b> ' + (amTechs.length ? escapeHtml(amTechs.join(", ")) : '<span style="color:#9ca3af;">no techs assigned</span>') + '</div>');
+      if (!pmOff) rows.push('<div><b>PM:</b> ' + (pmTechs.length ? escapeHtml(pmTechs.join(", ")) : '<span style="color:#9ca3af;">no techs assigned</span>') + '</div>');
+      if (rows.length) techsHtml = '<div style="font-size:14px;color:#3b4252;margin:0 0 16px;">' + rows.join("") + '</div>';
+    }
+  }
+
+  const noteHtml = dayNote
+    ? '<div style="font-size:14px;color:#8a5a00;background:#fff8e6;border:1px solid #f0b429;'
+        + 'border-radius:8px;padding:9px 12px;margin:0 0 16px;">📌 ' + escapeHtml(dayNote) + '</div>'
+    : "";
+
+  const emailHtml = emailShell(cardHtml + techsHtml + noteHtml, link);
+
+  let techsText = "";
+  if (!isOff) {
+    if (sameAllDay) {
+      if (amTechs.length) techsText = "With: " + amTechs.join(", ") + "\n";
+    } else {
+      if (!amOff) techsText += "AM: " + (amTechs.length ? amTechs.join(", ") : "no techs assigned") + "\n";
+      if (!pmOff) techsText += "PM: " + (pmTechs.length ? pmTechs.join(", ") : "no techs assigned") + "\n";
+    }
+  }
+
+  const emailText =
+    heading + "\n" + fmtLong(dk) + "\n\n"
+    + summary + "\n"
+    + techsText
+    + (dayNote ? "Note: " + dayNote + "\n" : "")
+    + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
+    + "\nThis schedule can change during the day — the link above is always current.";
+
+  return { subject, summary, telegramText, emailHtml, emailText, link, kind, dateKey: dk };
 }
 
 export function composeInviteEmail(tech, inviteUrl, practiceName) {

@@ -105,6 +105,7 @@ input,select,textarea{font-size:16px!important} /* prevent iOS zoom on focus */
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script>
 window.storage=(function(){
   var API='/.netlify/functions/storage-proxy';
@@ -4247,6 +4248,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
               {id:'vacations',icon:'🏖️',label:'Vacation'},
               {id:'medleave',icon:'🏥',label:'Medical Leave'},
               {id:'holidays',icon:'🎉',label:'Holidays'},
+              {id:'notifications',icon:'🔔',label:'Notifications'},
             ] : []),
           ].map(tab => {
             const active = activeTab === tab.id;
@@ -4280,6 +4282,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {id:'vacations',icon:'🏖️',label:`Vacation (${vacations.filter(v=>(v.startDate||'').startsWith(String(new Date().getFullYear()))).length})`},
                   {id:'medleave',icon:'🏥',label:`Medical Leave (${medicalLeaves.filter(ml=>(ml.startDate||'').startsWith(String(new Date().getFullYear()))).length})`},
                   {id:'holidays',icon:'🎉',label:`Holidays (${holidays.length})`},
+                  {id:'notifications',icon:'🔔',label:'Notifications'},
                 ] : []),
               ].map(tab => (
                 <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
@@ -5848,6 +5851,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               </div>
             </div>
           )}
+
+          {/* ===== NOTIFICATIONS TAB — admin only ===== */}
+          {activeTab === 'notifications' && isAdmin && (
+            <DoctorNotifyPanel staff={staff} isMobile={isMobile} />
+          )}
         </div>
       </div>
 
@@ -6652,6 +6660,279 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
         select option{background:var(--bg-elevated);color:var(--text-primary)}
         input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
       `}</style>
+    </div>
+  );
+}
+
+// Render a Telegram invite as a QR code the admin can hold up for a doctor to scan.
+// With no email channel this is the fastest way to onboard someone in person — scan,
+// tap once, done. Returns null if the CDN library did not load. (Copied verbatim
+// from techs.html's NotifyPanel — keep the two in step.)
+function qrDataUri(text, px) {
+  try {
+    if (typeof qrcode !== 'function') return null;
+    const q = qrcode(0, 'M');            // type 0 = auto-size, M = 15% error correction
+    q.addData(String(text));
+    q.make();
+    const count = q.getModuleCount();
+    const cell = Math.max(2, Math.floor((px || 180) / (count + 8)));
+    const quiet = cell * 4;
+    const size = count * cell + quiet * 2;
+    let rects = '';
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (!q.isDark(r, c)) continue;
+        rects += '<rect x="' + (quiet + c * cell) + '" y="' + (quiet + r * cell) +
+                 '" width="' + cell + '" height="' + cell + '" fill="#000"/>';
+      }
+    }
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size +
+                '" viewBox="0 0 ' + size + ' ' + size + '">' +
+                '<rect width="' + size + '" height="' + size + '" fill="#fff"/>' + rects + '</svg>';
+    return 'data:image/svg+xml;base64,' + btoa(svg);
+  } catch(e) {
+    return null;
+  }
+}
+
+// Admin-only panel: doctor Telegram contacts and invites. This does NOT duplicate the
+// send buttons or the notification schedule/settings — those stay in the technician
+// app (techs.html's NotifyPanel), which is the one place that runs the actual sends.
+// This tab manages doctor contacts and invites only, against the SAME tech-notify
+// endpoint and the SAME shared techContacts map every other notifiable person uses.
+function DoctorNotifyPanel({ staff, isMobile }) {
+  const [channelStatus, setChannelStatus] = React.useState(null);
+  const [doctorInvites, setDoctorInvites] = React.useState({});
+  const [botUsername, setBotUsername] = React.useState(null);
+  const [invitesLoading, setInvitesLoading] = React.useState(false);
+  const [qrFor, setQrFor] = React.useState(null);           // doctorId whose QR is open
+  const [sending, setSending] = React.useState(null);        // doctorId currently sending a test
+  const [loadError, setLoadError] = React.useState('');
+
+  async function callTechApi(payload) {
+    const token = localStorage.getItem('sessionToken') || '';
+    const r = await fetch('/.netlify/functions/tech-notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+      body: JSON.stringify(payload),
+    });
+    let d = {};
+    try { d = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+  }
+
+  async function loadChannelStatus() {
+    try {
+      const d = await callTechApi({ action: 'channel-status' });
+      setChannelStatus(d);
+    } catch (e) {
+      setLoadError('Could not load channel status: ' + e.message);
+    }
+  }
+
+  async function loadInvites() {
+    setInvitesLoading(true);
+    try {
+      const d = await callTechApi({ action: 'invite-links' });
+      setDoctorInvites(d.doctorInvites || {});
+      setBotUsername(d.botUsername || null);
+    } catch (e) {
+      setLoadError('Could not load invite links: ' + e.message);
+    } finally {
+      setInvitesLoading(false);
+    }
+  }
+
+  React.useEffect(() => { loadChannelStatus(); loadInvites(); }, []);
+
+  async function sendTest(doctorId) {
+    setSending(doctorId);
+    try {
+      const d = await callTechApi({ action: 'send-test', techId: doctorId });
+      const ok = (d.results || []).some(r => r.ok);
+      alert(ok ? 'Test message sent.' : 'Test message could not be delivered — check that Telegram/email is configured.');
+    } catch (e) {
+      alert('Test send failed: ' + e.message);
+    } finally {
+      setSending(null);
+    }
+  }
+
+  function copyLink(url) {
+    navigator.clipboard.writeText(url)
+      .then(() => alert('Invite link copied'))
+      .catch(() => alert('Copy failed — open the QR and read the link below it'));
+  }
+
+  const activeDoctors = (staff || []).filter(s => s.active !== false);
+  const qrAvailable = typeof qrcode === 'function';
+  const unreachable = activeDoctors.filter(d => !((doctorInvites[d.id] || {}).linked));
+
+  const thStyle = {textAlign:'left',padding:'8px 12px',fontSize:12,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,borderBottom:'1px solid var(--border-default)'};
+  const tdStyle = {padding:'10px 12px',fontSize:14,borderBottom:'1px solid var(--border-subtle)',color:'var(--text-primary)'};
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+        <div>
+          <h2 style={{fontSize:isMobile?21:26,fontWeight:700,margin:0}}>Notifications</h2>
+          <p style={{color:'var(--text-muted)',fontSize:14,marginTop:4}}>Doctor Telegram contacts and invites</p>
+        </div>
+      </div>
+
+      <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:10,padding:14,marginBottom:16,fontSize:13,color:'var(--text-muted)',lineHeight:1.6}}>
+        Each doctor gets their own site assignment and the technicians working with them, sent the night before and the
+        morning of — never a last-minute change alert. Sending itself, and the notification schedule, are managed from
+        the technician app; this tab manages doctor contacts and invites only.
+      </div>
+
+      {loadError && (
+        <div style={{background:'rgba(239,68,68,0.1)',border:'1px solid #b91c1c',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:13,color:'#ef4444'}}>
+          {loadError}
+        </div>
+      )}
+
+      {channelStatus && (
+        <div style={{background:'var(--bg-elevated)',border:'1px solid ' + ((channelStatus.configured||[]).length ? 'var(--border-subtle)' : '#b45309'),borderRadius:10,padding:14,marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:0.6,color:'var(--text-muted)',marginBottom:8}}>Channels</div>
+          {(channelStatus.configured||[]).length === 0 ? (
+            <div style={{fontSize:13,color:'#f59e0b',lineHeight:1.6}}>
+              ⚠️ No channel is configured on the server. Set TELEGRAM_BOT_TOKEN for Telegram and/or BREVO_API_KEY +
+              EMAIL_FROM for email in the Netlify environment. Nothing can be sent until at least one is set.
+            </div>
+          ) : (
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              {['telegram','email'].map(ch => {
+                const on = (channelStatus.configured||[]).includes(ch);
+                return (
+                  <span key={ch} style={{fontSize:12,fontWeight:700,padding:'4px 11px',borderRadius:99,
+                          background: on ? 'rgba(16,185,129,0.12)' : 'var(--bg-elevated)',
+                          border:'1px solid ' + (on ? '#10b981' : 'var(--border-default)'),
+                          color: on ? '#10b981' : 'var(--text-dim)'}}>
+                    {on ? '✓' : '—'} {ch === 'telegram' ? '💬 Telegram' : '✉️ Email'}
+                  </span>
+                );
+              })}
+              {channelStatus.botUsername && <span style={{fontSize:12,color:'var(--text-muted)'}}>bot: @{channelStatus.botUsername}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {unreachable.length > 0 && (
+        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'12px 14px',marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:'#f59e0b',marginBottom:4}}>
+            ⚠️ {unreachable.length} doctor{unreachable.length===1?'':'s'} not linked
+          </div>
+          <div style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6}}>
+            {unreachable.map(d => d.name).join(', ')} {unreachable.length===1?'has':'have'} not linked Telegram and will
+            receive nothing until they do. Send them the invite below, or scan them in person.
+          </div>
+        </div>
+      )}
+
+      <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,overflow:'hidden'}}>
+        <div style={{padding:'14px 16px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700}}>Doctors &amp; Telegram</span>
+          {botUsername && <span style={{fontSize:12,color:'var(--text-muted)'}}>@{botUsername}</span>}
+          <div style={{flex:1}} />
+          <Btn variant="ghost" onClick={loadInvites} disabled={invitesLoading} style={{padding:'6px 14px',fontSize:13}}>
+            {invitesLoading ? 'Loading…' : '↻ Refresh invites'}
+          </Btn>
+        </div>
+        <div style={{padding:'6px 16px 12px',fontSize:12,color:'var(--text-muted)',lineHeight:1.6}}>
+          A Telegram bot cannot message someone first, so each doctor has to open their own invite link once. Show them
+          the QR code in person, or send them the link however you already reach them.
+          {!qrAvailable && <span style={{color:'#f59e0b'}}> QR rendering is unavailable — use the copy-link button.</span>}
+        </div>
+        <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:560}}>
+            <thead><tr>
+              <th style={thStyle}>Doctor</th>
+              <th style={thStyle}>Telegram</th>
+              <th style={thStyle}>Invite</th>
+              <th style={thStyle}></th>
+            </tr></thead>
+            <tbody>
+              {activeDoctors.length === 0 && (
+                <tr><td style={tdStyle} colSpan={4}>No active doctors.</td></tr>
+              )}
+              {activeDoctors.map(d => {
+                const inv = doctorInvites[d.id];
+                const linked = !!(inv && inv.linked);
+                return (
+                  <React.Fragment key={d.id}>
+                    <tr style={{background: linked ? 'transparent' : 'rgba(245,158,11,0.06)'}}>
+                      <td style={Object.assign({}, tdStyle, {fontWeight:600})}>{d.name}</td>
+                      <td style={Object.assign({}, tdStyle, {fontSize:13})}>
+                        {linked
+                          ? <span style={{color:'#10b981',fontWeight:700}}>✓ linked</span>
+                          : <span style={{color:'#f59e0b',fontWeight:700}}>⚠ not linked</span>}
+                      </td>
+                      <td style={tdStyle}>
+                        {!inv ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>—</span>
+                        ) : linked ? (
+                          <span style={{fontSize:12,color:'var(--text-dim)'}}>done</span>
+                        ) : (
+                          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                            <Btn variant="ghost" onClick={()=>setQrFor(qrFor===d.id?null:d.id)} style={{padding:'4px 10px',fontSize:12}}>
+                              {qrFor===d.id ? 'Hide QR' : '📷 QR'}
+                            </Btn>
+                            <Btn variant="ghost" onClick={()=>copyLink(inv.url)} style={{padding:'4px 10px',fontSize:12}}>Copy link</Btn>
+                          </div>
+                        )}
+                      </td>
+                      <td style={tdStyle}>
+                        <Btn variant="ghost" onClick={()=>sendTest(d.id)} disabled={!!sending || !linked}
+                          title={linked ? 'Send this doctor a test message' : 'Not linked yet'}
+                          style={{padding:'4px 10px',fontSize:12,opacity:linked?1:0.4,cursor:linked?'pointer':'not-allowed'}}>
+                          {sending===d.id ? 'Sending…' : 'Test'}
+                        </Btn>
+                      </td>
+                    </tr>
+                    {qrFor === d.id && inv && (
+                      <tr>
+                        <td colSpan={4} style={{padding:'14px 16px 18px',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-deep)'}}>
+                          <div style={{display:'flex',gap:18,alignItems:'flex-start',flexWrap:'wrap'}}>
+                            {(() => {
+                              const uri = qrDataUri(inv.url, 190);
+                              return uri
+                                ? <img src={uri} alt={'Telegram invite QR for ' + d.name}
+                                       style={{width:190,height:190,borderRadius:10,flexShrink:0,background:'#fff'}} />
+                                : <div style={{width:190,height:190,display:'flex',alignItems:'center',justifyContent:'center',
+                                               border:'1px dashed var(--border-default)',borderRadius:10,fontSize:12,
+                                               color:'var(--text-muted)',textAlign:'center',padding:12}}>
+                                    QR unavailable — use the link
+                                  </div>;
+                            })()}
+                            <div style={{flex:1,minWidth:220}}>
+                              <div style={{fontWeight:700,marginBottom:6}}>Onboarding {d.name}</div>
+                              <ol style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.8,paddingLeft:18,margin:'0 0 10px'}}>
+                                <li>They install Telegram and sign in</li>
+                                <li>They point their phone camera at this code</li>
+                                <li>Telegram opens — they tap <strong>Start</strong></li>
+                              </ol>
+                              <div style={{fontSize:11,fontFamily:'"Space Mono",monospace',color:'var(--text-muted)',
+                                           wordBreak:'break-all',background:'var(--input-bg)',padding:'7px 9px',borderRadius:6}}>
+                                {inv.url}
+                              </div>
+                              <div style={{fontSize:11,color:'var(--text-dim)',marginTop:8}}>
+                                This link is personal to {d.name} — it binds whoever opens it to their own schedule, so don't post it anywhere shared.
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

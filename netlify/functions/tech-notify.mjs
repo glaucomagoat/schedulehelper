@@ -9,7 +9,7 @@ import {
 import {
   makeTechToken, newNonce, dayLinkFor, makeInviteToken, inviteLinkFor,
 } from "./_lib/links.mjs";
-import { composeDayMessage, composeInviteEmail, composeAdminSummary } from "./_lib/compose.mjs";
+import { composeDayMessage, composeInviteEmail, composeAdminSummary, composeDoctorMessage } from "./_lib/compose.mjs";
 import { sendToTech, configuredChannels } from "./_lib/notify.mjs";
 import { runSendJob, describeAssignment } from "./_lib/sendjob.mjs";
 import { changedTechs } from "./_lib/sendlog.mjs";
@@ -171,7 +171,8 @@ export default async (req) => {
       const techId = String(body.techId || "");
       const tech = ctx.techs.find(t => t.id === techId);
       const admin = tech ? null : (ctx.techAdmins || []).find(a => a.id === techId);
-      if (!tech && !admin) return json({ error: "Unknown technician" }, 404);
+      const doctor = (tech || admin) ? null : (ctx.doctors || []).find(d => d.id === techId);
+      if (!tech && !admin && !doctor) return json({ error: "Unknown technician" }, 404);
       const dk = isValidDateKey(body.dateKey) ? body.dateKey : todayIn(ctx.settings.timezone);
 
       const contact = ctx.contacts[techId] || {};
@@ -181,6 +182,13 @@ export default async (req) => {
         const message = composeAdminSummary(ctx, dk, admin, "test", null);
         const results = await sendToTech(admin, contact, message, ctx.settings);
         results.forEach(r => { r.isAdmin = true; });
+        return json({ success: true, test: true, subject: message.subject, results });
+      }
+      if (doctor) {
+        const link = await linkFor(doctor, contact, base, LINK_SECRET, dk);
+        const message = composeDoctorMessage(ctx, dk, doctor, "test", link);
+        const results = await sendToTech(doctor, contact, message, ctx.settings);
+        results.forEach(r => { r.isDoctor = true; });
         return json({ success: true, test: true, subject: message.subject, results });
       }
       const link = await linkFor(tech, contact, base, LINK_SECRET, dk);
@@ -196,7 +204,9 @@ export default async (req) => {
     //
     // Administrator invites ride along in a clearly separate `adminInvites` map —
     // same shape, same contacts blob, but never merged into `invites` so the client
-    // can never accidentally render an administrator in a technician list.
+    // can never accidentally render an administrator in a technician list. Doctor
+    // invites ride along the same way, in `doctorInvites` — every active doctor
+    // from ctx.doctors, no separate roster.
     case "invite-links": {
       const botUsername = process.env.TELEGRAM_BOT_USERNAME;
       if (!botUsername) return json({ error: "TELEGRAM_BOT_USERNAME is not set" }, 500);
@@ -212,6 +222,11 @@ export default async (req) => {
         if (a.active === false) continue;
         if (!contacts[a.id]) contacts[a.id] = {};
         if (!contacts[a.id].linkNonce) { contacts[a.id].linkNonce = newNonce(); minted++; }
+      }
+      for (const d of (ctx.doctors || [])) {
+        if (d.active === false) continue;
+        if (!contacts[d.id]) contacts[d.id] = {};
+        if (!contacts[d.id].linkNonce) { contacts[d.id].linkNonce = newNonce(); minted++; }
       }
       if (minted) await writeJson(store, contactsKey, contacts);
 
@@ -237,7 +252,18 @@ export default async (req) => {
         };
       }
 
-      return json({ success: true, botUsername, minted, invites, adminInvites });
+      const doctorInvites = {};
+      for (const d of (ctx.doctors || [])) {
+        if (d.active === false) continue;
+        const token = await makeInviteToken(d.id, contacts[d.id].linkNonce, LINK_SECRET);
+        doctorInvites[d.id] = {
+          url: inviteLinkFor(botUsername, token),
+          linked: !!contacts[d.id].telegramChatId,
+          linkedAt: contacts[d.id].telegramLinkedAt || null,
+        };
+      }
+
+      return json({ success: true, botUsername, minted, invites, adminInvites, doctorInvites });
     }
 
     // Email a technician their invite. Kept working for when email is configured, but
