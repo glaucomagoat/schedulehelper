@@ -101,11 +101,17 @@ async function buildDoctorRecipients(ctx, dk, kind, base, secret) {
 }
 
 // `kind`: 'evening' | 'morning' | 'change'.
+// `opts.audience === 'doctors'` scopes the send to doctors ONLY — technicians and
+// administrators are never built, let alone messaged. This exists so the doctor
+// panel's own "send now" buttons can never fan out to the whole practice roster.
+// Anything else (including undefined) is the original, unscoped behaviour, and the
+// cron path must remain byte-for-byte identical to before this option existed.
 export async function runSendJob(store, ctx, opts) {
-  const { dateKey, kind, base, secret } = opts;
+  const { dateKey, kind, base, secret, audience } = opts;
+  const doctorsOnly = audience === "doctors";
   let onlyTechIds = null, prevSummaries = null;
 
-  if (kind === "change") {
+  if (kind === "change" && !doctorsOnly) {
     const changed = changedTechs(ctx, dateKey);
     if (changed.length === 0) {
       return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
@@ -115,8 +121,8 @@ export async function runSendJob(store, ctx, opts) {
     changed.forEach(c => { prevSummaries[c.techId] = describeAssignment(ctx, c.from); });
   }
 
-  const recipients = await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
-  const adminRecipients = await buildAdminRecipients(ctx, dateKey, kind, base, secret);
+  const recipients = doctorsOnly ? [] : await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
+  const adminRecipients = doctorsOnly ? [] : await buildAdminRecipients(ctx, dateKey, kind, base, secret);
   const doctorRecipients = await buildDoctorRecipients(ctx, dateKey, kind, base, secret);
   if (recipients.length === 0 && adminRecipients.length === 0 && doctorRecipients.length === 0) {
     return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
@@ -133,8 +139,14 @@ export async function runSendJob(store, ctx, opts) {
   doctorResults.forEach(r => { r.isDoctor = true; });
 
   const results = techResults.concat(adminResults).concat(doctorResults);
-  const snapshot = buildSnapshot(ctx, dateKey);
-  await recordSend(store, dateKey, kind, results, snapshot, todayIn(ctx.settings.timezone));
+  // A doctors-only send must not satisfy the cron's idempotency guard (wasNotified
+  // reads the bare `kind` key) and must not overwrite the technician change-detection
+  // snapshot. Namespacing the log kind and skipping the snapshot for this case is
+  // what keeps a manual doctor send from silently suppressing the real 8pm/6am
+  // send to every technician.
+  const logKind = doctorsOnly ? kind + ":doctors" : kind;
+  const snapshot = doctorsOnly ? null : buildSnapshot(ctx, dateKey);
+  await recordSend(store, dateKey, logKind, results, snapshot, todayIn(ctx.settings.timezone));
 
   return {
     dateKey, kind,

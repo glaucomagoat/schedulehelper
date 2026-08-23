@@ -6715,11 +6715,46 @@ function qrDataUri(text, px) {
   }
 }
 
-// Admin-only panel: doctor Telegram contacts and invites. This does NOT duplicate the
-// send buttons or the notification schedule/settings — those stay in the technician
-// app (techs.html's NotifyPanel), which is the one place that runs the actual sends.
-// This tab manages doctor contacts and invites only, against the SAME tech-notify
-// endpoint and the SAME shared techContacts map every other notifiable person uses.
+// index.html has no todayKeyIn/addDays helpers of its own (techs.html's live only
+// there) — these are the minimal equivalents DoctorNotifyPanel needs for its own
+// Today/Tomorrow buttons. `dateKey` itself (year, month0, day) already exists
+// globally above and is reused as-is.
+function addDaysToDk(dk, n) {
+  const parts = dk.split('-').map(Number);
+  const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+  dt.setDate(dt.getDate() + n);
+  return dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate());
+}
+function todayKeyInTz(tz) {
+  try {
+    // en-CA formats as YYYY-MM-DD, which is exactly the dateKey format.
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) {
+    const d = new Date();
+    return dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+}
+function fmtDkShort(dk) {
+  const parts = dk.split('-').map(Number);
+  const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+  return DAYS_OF_WEEK[dt.getDay()] + ' ' + MONTHS[parts[1] - 1].slice(0, 3) + ' ' + parts[2];
+}
+function fmtMonthDayDk(dk) {
+  const parts = dk.split('-').map(Number);
+  return MONTHS[parts[1] - 1].slice(0, 3) + ' ' + parts[2];
+}
+function fmtSentAtTs(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    + ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+// Admin-only panel: doctor Telegram contacts, invites, and (now) the doctor-scoped
+// send buttons and the shared practice-wide notification schedule. Sending itself
+// still runs through the SAME tech-notify endpoint and the SAME shared techContacts
+// map every other notifiable person uses — this panel just adds `audience:'doctors'`
+// so its own send buttons can only ever reach doctors, never technicians or
+// administrators. See runSendJob's audience option in _lib/sendjob.mjs.
 function DoctorNotifyPanel({ staff, isMobile }) {
   const [channelStatus, setChannelStatus] = React.useState(null);
   const [doctorInvites, setDoctorInvites] = React.useState({});
@@ -6730,6 +6765,18 @@ function DoctorNotifyPanel({ staff, isMobile }) {
   const [loadError, setLoadError] = React.useState('');
   const [pendingUnlink, setPendingUnlink] = React.useState(null); // doctor object pending unlink confirmation
   const [unlinking, setUnlinking] = React.useState(false);
+
+  // ── Send now / Schedule — doctor-scoped sends against the SAME shared
+  // techNotifySettings blob technicians and administrators use (see notify-status /
+  // save-notify-settings in tech-notify.mjs).
+  const [schedSettings, setSchedSettings] = React.useState(null); // draft, null until loaded
+  const [stamps, setStamps] = React.useState({ evening: null, morning: null });
+  const [settingsLoading, setSettingsLoading] = React.useState(false);
+  const [savingSettings, setSavingSettings] = React.useState(false);
+  const [settingsNote, setSettingsNote] = React.useState(null);   // { text, kind }
+  const [sendingDay, setSendingDay] = React.useState(null);       // 'morning' | 'evening' | null
+  const [confirmSend, setConfirmSend] = React.useState(null);     // { sendKind, dateKey, label }
+  const [sendNote, setSendNote] = React.useState(null);           // { text, kind }
 
   async function callTechApi(payload) {
     const token = localStorage.getItem('sessionToken') || '';
@@ -6766,7 +6813,84 @@ function DoctorNotifyPanel({ staff, isMobile }) {
     }
   }
 
-  React.useEffect(() => { loadChannelStatus(); loadInvites(); }, []);
+  async function loadNotifyStatus() {
+    setSettingsLoading(true);
+    try {
+      const d = await callTechApi({ action: 'notify-status' });
+      setSchedSettings(d.settings || {});
+      setStamps(d.stamps || { evening: null, morning: null });
+    } catch (e) {
+      setLoadError('Could not load schedule settings: ' + e.message);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  React.useEffect(() => { loadChannelStatus(); loadInvites(); loadNotifyStatus(); }, []);
+
+  function describeSummary(s) {
+    if (!s) return '';
+    const bits = [];
+    if (s.delivered) bits.push(s.delivered + ' delivered');
+    if (s.queued) bits.push(s.queued + ' queued');
+    if (s.failed) bits.push(s.failed + ' failed');
+    if (s.unreachable) bits.push(s.unreachable + ' unreachable');
+    if (s.no_channel) bits.push(s.no_channel + ' with no channel');
+    return bits.join(', ') || 'nothing sent';
+  }
+
+  // audience:'doctors' is the whole point — see runSendJob in _lib/sendjob.mjs. This
+  // is what keeps pressing a button on THIS page from ever messaging a technician or
+  // administrator.
+  async function doSendDay(dk, sendKind) {
+    setSendingDay(sendKind);
+    setSendNote(null);
+    try {
+      const d = await callTechApi({ action: 'send-day', dateKey: dk, kind: sendKind, audience: 'doctors' });
+      if (d.nothingToSend) {
+        setSendNote({ text: 'No doctors to notify for this day', kind: 'info' });
+      } else {
+        const bad = !!(d.summary && (d.summary.failed || d.summary.unreachable));
+        setSendNote({ text: describeSummary(d.summary), kind: bad ? 'error' : 'success' });
+      }
+      await loadNotifyStatus();
+    } catch (e) {
+      setSendNote({ text: 'Send failed: ' + e.message, kind: 'error' });
+    } finally {
+      setSendingDay(null);
+    }
+  }
+
+  async function confirmSendGo() {
+    const cs = confirmSend;
+    if (!cs) return;
+    setConfirmSend(null);
+    await doSendDay(cs.dateKey, cs.sendKind);
+  }
+
+  function setSched(k, v) {
+    setSchedSettings(prev => Object.assign({}, prev, { [k]: v }));
+  }
+
+  async function saveSettings() {
+    if (!schedSettings) return;
+    setSavingSettings(true);
+    setSettingsNote(null);
+    try {
+      const d = await callTechApi({ action: 'save-notify-settings', settings: {
+        enabled: !!schedSettings.enabled,
+        timezone: schedSettings.timezone,
+        eveningHour: Number(schedSettings.eveningHour),
+        morningHour: Number(schedSettings.morningHour),
+      } });
+      setSchedSettings(d.settings || schedSettings);
+      setSettingsNote({ text: 'Saved', kind: 'success' });
+    } catch (e) {
+      setSettingsNote({ text: 'Could not save: ' + e.message, kind: 'error' });
+    } finally {
+      setSavingSettings(false);
+    }
+  }
 
   async function sendTest(doctorId) {
     setSending(doctorId);
@@ -6814,6 +6938,17 @@ function DoctorNotifyPanel({ staff, isMobile }) {
   const thStyle = {textAlign:'left',padding:'8px 12px',fontSize:12,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,borderBottom:'1px solid var(--border-default)'};
   const tdStyle = {padding:'10px 12px',fontSize:14,borderBottom:'1px solid var(--border-subtle)',color:'var(--text-primary)'};
 
+  // "Today"/"Tomorrow" for the send buttons are the practice's wall-clock day (from
+  // the shared schedule settings once loaded), never the browser's.
+  const notifyTz = (schedSettings && schedSettings.timezone) || 'America/Los_Angeles';
+  const todayDk = todayKeyInTz(notifyTz);
+  const tomorrowDk = addDaysToDk(todayDk, 1);
+
+  const HOURS = Array.from({length:24}, (_,i) => i);
+  function fmtHourLabel(h) { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ':00 ' + ap; }
+  const fieldLabelStyle = {display:'block',fontSize:11,textTransform:'uppercase',letterSpacing:0.6,color:'var(--text-muted)',fontWeight:700,marginBottom:4};
+  const fieldInputStyle = {width:'100%',padding:'8px 10px',background:'var(--input-bg)',border:'1px solid var(--border-default)',borderRadius:8,color:'var(--text-primary)',fontSize:14,fontFamily:'"DM Sans",sans-serif',outline:'none',boxSizing:'border-box'};
+
   return (
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
@@ -6825,8 +6960,9 @@ function DoctorNotifyPanel({ staff, isMobile }) {
 
       <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:10,padding:14,marginBottom:16,fontSize:13,color:'var(--text-muted)',lineHeight:1.6}}>
         Each doctor gets their own site assignment and the technicians working with them, sent the night before and the
-        morning of — never a last-minute change alert. Sending itself, and the notification schedule, are managed from
-        the technician app; this tab manages doctor contacts and invites only.
+        morning of — never a last-minute change alert or a "push changes only" button, since a change to someone
+        else's schedule means nothing to a doctor's own day. Sending here reaches doctors only — it never touches
+        technicians or administrators.
       </div>
 
       {loadError && (
@@ -6861,6 +6997,88 @@ function DoctorNotifyPanel({ staff, isMobile }) {
           )}
         </div>
       )}
+
+      <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:10,padding:16,marginBottom:16}}>
+        <div style={{fontWeight:700,marginBottom:10}}>Send now</div>
+        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+          <Btn variant="primary" disabled={!!sendingDay}
+               onClick={() => setConfirmSend({ sendKind:'morning', dateKey: todayDk, label:'Today' })}>
+            {sendingDay === 'morning' ? 'Sending…' : "📅 Send Today's Schedule"}
+          </Btn>
+          <Btn variant="primary" disabled={!!sendingDay}
+               onClick={() => setConfirmSend({ sendKind:'evening', dateKey: tomorrowDk, label:'Tomorrow' })}>
+            {sendingDay === 'evening' ? 'Sending…' : "📅 Send Tomorrow's Schedule"}
+          </Btn>
+          <Btn variant="ghost" disabled={!!sendingDay}
+               onClick={() => { loadNotifyStatus(); loadInvites(); }}
+               style={{padding:'6px 14px',fontSize:13}}>
+            ↻ Refresh log
+          </Btn>
+        </div>
+        {sendNote && (
+          <div style={{marginTop:12,fontSize:13,fontWeight:600,
+                       color: sendNote.kind === 'error' ? '#ef4444' : sendNote.kind === 'info' ? 'var(--text-muted)' : '#10b981'}}>
+            {sendNote.text}
+          </div>
+        )}
+      </div>
+
+      <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:10,padding:16,marginBottom:16}}>
+        <div style={{fontWeight:700,marginBottom:8}}>Schedule</div>
+        <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14,lineHeight:1.6}}>
+          These times apply practice-wide — technicians and administrators are notified on the same schedule.
+        </div>
+        {!schedSettings ? (
+          <div style={{fontSize:13,color:'var(--text-dim)'}}>{settingsLoading ? 'Loading…' : 'Could not load settings.'}</div>
+        ) : (
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12}}>
+              <div>
+                <label style={fieldLabelStyle}>Timezone</label>
+                <input value={schedSettings.timezone || ''} onChange={e => setSched('timezone', e.target.value)}
+                       style={fieldInputStyle} />
+              </div>
+              <div>
+                <label style={fieldLabelStyle}>Night-before send</label>
+                <select value={schedSettings.eveningHour} onChange={e => setSched('eveningHour', Number(e.target.value))} style={fieldInputStyle}>
+                  {HOURS.map(h => <option key={h} value={h}>{fmtHourLabel(h)}</option>)}
+                </select>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
+                  {stamps.evening
+                    ? 'Last sent ' + fmtSentAtTs(stamps.evening.sentAt) + ' (for ' + fmtMonthDayDk(stamps.evening.dateKey) + ')'
+                    : 'Never sent'}
+                </div>
+              </div>
+              <div>
+                <label style={fieldLabelStyle}>Morning-of send</label>
+                <select value={schedSettings.morningHour} onChange={e => setSched('morningHour', Number(e.target.value))} style={fieldInputStyle}>
+                  {HOURS.map(h => <option key={h} value={h}>{fmtHourLabel(h)}</option>)}
+                </select>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
+                  {stamps.morning
+                    ? 'Last sent ' + fmtSentAtTs(stamps.morning.sentAt) + ' (for ' + fmtMonthDayDk(stamps.morning.dateKey) + ')'
+                    : 'Never sent'}
+                </div>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:16,marginTop:14,flexWrap:'wrap',alignItems:'center'}}>
+              <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+                <input type="checkbox" checked={!!schedSettings.enabled} onChange={e => setSched('enabled', e.target.checked)}
+                       style={{width:16,height:16,cursor:'pointer'}} />
+                Automatic sends enabled
+              </label>
+              <Btn variant="primary" disabled={savingSettings} onClick={saveSettings} style={{padding:'8px 16px',fontSize:13}}>
+                {savingSettings ? 'Saving…' : 'Save'}
+              </Btn>
+              {settingsNote && (
+                <span style={{fontSize:12,fontWeight:600,color: settingsNote.kind === 'error' ? '#ef4444' : '#10b981'}}>
+                  {settingsNote.text}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {unreachable.length > 0 && (
         <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid #b45309',borderRadius:10,padding:'12px 14px',marginBottom:16}}>
@@ -6992,6 +7210,30 @@ function DoctorNotifyPanel({ staff, isMobile }) {
           </table>
         </div>
       </div>
+
+      {confirmSend && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>{ if (!sendingDay) setConfirmSend(null); }}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Send doctor schedule"
+               style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:440,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>📅</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>
+              {'Send ' + confirmSend.label + "'s schedule?"}
+            </div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+              {'This will message every doctor with an assignment for '}
+              <b style={{color:'var(--text-primary)'}}>{fmtDkShort(confirmSend.dateKey)}</b>
+              {'. Technicians and administrators are not affected — this send reaches doctors only.'}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" disabled={!!sendingDay} onClick={()=>setConfirmSend(null)}>Cancel</Btn>
+              <Btn variant="primary" disabled={!!sendingDay} onClick={confirmSendGo}>
+                {sendingDay ? 'Sending…' : 'Send'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingUnlink && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}

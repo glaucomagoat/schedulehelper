@@ -4,7 +4,7 @@
 import { requireAdmin, verifySession } from "./_lib/auth.mjs";
 import {
   techStore, loadContext, readJson, writeJson, ADMIN,
-  isValidDateKey, todayIn,
+  isValidDateKey, todayIn, DEFAULT_SETTINGS,
 } from "./_lib/techdata.mjs";
 import {
   makeTechToken, newNonce, dayLinkFor, makeInviteToken, inviteLinkFor,
@@ -41,6 +41,7 @@ export default async (req) => {
   const store = techStore();
   const base = baseUrlFor(req);
   const contactsKey = ADMIN + ":techContacts";
+  const settingsKey = ADMIN + ":techNotifySettings";
 
   // Self-service Telegram invite — the one action here a technician calls for
   // themselves, so it deliberately does NOT go through requireAdmin. It verifies the
@@ -124,11 +125,17 @@ export default async (req) => {
 
     // Notify everyone about one day. `kind` is 'evening' (tomorrow's assignments,
     // sent the night before) or 'morning' (today's, sent the morning of).
+    //
+    // `body.audience === 'doctors'` (the exact string, nothing else) scopes this to
+    // doctors only — that's what the doctor panel's own send buttons use, so pressing
+    // them can never fan a message out to every technician and administrator too.
+    // Anything else falls through to the existing unscoped behaviour unchanged.
     case "send-day": {
       const kind = body.kind === "morning" ? "morning" : "evening";
       const dk = isValidDateKey(body.dateKey) ? body.dateKey : null;
       if (!dk) return json({ error: "A valid dateKey (YYYY-MM-DD) is required" }, 400);
-      const out = await runSendJob(store, ctx, { dateKey: dk, kind, base, secret: LINK_SECRET });
+      const audience = body.audience === "doctors" ? "doctors" : undefined;
+      const out = await runSendJob(store, ctx, { dateKey: dk, kind, base, secret: LINK_SECRET, audience });
       return json(Object.assign({ success: true }, out));
     }
 
@@ -325,6 +332,69 @@ export default async (req) => {
         await writeJson(store, contactsKey, contacts);
       }
       return json({ success: true });
+    }
+
+    // Read-only status for the doctor panel, which cannot assume it can read
+    // techNotifySettings straight out of window.storage (a different app, possibly
+    // a different namespace) — it already talks to this function with its session
+    // token for invite-links, so it gets settings the same way.
+    //
+    // `stamps` reports, for each of evening/morning, the MOST RECENT of the plain
+    // log entry and its ":doctors" counterpart (see runSendJob's audience scoping) —
+    // doctors are messaged by both a normal send and a doctors-only one, so whichever
+    // happened last is the truthful "last sent" for the doctor panel to show. Scans
+    // every date key in the log, not just today's, since the most recent send may
+    // have been recorded against yesterday or tomorrow's date key.
+    case "notify-status": {
+      function lastSentInfo(kind) {
+        let best = null;
+        Object.keys(ctx.notifyLog || {}).forEach(dk => {
+          const entry = ctx.notifyLog[dk] || {};
+          [entry[kind], entry[kind + ":doctors"]].forEach(e => {
+            if (e && e.sentAt && (!best || e.sentAt > best.sentAt)) best = { sentAt: e.sentAt, dateKey: dk };
+          });
+        });
+        return best;
+      }
+      return json({
+        success: true,
+        settings: ctx.settings,
+        stamps: { evening: lastSentInfo("evening"), morning: lastSentInfo("morning") },
+      });
+    }
+
+    // Persist the shared notify settings blob. Only these four fields are accepted;
+    // everything else already stored (e.g. defaultChannels, fanout) is preserved by
+    // merging over the existing object rather than replacing it wholesale — a caller
+    // that only knows about these four fields must never be able to silently drop
+    // ones it doesn't know about.
+    case "save-notify-settings": {
+      const input = (body.settings && typeof body.settings === "object") ? body.settings : {};
+      const current = await readJson(store, settingsKey, {});
+      const merged = Object.assign({}, current);
+
+      if (Object.prototype.hasOwnProperty.call(input, "enabled")) {
+        merged.enabled = !!input.enabled;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "timezone")) {
+        const tz = String(input.timezone || "");
+        try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); }
+        catch (e) { return json({ error: "Invalid timezone: " + tz }, 400); }
+        merged.timezone = tz;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "eveningHour")) {
+        const h = Number(input.eveningHour);
+        if (!Number.isInteger(h) || h < 0 || h > 23) return json({ error: "eveningHour must be an integer 0-23" }, 400);
+        merged.eveningHour = h;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "morningHour")) {
+        const h = Number(input.morningHour);
+        if (!Number.isInteger(h) || h < 0 || h > 23) return json({ error: "morningHour must be an integer 0-23" }, 400);
+        merged.morningHour = h;
+      }
+
+      await writeJson(store, settingsKey, merged);
+      return json({ success: true, settings: Object.assign({}, DEFAULT_SETTINGS, merged) });
     }
 
     default:

@@ -1602,6 +1602,31 @@ function App() {
     finally { setSending(null); }
   }
 
+  // Unlink one contact's Telegram (technician or administrator — the server doesn't
+  // distinguish). Also clears the local techContacts mirror, not just the server
+  // copy — techContacts autosaves on every change (see the useEffect above), so
+  // leaving the stale telegramChatId in local state would silently resurrect it on
+  // the next unrelated save.
+  async function doUnlink(id) {
+    try {
+      await callTechApi({ action: 'unlink-contact', id });
+      setTechContacts(prev => {
+        const c = Object.assign({}, prev);
+        if (c[id]) {
+          const updated = Object.assign({}, c[id]);
+          delete updated.telegramChatId;
+          if (Array.isArray(updated.channels)) updated.channels = updated.channels.filter(ch => ch !== 'telegram');
+          c[id] = updated;
+        }
+        return c;
+      });
+      await loadInvites(true);
+      return { ok: true };
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
   // ── Telegram invites ───────────────────────────────────────────────────────
   const [invites, setInvites] = useState({});          // techId -> { url, linked, linkedAt }
   const [adminInvites, setAdminInvites] = useState({}); // adminId -> { url, linked, linkedAt }
@@ -2548,7 +2573,7 @@ function App() {
                             dayLinks,linksLoading,loadDayLinks,rotateDayLink,
                             selectedDate,setSelectedDate,sendDay,sendChanges,previewChanges,sendTest,sendInvite,sending,
                             channelStatus,loadChannelStatus,reloadNotifyLog,
-                            invites,adminInvites,invitesLoading,loadInvites,botUsername,unreachable}} />
+                            invites,adminInvites,invitesLoading,loadInvites,botUsername,unreachable,doUnlink}} />
         )}
 
         {/* ── Technician portal — read-only, always the PUBLISHED snapshot ──── */}
@@ -4918,7 +4943,7 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
                        dayLinks, linksLoading, loadDayLinks, rotateDayLink,
                        selectedDate, setSelectedDate, sendDay, sendChanges, previewChanges, sendTest, sendInvite, sending,
                        channelStatus, loadChannelStatus, reloadNotifyLog,
-                       invites, adminInvites, invitesLoading, loadInvites, botUsername, unreachable }) {
+                       invites, adminInvites, invitesLoading, loadInvites, botUsername, unreachable, doUnlink }) {
   const set = (k,v) => setNotifySettings(Object.assign({}, notifySettings, {[k]:v}));
 
   useEffect(() => { if (!channelStatus) loadChannelStatus(); }, []);
@@ -4927,6 +4952,24 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
   const [qrFor, setQrFor] = useState(null);            // techId whose QR is open
   const emailOn = !!(channelStatus && (channelStatus.configured || []).includes('email'));
   const qrAvailable = typeof qrcode === 'function';
+
+  // Shared unlink-confirmation state — one modal serves both the technician table
+  // and the administrator table below.
+  const [pendingUnlink, setPendingUnlink] = useState(null); // { id, name } pending confirmation
+  const [unlinking, setUnlinking] = useState(false);
+
+  async function confirmUnlink() {
+    if (!pendingUnlink) return;
+    setUnlinking(true);
+    try {
+      const r = await doUnlink(pendingUnlink.id);
+      if (r && r.ok === false) showToast('Could not unlink: ' + r.error, 'error');
+      else showToast(pendingUnlink.name + ' unlinked', 'success');
+    } finally {
+      setUnlinking(false);
+      setPendingUnlink(null);
+    }
+  }
 
   // ── Administrators ──────────────────────────────────────────────────────────
   const adminList = techAdmins || [];
@@ -5230,10 +5273,18 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
                         )}
                       </td>
                       <td style={S.td}>
-                        <button onClick={() => sendTest(t.id)} disabled={!!sending || !linked}
-                                title={linked ? 'Send this technician a test message' : 'Not linked yet'}
-                                style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
-                                  opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <button onClick={() => sendTest(t.id)} disabled={!!sending || !linked}
+                                  title={linked ? 'Send this technician a test message' : 'Not linked yet'}
+                                  style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
+                                    opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                          {linked && (
+                            <button onClick={() => setPendingUnlink({id:t.id,name:t.name})}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,color:'#ef4444'})}>
+                              Unlink
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {qrFor === t.id && inv && (
@@ -5357,10 +5408,18 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
                         </button>
                       </td>
                       <td style={S.td}>
-                        <button onClick={() => sendTest(a.id)} disabled={!!sending || !linked}
-                                title={linked ? 'Send this administrator a test message' : 'Not linked yet'}
-                                style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
-                                  opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <button onClick={() => sendTest(a.id)} disabled={!!sending || !linked}
+                                  title={linked ? 'Send this administrator a test message' : 'Not linked yet'}
+                                  style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,
+                                    opacity: linked ? 1 : 0.4, cursor: linked ? 'pointer' : 'not-allowed'})}>Test</button>
+                          {linked && (
+                            <button onClick={() => setPendingUnlink({id:a.id,name:a.name})}
+                                    style={Object.assign({}, S.btn, {padding:'4px 10px',fontSize:12,color:'#ef4444'})}>
+                              Unlink
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td style={S.td}>
                         <button onClick={() => removeAdmin(a)} style={S.btnD}>Remove</button>
@@ -5560,6 +5619,30 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
                       style={Object.assign({}, S.btn, {background:'#4f46e5',borderColor:'#4f46e5',
                                                        color:'#fff',fontWeight:700})}>
                 {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingUnlink && (
+        <div onClick={() => { if (!unlinking) setPendingUnlink(null); }}
+             style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(0,0,0,0.45)',
+                     display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Unlink Telegram"
+               style={{background:'var(--bg-surface)',border:'1px solid var(--border-default)',
+                       borderRadius:14,padding:'20px 22px',maxWidth:420,width:'100%',
+                       boxShadow:'0 18px 50px rgba(0,0,0,0.35)'}}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>Unlink Telegram?</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:18}}>
+              {'This disconnects '}
+              <b style={{color:'var(--text-primary)'}}>{pendingUnlink.name}</b>
+              {' from Telegram. They will stop receiving notifications until they open their invite link again.'}
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+              <button onClick={() => setPendingUnlink(null)} disabled={unlinking} style={S.btn}>Cancel</button>
+              <button onClick={confirmUnlink} disabled={unlinking} style={S.btnD}>
+                {unlinking ? 'Unlinking…' : 'Unlink'}
               </button>
             </div>
           </div>
