@@ -1807,59 +1807,6 @@ window.ScheduleHelper = function StaffScheduler() {
     } catch(e) { setManagerPwForms(p=>({...p,[username]:{...form,saving:false,msg:'❌ Failed to update password.'}})); }
   }
 
-  async function handleDevLogin() {
-    const devPw = prompt('Developer password:');
-    if (!devPw) return;
-    let devUsername;
-    try {
-      const result = await window.storage.call({ action: 'dev-auth', password: devPw });
-      devUsername = result.username;
-      localStorage.setItem('sessionToken', result.token);
-    } catch(e) {
-      alert('Wrong password');
-      return;
-    }
-    const u = { username: devUsername, isDev: true, created: Date.now() };
-    localStorage.setItem('session', JSON.stringify(u));
-    setUser(u); setIsDev(true); setChatMessages([]);
-
-    // Check if ALL essential preset data exists (staff, locations, AND rules)
-    let hasCompleteData = false;
-    try {
-      const staffData = await window.storage.get(`${devUsername}:staff`);
-      const locData = await window.storage.get(`${devUsername}:locations`);
-      const rulesData = await window.storage.get(`${devUsername}:rules`);
-
-      let staffOk = false, locsOk = false, rulesOk = false;
-      try { const sd = staffData && JSON.parse(staffData.value); staffOk = Array.isArray(sd) && sd.length > 0; } catch(e) {}
-      try { const ld = locData && JSON.parse(locData.value); locsOk = Array.isArray(ld) && ld.length > 0; } catch(e) {}
-      try { const rd = rulesData && JSON.parse(rulesData.value); rulesOk = Array.isArray(rd) && rd.length > 0; } catch(e) {}
-
-      hasCompleteData = staffOk && locsOk && rulesOk;
-    } catch(e) {}
-
-    if (!hasCompleteData) {
-      // Initialize with all presets — keep any existing vacations and schedules
-      let existingVacations = [];
-      let existingSchedules = {};
-      try {
-        const vacData = await window.storage.get(`${devUsername}:vacations`);
-        if (vacData) { try { existingVacations = JSON.parse(vacData.value) || []; } catch(e) {} }
-        const schedData = await window.storage.get(`${devUsername}:schedules`);
-        if (schedData) { try { existingSchedules = JSON.parse(schedData.value) || {}; } catch(e) {} }
-      } catch(e) {}
-
-      setStaff(PRESET_STAFF); setLocations(PRESET_LOCATIONS); setRules(PRESET_RULES); setHolidays(PRESET_HOLIDAYS);
-      setVacations(existingVacations); setSchedules(existingSchedules);
-      await window.storage.set(`${devUsername}:staff`, JSON.stringify(PRESET_STAFF));
-      await window.storage.set(`${devUsername}:locations`, JSON.stringify(PRESET_LOCATIONS));
-      await window.storage.set(`${devUsername}:rules`, JSON.stringify(PRESET_RULES));
-      await window.storage.set(`${devUsername}:holidays`, JSON.stringify(PRESET_HOLIDAYS));
-    } else {
-      await loadUserData(devUsername);
-    }
-    await ensureCveAccount();
-  }
 
   async function resetDevData() {
     if (!confirm('Reset all data to presets? This will clear schedules, vacations, and restore default staff, locations & rules.')) return;
@@ -4203,12 +4150,6 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
               {loginForm.isRegister?'Sign In':'Register'}
             </span>
           </p>
-          <div style={{marginTop:28,paddingTop:24,borderTop:'1px solid var(--border-default)',textAlign:'center'}}>
-            <Btn variant="dev" onClick={handleDevLogin} style={{width:'100%',padding:'12px',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-              🔧 Developer Sign In
-            </Btn>
-            <p style={{fontSize:12,color:'var(--text-dim)',marginTop:8}}>Pre-loaded with 10 providers, 12 locations & 78 scheduling rules</p>
-          </div>
         </div>
       </div>
     );
