@@ -707,7 +707,15 @@ window.ScheduleHelper = function StaffScheduler() {
   const isTopLevelAdmin = isAdmin && !user?.adminUsername;
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profileModal, setProfileModal] = useState(null); // 'changePassword' | 'editEmail'
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem('sidebarCollapsed')==='1'; } catch(e) { return false; } });
+  // Sidebar: pinned = user's chosen state (persists until toggled); hovered = temporary
+  // peek while the pointer is over it. Rendered width is expanded when either is true.
+  // Default is expanded (pinned=true); after 2 minutes idle it auto-retracts (see the
+  // effect near toggleSidebar). No localStorage — auto-retract means "last collapsed
+  // state" is no longer meaningful to remember across loads.
+  const [sidebarPinned, setSidebarPinned] = useState(true);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarCollapsed = !(sidebarPinned || sidebarHovered);
+  const sidebarTimerRef = useRef(null);
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
   const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:'',newPassword:'',changingPw:false,pwMsg:''} }
@@ -1212,10 +1220,24 @@ window.ScheduleHelper = function StaffScheduler() {
     try { if (user?.username) localStorage.setItem(`theme:${user.username}`, next); } catch(e) {}
   }
 
+  function clearSidebarTimer() {
+    if (sidebarTimerRef.current) { clearTimeout(sidebarTimerRef.current); sidebarTimerRef.current = null; }
+  }
+  function restartSidebarTimer() {
+    clearSidebarTimer();
+    sidebarTimerRef.current = setTimeout(() => setSidebarPinned(false), 120000); // 2 minutes
+  }
+  // Pinned state drives the auto-retract timer: pin on -> (re)start the 2-minute
+  // countdown, pin off -> nothing to count down. Hover never touches this effect,
+  // so a peek never restarts or cancels the timer.
+  useEffect(() => {
+    if (isMobile) return;
+    if (sidebarPinned) restartSidebarTimer(); else clearSidebarTimer();
+    return clearSidebarTimer;
+  }, [sidebarPinned, isMobile]);
+
   function toggleSidebar() {
-    const next = !sidebarCollapsed;
-    setSidebarCollapsed(next);
-    try { localStorage.setItem('sidebarCollapsed', next ? '1' : '0'); } catch(e) {}
+    setSidebarPinned(p => !p);
   }
 
   function planHasData(plan) {
@@ -4269,7 +4291,8 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       <div style={{display:'flex',minHeight:'calc(100vh - 53px)'}}>
         {/* Sidebar — desktop only */}
         {!isMobile && (
-          <div style={{position:'relative',width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
+          <div onMouseEnter={()=>setSidebarHovered(true)} onMouseLeave={()=>setSidebarHovered(false)}
+            style={{position:'relative',width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
             <div style={{flex:1,overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',userSelect:'none'}}>
             <div style={{flex:1,padding:'20px 0'}}>
               {[
@@ -4285,7 +4308,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
                   {id:'notifications',icon:'🔔',label:'Notifications'},
                 ] : []),
               ].map(tab => (
-                <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
+                <div key={tab.id} onClick={()=>{setActiveTab(tab.id); if (sidebarPinned) restartSidebarTimer();}} className="hov-row"
                   title={tab.label}
                   style={{padding:sidebarCollapsed?'12px 0':'12px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
                     color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',

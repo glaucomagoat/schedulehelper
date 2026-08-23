@@ -587,6 +587,14 @@ function App() {
   const [activeTab, setActiveTab] = useState('board');
   const [toast, setToast] = useState(null);
 
+  // Sidebar: pinned = user's chosen state; hovered = temporary peek while the
+  // pointer is over it. Rendered width is expanded when either is true. Default
+  // is expanded (pinned=true); after 2 minutes idle it auto-retracts.
+  const [sidebarPinned, setSidebarPinned] = useState(true);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarCollapsed = !(sidebarPinned || sidebarHovered);
+  const sidebarTimerRef = useRef(null);
+
   // Technician-side data (owned by this app)
   const [techs, setTechs]                 = useState([]);
   const [techContacts, setTechContacts]   = useState({});
@@ -804,6 +812,26 @@ function App() {
     setTheme(next);
     document.documentElement.setAttribute('data-theme', next);
     if (user) localStorage.setItem('theme:' + user.username, next);
+  }
+
+  function clearSidebarTimer() {
+    if (sidebarTimerRef.current) { clearTimeout(sidebarTimerRef.current); sidebarTimerRef.current = null; }
+  }
+  function restartSidebarTimer() {
+    clearSidebarTimer();
+    sidebarTimerRef.current = setTimeout(() => setSidebarPinned(false), 120000); // 2 minutes
+  }
+  // Pinned state drives the auto-retract timer: pin on -> (re)start the 2-minute
+  // countdown, pin off -> nothing to count down. Hover never touches this effect,
+  // so a peek never restarts or cancels the timer.
+  useEffect(() => {
+    if (isMobile) return;
+    if (sidebarPinned) restartSidebarTimer(); else clearSidebarTimer();
+    return clearSidebarTimer;
+  }, [sidebarPinned, isMobile]);
+
+  function toggleSidebar() {
+    setSidebarPinned(p => !p);
   }
   const LC = theme === 'dark' ? LOCATION_COLORS : LOCATION_COLORS_LIGHT;
   function locColor(id) { return LC[id] || { bg:'var(--bg-elevated)', border:'var(--border-default)', text:'var(--text-secondary)' }; }
@@ -2418,31 +2446,78 @@ function App() {
   ];
 
   return (
-    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
-      {/* Header */}
-      <div style={{borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-surface)',padding:'10px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-        {/* Technicians have no business on the doctor scheduler — their login only
-            grants this page, so offering the link would just lead to a dead end. */}
-        {isAdmin && (
-          <a href="index.html" className="hov-pill" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap',borderRadius:8,padding:'4px 8px'}}>← Doctors</a>
-        )}
-        <div style={{fontWeight:800,fontSize:16,whiteSpace:'nowrap'}}>🩺 Technician Scheduler</div>
-        <div style={{flex:1}} />
-        {!isAdmin && <span style={{fontSize:12,color:'var(--text-muted)',border:'1px solid var(--border-default)',borderRadius:99,padding:'3px 10px'}}>👁 View only</span>}
-        <button onClick={toggleTheme} className="hov-pill" style={Object.assign({}, S.btn, {padding:'6px 10px'})} title="Toggle theme">{theme==='dark'?'☀️':'🌙'}</button>
+    <div style={{minHeight:'100vh',background:'var(--bg-deep)',display:'flex',flexDirection:'column'}}>
+      {/* Top Bar */}
+      <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
+          <img src="logo.png" alt="logo" style={{width:isMobile?32:36,height:isMobile?32:36,objectFit:'contain',flexShrink:0}} />
+          <div style={{display:'flex',flexDirection:'column',gap:1}}>
+            <span style={{fontSize:isMobile?16:20,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.1}}>🩺 Technician Scheduler</span>
+            {!isMobile && <span style={{fontSize:11,color:'var(--text-dim)',fontWeight:400,letterSpacing:'0.01em'}}>Created by Michael C Yang MD</span>}
+          </div>
+          {isAdmin && !isMobile && <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,
+            background:theme==='light'?'#e0e0ff':'#1e1e3555',
+            color:theme==='light'?'#4338ca':'#818cf8',
+            border:'1px solid '+(theme==='light'?'#6366f1':'#6366f155'),
+            textTransform:'uppercase',letterSpacing:'0.08em'}}>
+            Admin
+          </span>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?6:12}}>
+          {/* Technicians have no business on the doctor scheduler — their login only
+              grants this page, so offering the link would just lead to a dead end. */}
+          {isAdmin && (
+            <a href="index.html" className="hov-pill" style={{color:'var(--text-secondary)',textDecoration:'none',fontSize:13,fontWeight:600,whiteSpace:'nowrap',borderRadius:8,padding:'4px 8px'}}>← Doctors</a>
+          )}
+          {!isAdmin && <span style={{fontSize:12,color:'var(--text-muted)',border:'1px solid var(--border-default)',borderRadius:99,padding:'3px 10px'}}>👁 View only</span>}
+          <button onClick={toggleTheme} className="hov-pill" style={Object.assign({}, S.btn, {padding:'6px 10px'})} title="Toggle theme">{theme==='dark'?'☀️':'🌙'}</button>
+        </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{display:'flex',gap:4,padding:'8px 12px',borderBottom:'1px solid var(--border-subtle)',overflowX:'auto',background:'var(--bg-deep)'}}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            style={{background:activeTab===t.id?'var(--bg-active)':'transparent',border:'1px solid '+(activeTab===t.id?'var(--border-interactive)':'transparent'),
-                    borderRadius:8,padding:'7px 12px',color:activeTab===t.id?'var(--text-primary)':'var(--text-muted)',
-                    fontSize:13,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap',fontFamily:'inherit'}}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Mobile Tab Bar — desktop uses the sidebar below instead */}
+      {isMobile && (
+        <div style={{display:'flex',gap:4,padding:'8px 12px',borderBottom:'1px solid var(--border-subtle)',overflowX:'auto',background:'var(--bg-deep)'}}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              style={{background:activeTab===t.id?'var(--bg-active)':'transparent',border:'1px solid '+(activeTab===t.id?'var(--border-interactive)':'transparent'),
+                      borderRadius:8,padding:'7px 12px',color:activeTab===t.id?'var(--text-primary)':'var(--text-muted)',
+                      fontSize:13,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap',fontFamily:'inherit'}}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{display:'flex',flex:1}}>
+        {/* Sidebar — desktop only */}
+        {!isMobile && (
+          <div onMouseEnter={()=>setSidebarHovered(true)} onMouseLeave={()=>setSidebarHovered(false)}
+            style={{position:'relative',width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
+            <div style={{flex:1,overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',userSelect:'none'}}>
+            <div style={{flex:1,padding:'20px 0'}}>
+              {TABS.map(tab => (
+                <div key={tab.id} onClick={()=>{setActiveTab(tab.id); if (sidebarPinned) restartSidebarTimer();}} className="hov-row"
+                  title={tab.label}
+                  style={{padding:sidebarCollapsed?'12px 0':'12px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:sidebarCollapsed?'center':'flex-start',gap:sidebarCollapsed?0:10,fontSize:15,fontWeight:activeTab===tab.id?600:400,
+                    color:activeTab===tab.id?'var(--text-primary)':'var(--text-muted)',background:activeTab===tab.id?'var(--border-subtle)':'transparent',
+                    borderRight:activeTab===tab.id?'2px solid #6366f1':'2px solid transparent',
+                    transition:'color 0.15s,background 0.15s,padding 0.25s cubic-bezier(0.4,0,0.2,1)',whiteSpace:'nowrap'}}>
+                  <span style={{flexShrink:0,display:'flex',alignItems:'center',fontSize:sidebarCollapsed?20:18,lineHeight:1}}>
+                    {tab.icon}
+                  </span>
+                  <span style={{opacity:sidebarCollapsed?0:1,maxWidth:sidebarCollapsed?0:180,overflow:'hidden',transition:'opacity 0.15s,max-width 0.25s cubic-bezier(0.4,0,0.2,1)',display:'inline-block',whiteSpace:'nowrap'}}>
+                    {tab.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            </div>
+            <button onClick={toggleSidebar} title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'}
+              style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50%',background:'var(--bg-surface)',border:'1px solid var(--border-default)',boxShadow:'0 2px 8px rgba(0,0,0,0.15)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'var(--text-muted)',zIndex:10,transition:'opacity 0.2s',padding:0,lineHeight:1}}>
+              {sidebarCollapsed?'▶':'◀'}
+            </button>
+          </div>
+        )}
 
       <div style={{flex:1,padding:isMobile?12:20,maxWidth:1400,width:'100%',margin:'0 auto'}}>
         {activeTab === 'board' && isAdmin && (
@@ -2522,6 +2597,7 @@ function App() {
         {activeTab === 'p-account' && !isAdmin && (
           <PortalAccount {...{S,user,showToast,callTechApi,hashPassword,verifyPasswordLocal,theme}} />
         )}
+      </div>
       </div>
 
       {toast && (
