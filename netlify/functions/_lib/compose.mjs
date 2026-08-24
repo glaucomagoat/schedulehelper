@@ -173,12 +173,6 @@ export function composeAdminSummary(ctx, dk, admin, kind, link) {
 
 // Change messages must explain themselves — a doctor who gets a second message about
 // the same day with no context assumes something is wrong on their end. The
-// read-receipt request is deliberate, same as the technician side, but this one names
-// the scheduling coordinator rather than a "Technician Supervisor" — that title means
-// nothing to a doctor and must NOT be reused from composeDayMessage's CHANGE_EXPLAINER.
-const DOCTOR_CHANGE_EXPLAINER = "This is a change to your posted schedule. "
-  + "Please contact the scheduling coordinator to confirm you've received this notification.";
-
 // A doctor's own message — their own site(s) plus who is working with them there.
 // Doctors get the evening/morning sends AND (unlike before) a `kind === "change"`
 // variant — but only ever for a doctor whose OWN assignment changed; callers
@@ -269,14 +263,7 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
     + (isOff ? "<b>" + escapeHtml(offHeadline) + "</b>" : "📍 <b>" + escapeHtml(summary) + "</b>")
     + (telegramDetailLines.length ? "\n" + telegramDetailLines.join("\n") : "")
     + (dayNote ? "\n📌 " + escapeHtml(dayNote) : "")
-    + (kind === "change" ? "\n\n" + escapeHtml(DOCTOR_CHANGE_EXPLAINER) : "")
     + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
-
-  const changeExplainerHtml = (kind === "change")
-    ? '<div style="font-size:14px;font-weight:700;color:#b91c1c;background:#fef2f2;'
-        + 'border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin:0 0 16px;">'
-        + escapeHtml(DOCTOR_CHANGE_EXPLAINER) + '</div>'
-    : "";
 
   const cardHtml = '<div style="border-radius:12px;padding:16px;margin-bottom:18px;'
     + 'background:' + (isOff ? '#f3f4f6' : '#4f46e5') + ';color:' + (isOff ? '#4b5563' : '#ffffff') + ';">'
@@ -304,7 +291,7 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
         + 'border-radius:8px;padding:9px 12px;margin:0 0 16px;">📌 ' + escapeHtml(dayNote) + '</div>'
     : "";
 
-  const emailHtml = emailShell(cardHtml + techsHtml + noteHtml + changeExplainerHtml, link);
+  const emailHtml = emailShell(cardHtml + techsHtml + noteHtml, link);
 
   let techsText = "";
   if (!isOff) {
@@ -321,7 +308,6 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
     + (isOff ? offHeadline : summary) + "\n"
     + techsText
     + (dayNote ? "Note: " + dayNote + "\n" : "")
-    + (kind === "change" ? "\n" + DOCTOR_CHANGE_EXPLAINER + "\n" : "")
     + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
     + "\nThis schedule can change during the day — the link above is always current.";
 
