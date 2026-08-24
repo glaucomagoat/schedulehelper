@@ -4,7 +4,9 @@
 // technician board is always live, so "what did we last tell people?" is the only
 // meaningful baseline for deciding who needs a change alert.
 
-import { activeTechs, assignmentsFor, readJson, writeJson, ADMIN } from "./techdata.mjs";
+import {
+  activeTechs, assignmentsFor, notifiableDoctors, doctorAssignmentFor, readJson, writeJson, ADMIN,
+} from "./techdata.mjs";
 
 const LOG_KEY = ADMIN + ":techNotifyLog";
 const RETAIN_DAYS = 90;
@@ -45,6 +47,43 @@ export function changedTechs(ctx, dk) {
   return out;
 }
 
+// What every notifiable doctor's own day looks like right now — the doctor-side
+// parallel to buildSnapshot. Deliberately NOT filtered on `active` (see
+// notifiableDoctors' comment): a doctor who is `active: false` can still be
+// scheduled and still needs their change tracked.
+export function buildDoctorSnapshot(ctx, dk) {
+  const snap = {};
+  notifiableDoctors(ctx).forEach(d => {
+    const a = doctorAssignmentFor(ctx, dk, d.id);
+    snap[d.id] = { am: a.am || "", pm: a.pm || "" };
+  });
+  return snap;
+}
+
+export function doctorSnapshotFor(ctx, dk) {
+  return (ctx.notifyLog[dk] || {}).doctorSnapshot || null;
+}
+
+// Who has a different assignment now than when doctors were last told. Mirrors
+// changedTechs exactly, including its "no prior snapshot means no change to
+// report" rule — and, like changedTechs, a doctor whose assignment was REMOVED
+// still shows up here (their current am/pm normalise to "", which differs from
+// whatever they had before). That is deliberate: being taken off the schedule is
+// the single most important thing to tell someone, so it must never be filtered
+// out as "nothing to show".
+export function changedDoctors(ctx, dk) {
+  const prev = doctorSnapshotFor(ctx, dk);
+  if (!prev) return [];
+  const cur = buildDoctorSnapshot(ctx, dk);
+  const out = [];
+  Object.keys(cur).forEach(doctorId => {
+    const p = prev[doctorId] || { am: "", pm: "" };
+    const c = cur[doctorId];
+    if (p.am !== c.am || p.pm !== c.pm) out.push({ doctorId, from: p, to: c });
+  });
+  return out;
+}
+
 function prune(log, todayDk) {
   // One entry per day would otherwise accumulate forever in a single blob.
   const cutoff = new Date(todayDk + "T00:00:00Z");
@@ -60,16 +99,19 @@ function prune(log, todayDk) {
 // as a cron tick could drop one of the two records. The window is milliseconds and
 // the consequence is a missing audit row (never a missed message, since sending
 // already happened), so this is accepted rather than locked around.
-export async function recordSend(store, dk, kind, results, snapshot, todayDk) {
+export async function recordSend(store, dk, kind, results, snapshot, todayDk, doctorSnapshot) {
   const log = await readJson(store, LOG_KEY, {});
   const entry = log[dk] || {};
 
   if (kind === "change") {
     entry.changes = (entry.changes || []).concat([{ at: Date.now(), results }]).slice(-20);
+  } else if (kind === "change:doctors") {
+    entry.doctorChanges = (entry.doctorChanges || []).concat([{ at: Date.now(), results }]).slice(-20);
   } else {
     entry[kind] = { sentAt: Date.now(), results };
   }
   if (snapshot) entry.snapshot = snapshot;
+  if (doctorSnapshot) entry.doctorSnapshot = doctorSnapshot;
 
   log[dk] = entry;
   await writeJson(store, LOG_KEY, prune(log, todayDk || dk));

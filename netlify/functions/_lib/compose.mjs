@@ -171,18 +171,32 @@ export function composeAdminSummary(ctx, dk, admin, kind, link) {
   return { subject, telegramText, emailHtml, emailText, link, kind, dateKey: dk };
 }
 
+// Change messages must explain themselves — a doctor who gets a second message about
+// the same day with no context assumes something is wrong on their end. The
+// read-receipt request is deliberate, same as the technician side, but this one names
+// the scheduling coordinator rather than a "Technician Supervisor" — that title means
+// nothing to a doctor and must NOT be reused from composeDayMessage's CHANGE_EXPLAINER.
+const DOCTOR_CHANGE_EXPLAINER = "This is a change to your posted schedule. "
+  + "Please contact the scheduling coordinator to confirm you've received this notification.";
+
 // A doctor's own message — their own site(s) plus who is working with them there.
-// Doctors get the evening/morning sends only, NEVER a change alert (callers must
-// filter `kind === "change"` out before reaching here — see buildDoctorRecipients
-// in sendjob.mjs). Returns the exact same shape composeDayMessage does, so the
-// channel adapters need no changes to handle a doctor recipient.
+// Doctors get the evening/morning sends AND (unlike before) a `kind === "change"`
+// variant — but only ever for a doctor whose OWN assignment changed; callers
+// (buildDoctorRecipients in sendjob.mjs) are what enforce that scoping, never this
+// function. Returns the exact same shape composeDayMessage does, so the channel
+// adapters need no changes to handle a doctor recipient.
 //
 // `link` is the same signed day-view link technicians and administrators receive —
 // the token carries an id, not a role.
 export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
   const dayLabel = fmtShort(dk);
   const when = kind === "evening" ? "Tomorrow" : kind === "morning" ? "Today" : "";
+  const whenWord = dk === todayIn((ctx.settings || {}).timezone) ? "today" : "on " + dayLabel;
 
+  // Reads the doctor's CURRENT published assignment — i.e. always the NEW one on a
+  // change send. There is no "from" here at all, by design: showing the prior site
+  // alongside the new one is how someone reads the wrong half and drives to the
+  // wrong location (the exact rule composeDayMessage's change variant follows).
   const a = doctorAssignmentFor(ctx, dk, doctor.id);
   const amOff = !a.am || a.am === "OFF";
   const pmOff = !a.pm || a.pm === "OFF";
@@ -205,13 +219,22 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
   }
 
   let subject, heading;
-  if (kind === "test") {
+  if (kind === "change") {
+    subject = "⚠ CHANGE " + dayLabel + " — " + summary;
+    heading = "Schedule change";
+  } else if (kind === "test") {
     subject = "[test] " + dayLabel + " — " + summary;
     heading = "Test message";
   } else {
     subject = when + " " + dayLabel + " — " + summary;
     heading = when + "'s assignment";
   }
+
+  // A doctor who is no longer scheduled on a change send needs to be told plainly
+  // that THIS is the change, not just handed the bare "Not scheduled" a routine
+  // send would show — that bare phrase reads as "nothing to report" instead of
+  // "you were taken off the schedule".
+  const offHeadline = (kind === "change") ? ("You are no longer scheduled " + whenWord + ".") : summary;
 
   // Who is working WITH the doctor, at their own site(s) — resolved through
   // techsWithDoctor so a technician borrowed into a sub-room still counts.
@@ -243,16 +266,23 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
   const telegramText =
     "<b>" + escapeHtml(heading) + "</b>\n"
     + escapeHtml(fmtLong(dk)) + "\n\n"
-    + (isOff ? "<b>" + escapeHtml(summary) + "</b>" : "📍 <b>" + escapeHtml(summary) + "</b>")
+    + (isOff ? "<b>" + escapeHtml(offHeadline) + "</b>" : "📍 <b>" + escapeHtml(summary) + "</b>")
     + (telegramDetailLines.length ? "\n" + telegramDetailLines.join("\n") : "")
     + (dayNote ? "\n📌 " + escapeHtml(dayNote) : "")
+    + (kind === "change" ? "\n\n" + escapeHtml(DOCTOR_CHANGE_EXPLAINER) : "")
     + "\n\n<i>Commands: /today /tomorrow /week /board</i>";
+
+  const changeExplainerHtml = (kind === "change")
+    ? '<div style="font-size:14px;font-weight:700;color:#b91c1c;background:#fef2f2;'
+        + 'border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin:0 0 16px;">'
+        + escapeHtml(DOCTOR_CHANGE_EXPLAINER) + '</div>'
+    : "";
 
   const cardHtml = '<div style="border-radius:12px;padding:16px;margin-bottom:18px;'
     + 'background:' + (isOff ? '#f3f4f6' : '#4f46e5') + ';color:' + (isOff ? '#4b5563' : '#ffffff') + ';">'
     + '<div style="font-size:12px;font-weight:700;letter-spacing:0.8px;opacity:0.85;">'
     + escapeHtml(String(doctor.name || "").toUpperCase()) + ' &middot; ' + escapeHtml(dayLabel) + '</div>'
-    + '<div style="font-size:22px;font-weight:800;margin-top:6px;line-height:1.25;">' + escapeHtml(summary) + '</div>'
+    + '<div style="font-size:22px;font-weight:800;margin-top:6px;line-height:1.25;">' + escapeHtml(isOff ? offHeadline : summary) + '</div>'
     + '</div>';
 
   let techsHtml = "";
@@ -274,7 +304,7 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
         + 'border-radius:8px;padding:9px 12px;margin:0 0 16px;">📌 ' + escapeHtml(dayNote) + '</div>'
     : "";
 
-  const emailHtml = emailShell(cardHtml + techsHtml + noteHtml, link);
+  const emailHtml = emailShell(cardHtml + techsHtml + noteHtml + changeExplainerHtml, link);
 
   let techsText = "";
   if (!isOff) {
@@ -288,9 +318,10 @@ export function composeDoctorMessage(ctx, dk, doctor, kind, link) {
 
   const emailText =
     heading + "\n" + fmtLong(dk) + "\n\n"
-    + summary + "\n"
+    + (isOff ? offHeadline : summary) + "\n"
     + techsText
     + (dayNote ? "Note: " + dayNote + "\n" : "")
+    + (kind === "change" ? "\n" + DOCTOR_CHANGE_EXPLAINER + "\n" : "")
     + (link ? "\nFull schedule for everyone: " + link + "\n" : "")
     + "\nThis schedule can change during the day — the link above is always current.";
 

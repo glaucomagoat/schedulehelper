@@ -6774,9 +6774,10 @@ function DoctorNotifyPanel({ staff, isMobile }) {
   const [settingsLoading, setSettingsLoading] = React.useState(false);
   const [savingSettings, setSavingSettings] = React.useState(false);
   const [settingsNote, setSettingsNote] = React.useState(null);   // { text, kind }
-  const [sendingDay, setSendingDay] = React.useState(null);       // 'morning' | 'evening' | null
-  const [confirmSend, setConfirmSend] = React.useState(null);     // { sendKind, dateKey, label }
+  const [sendingDay, setSendingDay] = React.useState(null);       // 'morning' | 'evening' | 'change' | null
+  const [confirmSend, setConfirmSend] = React.useState(null);     // { type:'day', sendKind, dateKey, label } | { type:'changes', dateKey, list }
   const [sendNote, setSendNote] = React.useState(null);           // { text, kind }
+  const [previewLoading, setPreviewLoading] = React.useState(false);
 
   async function callTechApi(payload) {
     const token = localStorage.getItem('sessionToken') || '';
@@ -6861,11 +6862,59 @@ function DoctorNotifyPanel({ staff, isMobile }) {
     }
   }
 
+  // Doctor-scoped parallel to techs.html's sendChanges/previewChanges: notify ONLY
+  // the doctors whose own assignment changed since doctors were last told.
+  // audience:'doctors' is what keeps this from ever reaching a technician or
+  // administrator (see runSendJob's audience option in _lib/sendjob.mjs).
+  async function doSendChanges(dk) {
+    setSendingDay('change');
+    setSendNote(null);
+    try {
+      const d = await callTechApi({ action: 'send-changes', dateKey: dk, audience: 'doctors' });
+      if (d.nothingToSend) {
+        setSendNote({ text: 'Nothing has changed since doctors were last told', kind: 'info' });
+      } else {
+        const bad = !!(d.summary && (d.summary.failed || d.summary.unreachable));
+        setSendNote({
+          text: 'Notified ' + d.changedCount + ' doctor' + (d.changedCount === 1 ? '' : 's') + ' — ' + describeSummary(d.summary),
+          kind: bad ? 'error' : 'success',
+        });
+      }
+      await loadNotifyStatus();
+    } catch (e) {
+      setSendNote({ text: 'Send failed: ' + e.message, kind: 'error' });
+    } finally {
+      setSendingDay(null);
+    }
+  }
+
+  // Dry-run of doSendChanges: what WOULD go out, with no side effects. Built from a
+  // preview-changes call (audience:'doctors'), never from a guess, so this can never
+  // drift from what the real send does.
+  async function handlePushChangesClick() {
+    setPreviewLoading(true);
+    setSendNote(null);
+    try {
+      const d = await callTechApi({ action: 'preview-changes', dateKey: todayDk, audience: 'doctors' });
+      const list = d.changed || [];
+      if (list.length === 0) {
+        setSendNote({ text: 'Nothing has changed since doctors were last told', kind: 'info' });
+      } else {
+        setConfirmSend({ type: 'changes', dateKey: todayDk, list: list });
+      }
+    } catch (e) {
+      setSendNote({ text: 'Could not check for changes: ' + e.message, kind: 'error' });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
   async function confirmSendGo() {
     const cs = confirmSend;
     if (!cs) return;
     setConfirmSend(null);
-    await doSendDay(cs.dateKey, cs.sendKind);
+    if (cs.type === 'changes') await doSendChanges(cs.dateKey);
+    else await doSendDay(cs.dateKey, cs.sendKind);
   }
 
   function setSched(k, v) {
@@ -6960,9 +7009,9 @@ function DoctorNotifyPanel({ staff, isMobile }) {
 
       <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-subtle)',borderRadius:10,padding:14,marginBottom:16,fontSize:13,color:'var(--text-muted)',lineHeight:1.6}}>
         Each doctor gets their own site assignment and the technicians working with them, sent the night before and the
-        morning of — never a last-minute change alert or a "push changes only" button, since a change to someone
-        else's schedule means nothing to a doctor's own day. Sending here reaches doctors only — it never touches
-        technicians or administrators.
+        morning of. "Push changes only" reaches just the doctors whose own assignment moved since doctors were last
+        told — a change to a technician's schedule is never sent to a doctor. Sending here reaches doctors only — it
+        never touches technicians or administrators.
       </div>
 
       {loadError && (
@@ -7002,12 +7051,15 @@ function DoctorNotifyPanel({ staff, isMobile }) {
         <div style={{fontWeight:700,marginBottom:10}}>Send now</div>
         <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
           <Btn variant="primary" disabled={!!sendingDay}
-               onClick={() => setConfirmSend({ sendKind:'morning', dateKey: todayDk, label:'Today' })}>
+               onClick={() => setConfirmSend({ type:'day', sendKind:'morning', dateKey: todayDk, label:'Today' })}>
             {sendingDay === 'morning' ? 'Sending…' : "📅 Send Today's Schedule"}
           </Btn>
           <Btn variant="primary" disabled={!!sendingDay}
-               onClick={() => setConfirmSend({ sendKind:'evening', dateKey: tomorrowDk, label:'Tomorrow' })}>
+               onClick={() => setConfirmSend({ type:'day', sendKind:'evening', dateKey: tomorrowDk, label:'Tomorrow' })}>
             {sendingDay === 'evening' ? 'Sending…' : "📅 Send Tomorrow's Schedule"}
+          </Btn>
+          <Btn variant="secondary" disabled={!!sendingDay || previewLoading} onClick={handlePushChangesClick}>
+            {previewLoading ? 'Checking…' : sendingDay === 'change' ? 'Sending…' : '🔔 Push changes only'}
           </Btn>
           <Btn variant="ghost" disabled={!!sendingDay}
                onClick={() => { loadNotifyStatus(); loadInvites(); }}
@@ -7211,7 +7263,7 @@ function DoctorNotifyPanel({ staff, isMobile }) {
         </div>
       </div>
 
-      {confirmSend && (
+      {confirmSend && confirmSend.type === 'day' && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
           onClick={()=>{ if (!sendingDay) setConfirmSend(null); }}>
           <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Send doctor schedule"
@@ -7224,6 +7276,42 @@ function DoctorNotifyPanel({ staff, isMobile }) {
               {'This will message every doctor with an assignment for '}
               <b style={{color:'var(--text-primary)'}}>{fmtDkShort(confirmSend.dateKey)}</b>
               {'. Technicians and administrators are not affected — this send reaches doctors only.'}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" disabled={!!sendingDay} onClick={()=>setConfirmSend(null)}>Cancel</Btn>
+              <Btn variant="primary" disabled={!!sendingDay} onClick={confirmSendGo}>
+                {sendingDay ? 'Sending…' : 'Send'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmSend && confirmSend.type === 'changes' && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={()=>{ if (!sendingDay) setConfirmSend(null); }}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Push doctor schedule changes"
+               style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:460,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>🔔</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>
+              {'Push changes for ' + fmtDkShort(confirmSend.dateKey) + '?'}
+            </div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:12,lineHeight:1.6}}>
+              {'Only ' + confirmSend.list.length + ' doctor' + (confirmSend.list.length === 1 ? '' : 's') + ' will be messaged'}
+              {' — everyone else\'s assignment for this day has not changed. Technicians and administrators are not affected.'}
+            </div>
+            <div style={{maxHeight:220,overflowY:'auto',marginBottom:18,border:'1px solid var(--border-subtle)',borderRadius:8}}>
+              {confirmSend.list.map(c => (
+                <div key={c.doctorId} style={{padding:'8px 12px',borderBottom:'1px solid var(--border-subtle)',fontSize:13}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{fontWeight:700,color:'var(--text-primary)'}}>{c.name}</span>
+                    {!c.reachable && (
+                      <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>⚠ unreachable — will not receive this</span>
+                    )}
+                  </div>
+                  <div style={{color:'var(--text-muted)',marginTop:2}}>{c.to}</div>
+                </div>
+              ))}
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <Btn variant="ghost" disabled={!!sendingDay} onClick={()=>setConfirmSend(null)}>Cancel</Btn>

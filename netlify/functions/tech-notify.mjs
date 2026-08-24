@@ -12,7 +12,7 @@ import {
 import { composeDayMessage, composeInviteEmail, composeAdminSummary, composeDoctorMessage } from "./_lib/compose.mjs";
 import { sendToTech, configuredChannels } from "./_lib/notify.mjs";
 import { runSendJob, describeAssignment } from "./_lib/sendjob.mjs";
-import { changedTechs } from "./_lib/sendlog.mjs";
+import { changedTechs, changedDoctors } from "./_lib/sendlog.mjs";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -142,19 +142,43 @@ export default async (req) => {
     // Notify ONLY the technicians whose own assignment changed since the last send.
     // Messaging the whole roster for one person's change is how people learn to
     // ignore the notifications.
+    //
+    // `body.audience === 'doctors'` (the exact string, nothing else) scopes this to
+    // the doctors whose own assignment changed since doctors were last told — that's
+    // what the doctor panel's own "Push changes only" button uses, so pressing it can
+    // never fan a message out to a technician or administrator. Anything else falls
+    // through to the existing unscoped (technician) behaviour unchanged.
     case "send-changes": {
       const dk = isValidDateKey(body.dateKey) ? body.dateKey : null;
       if (!dk) return json({ error: "A valid dateKey (YYYY-MM-DD) is required" }, 400);
-      const out = await runSendJob(store, ctx, { dateKey: dk, kind: "change", base, secret: LINK_SECRET });
+      const audience = body.audience === "doctors" ? "doctors" : undefined;
+      const out = await runSendJob(store, ctx, { dateKey: dk, kind: "change", base, secret: LINK_SECRET, audience });
       return json(Object.assign({ success: true }, out));
     }
 
     // Preview of what "send-changes" WOULD do, without sending anything or touching
-    // the log/snapshot. Uses the exact same source of truth (changedTechs +
-    // describeAssignment) so the preview can never drift from the real send.
+    // the log/snapshot. Uses the exact same source of truth the real send does —
+    // changedTechs + describeAssignment for the technician path, changedDoctors for
+    // the doctor path (`body.audience === 'doctors'`, exact string) — so the preview
+    // can never drift from what actually gets sent.
     case "preview-changes": {
       const dk = isValidDateKey(body.dateKey) ? body.dateKey : null;
       if (!dk) return json({ error: "A valid dateKey (YYYY-MM-DD) is required" }, 400);
+
+      if (body.audience === "doctors") {
+        const changed = changedDoctors(ctx, dk);
+        const list = changed.map(c => {
+          const doctor = ctx.doctors.find(d => d.id === c.doctorId);
+          const contact = ctx.contacts[c.doctorId] || {};
+          return {
+            doctorId: c.doctorId,
+            name: doctor ? doctor.name : c.doctorId,
+            to: describeAssignment(ctx, c.to),
+            reachable: !!contact.telegramChatId,
+          };
+        });
+        return json({ success: true, dateKey: dk, changed: list });
+      }
 
       const changed = changedTechs(ctx, dk);
       const list = changed.map(c => {

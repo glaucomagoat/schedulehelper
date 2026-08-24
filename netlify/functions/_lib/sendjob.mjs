@@ -7,7 +7,7 @@ import { activeTechs, activeAdmins, notifiableDoctors, todayIn, assignmentsFor, 
 import { makeTechToken, dayLinkFor } from "./links.mjs";
 import { composeDayMessage, composeAdminSummary, composeDoctorMessage } from "./compose.mjs";
 import { sendToMany, summarize } from "./notify.mjs";
-import { recordSend, buildSnapshot, changedTechs } from "./sendlog.mjs";
+import { recordSend, buildSnapshot, changedTechs, buildDoctorSnapshot, changedDoctors } from "./sendlog.mjs";
 
 export function describeAssignment(ctx, a) {
   const am = (a && a.am) || "OFF", pm = (a && a.pm) || "OFF";
@@ -71,10 +71,13 @@ async function buildAdminRecipients(ctx, dk, kind, base, secret) {
   return out;
 }
 
-// Doctors receive the evening/morning sends only — NEVER a change alert. A change
-// message is a technician's reassignment; it means nothing to a doctor's own day, so
-// this filters `kind === "change"` out itself rather than relying on every caller to
-// remember (same defensive pattern buildAdminRecipients uses).
+// Doctors receive the evening/morning sends unscoped, plus — when `onlyDoctorIds` is
+// given — a scoped `kind === "change"` send for exactly those doctors. An UNSCOPED
+// change alert (onlyDoctorIds null, the technician path's own change send) is a
+// technician's reassignment; it means nothing to a doctor's own day, so that case
+// still returns [] itself rather than relying on every caller to remember (same
+// defensive pattern buildAdminRecipients uses) — this is what keeps the technician
+// page's and the cron's change sends from ever reaching a doctor.
 //
 // Every doctor from ctx.doctors is a candidate — no separate roster, and NOT filtered
 // on `active` (see notifiableDoctors' comment: that flag gates AI generation, not
@@ -82,17 +85,22 @@ async function buildAdminRecipients(ctx, dk, kind, base, secret) {
 // get: the token carries an id, not a role.
 //
 // A doctor with no assignment at all that day — neither an am nor a pm site — is
-// skipped entirely rather than sent a message that just says "Not scheduled". That
-// applies to every doctor, active or not; a doctor who IS scheduled that day is
-// unaffected regardless of their `active` flag.
-async function buildDoctorRecipients(ctx, dk, kind, base, secret) {
-  if (kind === "change") return [];
+// skipped entirely rather than sent a message that just says "Not scheduled", EXCEPT
+// on a change send: a doctor whose assignment was removed has no site today and is
+// precisely who needs the message, so that skip rule does not apply when
+// `kind === "change"`.
+async function buildDoctorRecipients(ctx, dk, kind, base, secret, onlyDoctorIds) {
+  if (kind === "change" && !onlyDoctorIds) return [];
+  const wanted = onlyDoctorIds ? new Set(onlyDoctorIds) : null;
   const out = [];
   for (const doctor of notifiableDoctors(ctx)) {
-    const a = doctorAssignmentFor(ctx, dk, doctor.id);
-    const hasAmSite = !!(a.am && a.am !== "OFF");
-    const hasPmSite = !!(a.pm && a.pm !== "OFF");
-    if (!hasAmSite && !hasPmSite) continue;
+    if (wanted && !wanted.has(doctor.id)) continue;
+    if (kind !== "change") {
+      const a = doctorAssignmentFor(ctx, dk, doctor.id);
+      const hasAmSite = !!(a.am && a.am !== "OFF");
+      const hasPmSite = !!(a.pm && a.pm !== "OFF");
+      if (!hasAmSite && !hasPmSite) continue;
+    }
     const contact = ctx.contacts[doctor.id] || {};
     const link = await linkFor(doctor, contact, base, secret, dk);
     out.push({ tech: doctor, contact, message: composeDoctorMessage(ctx, dk, doctor, kind, link) });
@@ -109,7 +117,7 @@ async function buildDoctorRecipients(ctx, dk, kind, base, secret) {
 export async function runSendJob(store, ctx, opts) {
   const { dateKey, kind, base, secret, audience } = opts;
   const doctorsOnly = audience === "doctors";
-  let onlyTechIds = null, prevSummaries = null;
+  let onlyTechIds = null, prevSummaries = null, onlyDoctorIds = null;
 
   if (kind === "change" && !doctorsOnly) {
     const changed = changedTechs(ctx, dateKey);
@@ -121,9 +129,20 @@ export async function runSendJob(store, ctx, opts) {
     changed.forEach(c => { prevSummaries[c.techId] = describeAssignment(ctx, c.from); });
   }
 
+  // The doctor-side parallel to the block above: a doctors-only change send is
+  // scoped to exactly the doctors whose own published assignment moved since
+  // doctors were last told.
+  if (kind === "change" && doctorsOnly) {
+    const changed = changedDoctors(ctx, dateKey);
+    if (changed.length === 0) {
+      return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
+    }
+    onlyDoctorIds = changed.map(c => c.doctorId);
+  }
+
   const recipients = doctorsOnly ? [] : await buildRecipients(ctx, dateKey, kind, base, secret, onlyTechIds, prevSummaries);
   const adminRecipients = doctorsOnly ? [] : await buildAdminRecipients(ctx, dateKey, kind, base, secret);
-  const doctorRecipients = await buildDoctorRecipients(ctx, dateKey, kind, base, secret);
+  const doctorRecipients = await buildDoctorRecipients(ctx, dateKey, kind, base, secret, onlyDoctorIds);
   if (recipients.length === 0 && adminRecipients.length === 0 && doctorRecipients.length === 0) {
     return { nothingToSend: true, dateKey, kind, changedCount: 0, summary: summarize([]), results: [] };
   }
@@ -141,16 +160,26 @@ export async function runSendJob(store, ctx, opts) {
   const results = techResults.concat(adminResults).concat(doctorResults);
   // A doctors-only send must not satisfy the cron's idempotency guard (wasNotified
   // reads the bare `kind` key) and must not overwrite the technician change-detection
-  // snapshot. Namespacing the log kind and skipping the snapshot for this case is
-  // what keeps a manual doctor send from silently suppressing the real 8pm/6am
-  // send to every technician.
+  // snapshot. Namespacing the log kind is what keeps a manual doctor send from ever
+  // being confused with — or accidentally satisfying — the technician kind's record;
+  // for kind === "change" this yields exactly "change:doctors", its own log bucket
+  // (see recordSend).
   const logKind = doctorsOnly ? kind + ":doctors" : kind;
   const snapshot = doctorsOnly ? null : buildSnapshot(ctx, dateKey);
-  await recordSend(store, dateKey, logKind, results, snapshot, todayIn(ctx.settings.timezone));
+  // The doctor snapshot is the baseline the NEXT doctors-only change send diffs
+  // against, so it must be refreshed by any send whose audience included doctors —
+  // every kind !== "change" (the ordinary evening/morning sends, scoped or not, all
+  // of which do reach doctors) OR any audience === "doctors" send (including this
+  // doctors-only change send itself). It must NOT be refreshed by an unscoped
+  // kind === "change" send (the technician path): that send tells doctors nothing,
+  // so refreshing it there would silently swallow a real doctor change before
+  // anyone was ever told about it.
+  const doctorSnapshot = (kind !== "change" || doctorsOnly) ? buildDoctorSnapshot(ctx, dateKey) : null;
+  await recordSend(store, dateKey, logKind, results, snapshot, todayIn(ctx.settings.timezone), doctorSnapshot);
 
   return {
     dateKey, kind,
-    changedCount: onlyTechIds ? onlyTechIds.length : recipients.length,
+    changedCount: onlyTechIds ? onlyTechIds.length : (onlyDoctorIds ? onlyDoctorIds.length : recipients.length),
     summary: summarize(results),
     results,
   };
