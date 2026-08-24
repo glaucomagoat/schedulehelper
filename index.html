@@ -429,6 +429,15 @@ function isWeekend(year, month, day) {
 // A day "has work" if any staff member in the given list has an am or pm
 // assignment for that day that is set and not 'OFF'. Everyone explicitly OFF
 // does NOT count as work. Shared by the on-screen month grid and the PDF builder.
+function workingCountOn(ds, staffList) {
+  let n = 0;
+  staffList.forEach(function(s) {
+    const e = ds[s.id];
+    if (e && ((e.am && e.am !== 'OFF') || (e.pm && e.pm !== 'OFF'))) n++;
+  });
+  return n;
+}
+
 function scheduleHasWork(ds, staffList) {
   return staffList.some(function(s) {
     const e = ds[s.id];
@@ -3790,7 +3799,12 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
   // top rung. Each PDF style multiplies these by its own heuristic "top" size, so a
   // normal month still renders at its usual size on the first try while a dense month
   // has the same proportional headroom to keep shrinking instead of overflowing.
-  const PDF_LADDER_RATIOS = [1, 0.929, 0.857, 0.821, 0.786, 0.75, 0.714, 0.679, 0.643, 0.614, 0.586, 0.557, 0.529, 0.5, 0.471, 0.443, 0.414, 0.386, 0.357];
+  // The rungs above 1 matter as much as the ones below. The per-style heuristic is
+  // a starting guess, not a ceiling: a month that leaves vertical room on the page
+  // should spend it on bigger type rather than printing small with white space at
+  // the bottom. The loop takes the FIRST rung that fits, so starting high and
+  // walking down lands on the largest size the sheet can actually hold.
+  const PDF_LADDER_RATIOS = [1.6, 1.5, 1.4, 1.3, 1.22, 1.15, 1.08, 1, 0.929, 0.857, 0.821, 0.786, 0.75, 0.714, 0.679, 0.643, 0.614, 0.586, 0.557, 0.529, 0.5, 0.471, 0.443, 0.414, 0.386, 0.357];
 
   // Shared by both PDF styles. Renders each candidate font size into a hidden
   // offscreen iframe sized to the true printable area, walks the ladder down until
@@ -3807,18 +3821,48 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     host.height = String(PDF_PRINT_H);
     document.body.appendChild(host);
 
+    // Build one candidate and report whether it fits the page on BOTH axes. Width
+    // matters now that the ladder can go up: html2canvas rasterises a fixed
+    // PDF_PRINT_W, so a sheet that overflowed sideways would be clipped, not scaled.
+    async function measure(size) {
+      const html = buildHtml(size);
+      const fits = await new Promise(resolve => {
+        host.onload = () => {
+          try {
+            const b = host.contentDocument.body;
+            resolve(b.scrollHeight <= PDF_PRINT_H && b.scrollWidth <= PDF_PRINT_W + 1);
+          } catch (e) { resolve(true); }
+        };
+        host.srcdoc = html;
+      });
+      return { fits: fits, html: html };
+    }
+
     let finalHtml = null;
     try {
+      let goodSize = null, badSize = null;
       for (let i = 0; i < sizes.length; i++) {
-        finalHtml = buildHtml(sizes[i]);
-        const fits = await new Promise(resolve => {
-          host.onload = () => {
-            try { resolve(host.contentDocument.body.scrollHeight <= PDF_PRINT_H); }
-            catch (e) { resolve(true); }
-          };
-          host.srcdoc = finalHtml;
-        });
-        if (fits) break;
+        const r = await measure(sizes[i]);
+        finalHtml = r.html;
+        if (r.fits) { goodSize = sizes[i]; break; }
+        badSize = sizes[i];
+      }
+
+      // The ladder's rungs are ~7% apart, which regularly leaves real estate unused:
+      // one rung overflows by a few pixels and the next lands well short, printing
+      // smaller than the page can hold. Bisect the gap a few times to claim it. Three
+      // probes close most of a 7% step and cost three iframe loads.
+      if (goodSize !== null && badSize !== null) {
+        let good = goodSize, bad = badSize;
+        for (let k = 0; k < 3; k++) {
+          const mid = Math.round(((good + bad) / 2) * 100) / 100;
+          if (mid <= good || mid >= bad) break;
+          const r = await measure(mid);
+          if (r.fits) { good = mid; finalHtml = r.html; } else { bad = mid; }
+        }
+        // finalHtml must correspond to the accepted size, not the last probe.
+        if (good !== goodSize) { const r = await measure(good); finalHtml = r.html; }
+        else finalHtml = buildHtml(goodSize);
       }
 
       // Preferred path: rasterise the sheet and write it into a landscape PDF.
@@ -3976,7 +4020,28 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     html += '<span class="sub">Generated ' + new Date().toLocaleDateString() + '</span></div></div>';
     html += '<div class="legend">';
     filteredStaff.forEach((s,i) => { html += '<div class="li"><div class="ld" style="background:' + s.color + '"></div><b>' + escapeHtml(initials[i]) + '</b> = ' + escapeHtml(getLastName(s.name)) + '</div>'; });
-    html += '</div><table><thead><tr>';
+    // Seven equal columns spent a seventh of the sheet on a Sunday that is never
+    // scheduled. Weekend columns are now sized to what they actually carry, and the
+    // five weekdays absorb the difference — wider weekday columns wrap less, the
+    // sheet gets shorter, and the ladder settles on a larger font.
+    const dim = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const wkFrac = [0, 1, 1, 1, 1, 1, 0];   // Sun..Sat; the weekend ends filled in below
+    [0, 6].forEach(function(dow) {
+      let maxDocs = 0;
+      for (let d = 1; d <= dim; d++) {
+        if (new Date(currentYear, currentMonth, d).getDay() !== dow) continue;
+        const n = workingCountOn(schedule[dateKey(currentYear, currentMonth, d)] || {}, filteredStaff);
+        if (n > maxDocs) maxDocs = n;
+      }
+      wkFrac[dow] = maxDocs === 0
+        ? 0.25
+        : Math.min(1, Math.max(0.35, maxDocs / Math.max(1, filteredStaff.length)));
+    });
+    const fracTotal = wkFrac.reduce(function(a, b) { return a + b; }, 0);
+
+    html += '</div><table><colgroup>';
+    wkFrac.forEach(function(f) { html += '<col style="width:' + (f * 100 / fracTotal).toFixed(3) + '%">'; });
+    html += '</colgroup><thead><tr>';
     DAYS_OF_WEEK.forEach(d => { html += '<th>' + d + '</th>'; });
     html += '</tr></thead><tbody><tr>';
 
@@ -4050,6 +4115,24 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         includeSat = true; break;
       }
     }
+    // Condensing Saturday is only half the win — the column has to shrink too, so
+    // the five weekdays get the reclaimed width. Wider weekday columns wrap less,
+    // which makes the sheet shorter, which lets the ladder settle on a LARGER font.
+    // The fraction follows the actual load rather than a guess: a two-doctor
+    // Saturday takes a sliver, and a Saturday that somehow ran full staff keeps a
+    // full column.
+    let maxSatDocs = 0;
+    if (includeSat) {
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (new Date(currentYear, currentMonth, d).getDay() !== 6) continue;
+        const n = workingCountOn(schedule[dateKey(currentYear, currentMonth, d)] || {}, filteredStaff);
+        if (n > maxSatDocs) maxSatDocs = n;
+      }
+    }
+    const satFrac = includeSat
+      ? Math.min(1, Math.max(0.3, maxSatDocs / Math.max(1, filteredStaff.length)))
+      : 0;
+
     const weekRows = [];
     let cw = [];
     for (let d = 1; d <= daysInMonth; d++) {
@@ -4116,7 +4199,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     html += '<div class="hdr"><h1>' + MONTHS[currentMonth].toUpperCase() + ' ' + currentYear + '</h1>';
     html += '<div><span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> <span class="meta">Updated ' + new Date().toLocaleDateString() + '</span></div></div>';
 
-    html += '<table><thead><tr>';
+    const colTotal = 5 + satFrac;
+    html += '<table><colgroup>';
+    for (let i = 0; i < 5; i++) html += '<col style="width:' + (100 / colTotal).toFixed(3) + '%">';
+    if (includeSat) html += '<col style="width:' + (satFrac * 100 / colTotal).toFixed(3) + '%">';
+    html += '</colgroup><thead><tr>';
     ['Monday','Tuesday','Wednesday','Thursday','Friday'].concat(includeSat ? ['Saturday'] : []).forEach(dn => { html += '<th>' + dn + '</th>'; });
     html += '</tr></thead><tbody>';
 
