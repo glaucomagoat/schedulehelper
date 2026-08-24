@@ -3905,7 +3905,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       filteredStaff.forEach((s,si) => {
         const p = ds[s.id]; if (!p) return;
         const am = p.am || 'OFF', pm = p.pm || 'OFF';
-        if (am === 'OFF' && pm === 'OFF') { allDay.push({staff:s,locId:'OFF',init:initials[si]}); return; }
+        // A weekend clinic lists only who is actually in. On a Saturday with two
+        // doctors working, eight OFF rows are pure noise and stretch the column for
+        // nothing. Weekdays keep the OFF list, where it is the useful at-a-glance
+        // record of who is not available.
+        if (am === 'OFF' && pm === 'OFF') { if (!isWkDay) allDay.push({staff:s,locId:'OFF',init:initials[si]}); return; }
         if (am !== 'OFF' && pm !== 'OFF' && am === pm) allDay.push({staff:s,locId:am,init:initials[si]});
         else { if (am !== 'OFF') splitAm.push({staff:s,locId:am,init:initials[si]}); if (pm !== 'OFF') splitPm.push({staff:s,locId:pm,init:initials[si]}); }
       });
@@ -4128,16 +4132,30 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         html += '<div class="daynum">' + slot.day + '</div>';
         if (hol && hol.halfDay === 'closed') { html += '<div class="hol">CLOSED — ' + escapeHtml(hol.name) + '</div></td>'; return; }
 
+        // On a weekend day this cell carries only the doctors actually working. A
+        // Saturday clinic is two or three people, and columns of OFF for everyone
+        // else just makes the day taller without saying anything. Weekdays keep the
+        // full roster, OFF included. The initials array is index-aligned to
+        // filteredStaff, so the pairing is carried through rather than re-derived.
+        const isWkDay = isWeekend(currentYear, currentMonth, slot.day);
+        const cellStaff = filteredStaff
+          .map((s, i) => ({ s: s, init: initials[i] }))
+          .filter(x => {
+            if (!isWkDay) return true;
+            const p = (schedule[dk] || {})[x.s.id];
+            return !!(p && ((p.am && p.am !== 'OFF') || (p.pm && p.pm !== 'OFF')));
+          });
+
         // Initials row
         html += '<div class="irow"><div class="row-spacer"></div>';
-        filteredStaff.forEach((s,i) => { html += '<div class="row-cell">' + escapeHtml(initials[i]) + '</div>'; });
+        cellStaff.forEach(x => { html += '<div class="row-cell">' + escapeHtml(x.init) + '</div>'; });
         html += '</div>';
 
         if (hol && hol.halfDay === 'am') html += '<div class="holam">AM Only</div>';
 
         // AM row — location text vertical for multi-char
         html += '<div class="row"><div class="row-lbl">AM</div>';
-        filteredStaff.forEach(s => {
+        cellStaff.forEach(x => { const s = x.s;
           const a = schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].am;
           if (!a || a === 'OFF') html += '<div class="row-val off">OFF</div>';
           else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
@@ -4146,7 +4164,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
 
         // PM row
         html += '<div class="row pm-border"><div class="row-lbl">PM</div>';
-        filteredStaff.forEach(s => {
+        cellStaff.forEach(x => { const s = x.s;
           const a = (hol && hol.halfDay === 'am') ? null : (schedule[dk] && schedule[dk][s.id] && schedule[dk][s.id].pm);
           if (!a || a === 'OFF') html += '<div class="row-val off">OFF</div>';
           else html += '<div class="row-val">' + vertLoc(LA[a] || '?') + '</div>';
