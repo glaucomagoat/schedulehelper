@@ -420,6 +420,18 @@ function isWeekend(year, month, day) {
   return [0, 6].includes(new Date(year, month, day).getDay());
 }
 
+// A day "has work" if any staff member in the given list has an am or pm
+// assignment for that day that is set and not 'OFF'. Everyone explicitly OFF
+// does NOT count as work. Shared by the on-screen month grid and the PDF builder.
+function scheduleHasWork(ds, staffList) {
+  return staffList.some(function(s) {
+    const e = ds[s.id];
+    if (!e) return false;
+    const am = e.am, pm = e.pm;
+    return (am && am !== 'OFF') || (pm && pm !== 'OFF');
+  });
+}
+
 // Escape user-supplied strings before interpolating into generated HTML (PDF XSS guard)
 function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -3787,10 +3799,14 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     function buildCellHtml(day) {
       const dk = dateKey(currentYear, currentMonth, day);
       const ds = schedule[dk] || {};
-      if (isWeekend(currentYear, currentMonth, day)) return '<td class="wk"><div class="dn">' + day + '</div></td>';
+      const isWkDay = isWeekend(currentYear, currentMonth, day);
+      // Weekend days with no work stay blank; weekend days WITH work fall through and
+      // render like a weekday, but keep the "wk" shading class so they still read as weekend.
+      if (isWkDay && !scheduleHasWork(ds, filteredStaff)) return '<td class="wk"><div class="dn">' + day + '</div></td>';
+      const wkClass = isWkDay ? ' class="wk"' : '';
       const holiday = getHolidayForDate(currentYear, currentMonth, day);
-      if (holiday && holiday.halfDay === 'closed') return '<td><div class="dn">' + day + '</div><div class="hol">' + escapeHtml(holiday.name) + '</div></td>';
-      let c = '<td><div class="dn">' + day + '</div>';
+      if (holiday && holiday.halfDay === 'closed') return '<td' + wkClass + '><div class="dn">' + day + '</div><div class="hol">' + escapeHtml(holiday.name) + '</div></td>';
+      let c = '<td' + wkClass + '><div class="dn">' + day + '</div>';
       if (holiday && holiday.halfDay === 'am') c += '<div class="holam">AM Only — ' + escapeHtml(holiday.name) + '</div>';
       const allDay = [], splitAm = [], splitPm = [];
       filteredStaff.forEach((s,si) => {
@@ -3909,12 +3925,23 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       locLegend.push({ abbr: abbr, name: l.name });
     });
 
-    // Group weekdays by week
+    // Group weekdays by week. Saturday earns a column only when the month actually
+    // has Saturday work — the practice runs the occasional Saturday clinic, and
+    // dropping it here is what previously kept it off this printout entirely.
+    // Sunday is never scheduled, so it stays out.
+    let includeSat = false;
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(currentYear, currentMonth, d).getDay() !== 6) continue;
+      if (scheduleHasWork(schedule[dateKey(currentYear, currentMonth, d)] || {}, filteredStaff)) {
+        includeSat = true; break;
+      }
+    }
     const weekRows = [];
     let cw = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dow = new Date(currentYear, currentMonth, d).getDay();
-      if (dow === 0 || dow === 6) continue;
+      if (dow === 0) continue;
+      if (dow === 6 && !includeSat) continue;
       if (dow === 1 && cw.length > 0) { weekRows.push(cw); cw = []; }
       cw.push({ day: d, dow });
     }
@@ -3970,11 +3997,11 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
     html += '<div><span class="plan">Plan ' + planToUse + (finalPlanForMonth ? ' (Final)' : '') + '</span> <span class="meta">Updated ' + new Date().toLocaleDateString() + '</span></div></div>';
 
     html += '<table><thead><tr>';
-    ['Monday','Tuesday','Wednesday','Thursday','Friday'].forEach(dn => { html += '<th>' + dn + '</th>'; });
+    ['Monday','Tuesday','Wednesday','Thursday','Friday'].concat(includeSat ? ['Saturday'] : []).forEach(dn => { html += '<th>' + dn + '</th>'; });
     html += '</tr></thead><tbody>';
 
     weekRows.forEach(week => {
-      const ws = [null,null,null,null,null];
+      const ws = includeSat ? [null,null,null,null,null,null] : [null,null,null,null,null];
       week.forEach(d => { ws[d.dow - 1] = d; });
       html += '<tr>';
       ws.forEach(slot => {
@@ -4827,10 +4854,32 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   <div style={{fontSize:15,color:'var(--text-dim)',fontWeight:600,textAlign:'center'}}>No schedule has been published for this month yet.</div>
                   <div style={{fontSize:13,color:'var(--text-faint)',textAlign:'center'}}>Check back later or ask your administrator.</div>
                 </div>
-              ) : (
+              ) : (()=>{
+                // Narrow an empty Sunday/Saturday column in the 7-column month view so a populated
+                // weekend (see #1 above) has room to actually show its assignments. Week/mobile view
+                // keeps its plain 5-column layout. Both the header grid and the cells grid below use
+                // this same template string so their columns stay aligned.
+                const useWeekViewForGrid = isMobile || calendarView === 'week';
+                let monthGridTemplate = 'repeat(7,1fr)';
+                if (!useWeekViewForGrid) {
+                  const widthStaffList = staff.filter(s => visibleStaff.has(s.id));
+                  const monthSchedule = schedules[scheduleKey] || {};
+                  let sunHasWork = false, satHasWork = false;
+                  calDays.forEach((day, i) => {
+                    if (day === null) return;
+                    const dow = i % 7;
+                    if (dow !== 0 && dow !== 6) return;
+                    const dsForWidth = monthSchedule[dateKey(currentYear, currentMonth, day)] || {};
+                    if (!scheduleHasWork(dsForWidth, widthStaffList)) return;
+                    if (dow === 0) sunHasWork = true; else satHasWork = true;
+                  });
+                  monthGridTemplate = (sunHasWork ? '1fr' : '0.5fr') + ' repeat(5,1fr) ' + (satHasWork ? '1fr' : '0.5fr');
+                }
+                const weekendAwareGridTemplate = useWeekViewForGrid ? 'repeat(5,1fr)' : monthGridTemplate;
+                return (
               <div style={{borderRadius:14,overflow:'hidden',border:'1px solid var(--border-subtle)',background:'var(--bg-surface)'}}>
                 {/* Day headers */}
-                <div style={{display:'grid',gridTemplateColumns:(isMobile||calendarView==='week')?'repeat(5,1fr)':'repeat(7,1fr)'}}>
+                <div style={{display:'grid',gridTemplateColumns:weekendAwareGridTemplate}}>
                   {((isMobile||calendarView==='week')?DAYS_OF_WEEK.slice(1,6):DAYS_OF_WEEK).map(d=>(
                     <div key={d} style={{padding:isMobile?'8px 2px':'10px 8px',textAlign:'center',fontSize:isMobile?11:12,fontWeight:700,color:'var(--text-secondary)',background:'var(--bg-elevated)',borderBottom:'1px solid var(--border-subtle)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{isMobile?d.slice(0,1):d}</div>
                   ))}
@@ -4852,12 +4901,11 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   }
 
                   const isWeekView = useWeekView;
-                  const cols = isWeekView ? 5 : 7;
 
                   return (
-                    <div style={{display:'grid',gridTemplateColumns:`repeat(${cols},1fr)`}}>
+                    <div style={{display:'grid',gridTemplateColumns:weekendAwareGridTemplate}}>
                       {daysToRender.map((cell,i)=>{
-                        if(cell===null) return <div key={`e-${i}`} style={{minHeight:isWeekView?200:100,background:'var(--cell-weekend)',borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)'}} />;
+                        if(cell===null) return <div key={`e-${i}`} style={{minHeight:isWeekView?200:112,background:'var(--cell-weekend)',borderRight:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)'}} />;
 
                         const {day, month: cellMonth, year: cellYear, isCurrentMonth: isCurMonth} = cell;
                         const dk=dateKey(cellYear,cellMonth,day);
@@ -4869,7 +4917,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         const schedule = schedules[cellScheduleKey] || {};
                         const ds=schedule[dk]||{};
                         const filteredStaffList = staff.filter(s => visibleStaff.has(s.id));
-                        const cellMinH = isMobile ? 130 : (isWeekView ? 200 : 100);
+                        const hasWork = scheduleHasWork(ds, filteredStaffList);
+                        const cellMinH = isMobile ? 130 : (isWeekView ? 200 : 112);
 
                         // Hybrid display logic
                         function getHybridDisplay() {
@@ -4895,7 +4944,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
                         const hybrid = getHybridDisplay();
                         const isWk = isWeekView;
-                        const fs = isMobile ? {loc:12,name:13,dot:7,dayNum:16,wk:10,hol:11,holSub:10,ampm:10} : (isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10} : {loc:10,name:11,dot:6,dayNum:14,wk:9,hol:9,holSub:8,ampm:9});
+                        const fs = isMobile ? {loc:12,name:13,dot:7,dayNum:16,wk:10,hol:11,holSub:10,ampm:10} : (isWk ? {loc:12,name:13,dot:7,dayNum:18,wk:10,hol:11,holSub:10,ampm:10} : {loc:12,name:13,dot:7,dayNum:14,wk:9,hol:9,holSub:8,ampm:10});
 
                         function renderLocBlock(g, gi) {
                           const isOff = g.locId === 'OFF';
@@ -4961,7 +5010,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                               );
                               return null;
                             })()}
-                            {!wkend && (
+                            {(!wkend || hasWork) && (
                               <div>
                                 {hybrid.allDayGroups.map(function(g, gi){return renderLocBlock(g, 'u-'+gi)})}
                                 {hybrid.hasSplit && (
@@ -4988,7 +5037,8 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   );
                 })()}
               </div>
-              )}
+                );
+              })()}
 
 
 
