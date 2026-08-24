@@ -2904,7 +2904,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
                       {(!wknd || anyWork) && (
                         <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
                                            siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,
-                                           viewerTechId}} />
+                                           nameSize:12,viewerTechId}} />
                       )}
                     </td>
                   );
@@ -3635,8 +3635,10 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
   const meOff = !!viewerTechId && off.some(t => t.id === viewerTechId);
   const RING = '0 0 0 2px rgba(79,70,229,0.75)';
   const fz = compact ? 9 : 10;
-  // `nameSize` lets one call site (the week strip) render bigger technician names
-  // without touching the month grid, which is tuned to fit a one-page PDF.
+  // `nameSize` sets the on-screen technician name size; the month grid and the week
+  // strip both pass 12 so they read the same. This is screen-only — the printout is
+  // rasterised from a separate offscreen document built by buildMonthPdfHtml, which
+  // runs its own shrink-to-fit ladder, so nothing here can change the PDF.
   // Badge size and cell padding/min-height scale proportionally with it.
   const nfz = nameSize || fz;
   const scale = nfz / fz;
