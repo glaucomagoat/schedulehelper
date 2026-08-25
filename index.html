@@ -628,6 +628,36 @@ function formatWeekOfMonth(wom) {
 }
 
 // ============================================================
+// BACKUP & TRANSFER — pure helpers (no component state).
+// ============================================================
+// Keys that must never be written into (or restored from) a backup file.
+// reset: tokens are live password-reset links; ratelimit: is throttling
+// bookkeeping; <tenant>:telegramSeenUpdates is webhook dedup state that
+// would suppress real messages if stale values were restored.
+function isBackupExcludedKey(key, tenant) {
+  if (!key) return true;
+  if (key.startsWith('reset:')) return true;
+  if (key.startsWith('ratelimit:')) return true;
+  if (tenant && key === tenant + ':telegramSeenUpdates') return true;
+  return false;
+}
+function parseStoredValue(raw) {
+  try { return JSON.parse(raw); } catch(e) { return { __raw: raw }; }
+}
+function stringifyStoredValue(value) {
+  if (value && typeof value === 'object' && Object.keys(value).length === 1 && typeof value.__raw === 'string') {
+    return value.__raw;
+  }
+  return JSON.stringify(value);
+}
+function formatBackupBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ============================================================
 // DRAGGABLE NOTE — defined outside StaffScheduler so its
 // component identity is stable across parent re-renders.
 // (Defining it inside the render cycle caused React to unmount
@@ -752,6 +782,9 @@ window.ScheduleHelper = function StaffScheduler() {
   const [showManagerModal, setShowManagerModal] = useState(false);
   const [managerForm, setManagerForm] = useState({username:'', password:'', userType:'staff', msg:''});
   const [managerPwForms, setManagerPwForms] = useState({});
+  const backupFileInputRef = useRef(null);
+  const [backupExport, setBackupExport] = useState({ running:false, progress:'', error:'', summary:null, bytes:0 });
+  const [backupImport, setBackupImport] = useState({ stage:'idle', error:'', fileData:null, plan:null, mode:'merge', replaceConfirmText:'', progress:'', result:null });
 
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -1844,6 +1877,259 @@ window.ScheduleHelper = function StaffScheduler() {
       await window.storage.set(`user:${username}`, JSON.stringify(parsed));
       setManagerPwForms(p=>({...p,[username]:{newPassword:'',saving:false,msg:'✅ Password updated.'}}));
     } catch(e) { setManagerPwForms(p=>({...p,[username]:{...form,saving:false,msg:'❌ Failed to update password.'}})); }
+  }
+
+  // ── Backup & Transfer (top-level admin only) ─────────────────────────────
+  // Export: walk every tenant-prefixed key + the portal reverse-lookups +
+  // the managers list, then follow those to every account record. `list()`
+  // never returns other people's `user:` records, so accounts are only
+  // discoverable by username (self, managers list, portal records) and
+  // fetched one at a time with `get`.
+  async function exportBackupData() {
+    const tenant = user.adminUsername || user.username;
+    setBackupExport({ running:true, progress:'Listing tenant data…', error:'', summary:null, bytes:0 });
+    try {
+      const keysOut = {};
+      // A key that fails to read must NEVER just vanish from the backup. Swallowing
+      // the error leaves a file that looks fine, restores cleanly, and is quietly
+      // missing data — the exact failure this feature exists to prevent. Failures are
+      // collected and shown; the file still downloads, but it is labelled incomplete.
+      const failures = [];
+      let tenantKeyCount = 0, accountCount = 0, portalLinkCount = 0;
+
+      const tenantList = await window.storage.list(tenant + ':');
+      const tenantKeys = (tenantList.keys || []).filter(k => !isBackupExcludedKey(k, tenant));
+
+      setBackupExport(p=>({ ...p, progress:'Listing portal links…' }));
+      const staffPortalList = await window.storage.list('staffPortal:');
+      const techPortalList = await window.storage.list('techPortal:');
+      const portalKeys = [...(staffPortalList.keys || []), ...(techPortalList.keys || [])];
+
+      setBackupExport(p=>({ ...p, progress:'Loading manager list…' }));
+      let managersList = [];
+      try {
+        const raw = await window.storage.get('managers:' + tenant);
+        if (raw && raw.value) {
+          const parsed = parseStoredValue(raw.value);
+          keysOut['managers:' + tenant] = parsed;
+          if (Array.isArray(parsed)) managersList = parsed;
+        }
+      } catch(e) {}
+
+      for (const k of tenantKeys) {
+        setBackupExport(p=>({ ...p, progress:'Reading ' + k + '…' }));
+        try {
+          const r = await window.storage.get(k);
+          keysOut[k] = parseStoredValue(r.value);
+          tenantKeyCount++;
+        } catch(e) { failures.push(k + ' — ' + (e.message || String(e))); }
+      }
+
+      const usernames = new Set([user.username]);
+      for (const mu of managersList) { if (mu && mu.username) usernames.add(mu.username); }
+
+      for (const k of portalKeys) {
+        setBackupExport(p=>({ ...p, progress:'Reading ' + k + '…' }));
+        try {
+          const r = await window.storage.get(k);
+          const parsed = parseStoredValue(r.value);
+          keysOut[k] = parsed;
+          portalLinkCount++;
+          if (parsed && parsed.username) usernames.add(parsed.username);
+        } catch(e) { failures.push(k + ' — ' + (e.message || String(e))); }
+      }
+
+      for (const uname of usernames) {
+        setBackupExport(p=>({ ...p, progress:'Reading account "' + uname + '"…' }));
+        try {
+          const r = await window.storage.get('user:' + uname);
+          keysOut['user:' + uname] = parseStoredValue(r.value);
+          accountCount++;
+        } catch(e) { failures.push('user:' + uname + ' — ' + (e.message || String(e))); }
+      }
+
+      const counts = { tenantKeys: tenantKeyCount, accounts: accountCount, portalLinks: portalLinkCount };
+      const payload = {
+        formatVersion: 1,
+        exportedAt: new Date().toISOString(),
+        tenant,
+        counts,
+        keys: keysOut
+      };
+      const json = JSON.stringify(payload, null, 2);
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'schedule-helper-backup-' + tenant + '-' + dateStr + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      addAuditEntry('Exported full backup (' + counts.tenantKeys + ' data keys, ' + counts.accounts + ' accounts, ' + counts.portalLinks + ' portal links)');
+      setBackupExport({ running:false, progress:'', error:'', summary:counts, bytes: json.length, failures: failures });
+    } catch(e) {
+      setBackupExport({ running:false, progress:'', error:'❌ Export failed: ' + (e.message || String(e)), summary:null, bytes:0 });
+    }
+  }
+
+  function resetBackupImport() {
+    setBackupImport({ stage:'idle', error:'', fileData:null, plan:null, mode:'merge', replaceConfirmText:'', progress:'', result:null });
+  }
+
+  // Build a plan (no writes) so the dry-run modal can show accurate new-vs-overwrite
+  // counts, and so executeImport() below can replay the exact same decisions.
+  async function buildImportPlan(fileData) {
+    const currentTenant = user.adminUsername || user.username;
+    const fileTenant = fileData.tenant;
+    const namespaceRewrite = fileTenant !== currentTenant;
+    const fileKeys = fileData.keys || {};
+
+    const tenantListRes = await window.storage.list(currentTenant + ':');
+    const existingTenantKeys = new Set(tenantListRes.keys || []);
+    const staffPortalListRes = await window.storage.list('staffPortal:');
+    const techPortalListRes = await window.storage.list('techPortal:');
+    const existingPortalKeys = new Set([...(staffPortalListRes.keys || []), ...(techPortalListRes.keys || [])]);
+    let managersExists = false;
+    try { await window.storage.get('managers:' + currentTenant); managersExists = true; } catch(e) { managersExists = false; }
+
+    const tenantWrites = [];
+    const userWrites = [];
+    const portalWrites = [];
+    let managersWrite = null;
+
+    for (const key of Object.keys(fileKeys)) {
+      const value = fileKeys[key];
+      if (isBackupExcludedKey(key, fileTenant)) continue;
+
+      if (key.indexOf(fileTenant + ':') === 0) {
+        const suffix = key.slice(fileTenant.length + 1);
+        const targetKey = currentTenant + ':' + suffix;
+        if (isBackupExcludedKey(targetKey, currentTenant)) continue;
+        tenantWrites.push({ sourceKey:key, targetKey, value, isNew: !existingTenantKeys.has(targetKey) });
+        continue;
+      }
+      if (key === 'managers:' + fileTenant) {
+        const targetKey = 'managers:' + currentTenant;
+        managersWrite = { sourceKey:key, targetKey, value, isNew: !managersExists };
+        continue;
+      }
+      if (key.indexOf('user:') === 0) {
+        const username = key.slice('user:'.length);
+        const rec = (value && typeof value === 'object') ? value : null;
+        const isRaw = rec && Object.keys(rec).length === 1 && typeof rec.__raw === 'string';
+        const adminUsername = (rec && !isRaw) ? rec.adminUsername : undefined;
+        let skip = false, skipReason = '';
+        let outValue = value;
+        if (namespaceRewrite && !isRaw && !adminUsername) {
+          skip = true;
+          skipReason = 'source tenant owner account — the destination already has its own owner and imports would create a duplicate/orphaned admin';
+        } else if (namespaceRewrite && !isRaw && adminUsername === fileTenant) {
+          outValue = { ...rec, adminUsername: currentTenant };
+        }
+        let isNew = true;
+        if (!skip) {
+          try { await window.storage.get('user:' + username); isNew = false; }
+          catch(e) { isNew = true; }
+        }
+        userWrites.push({ username, targetKey:'user:' + username, value: outValue, isNew, skip, skipReason });
+        continue;
+      }
+      if (key.indexOf('staffPortal:') === 0 || key.indexOf('techPortal:') === 0) {
+        portalWrites.push({ targetKey:key, value, isNew: !existingPortalKeys.has(key) });
+        continue;
+      }
+      // Unrecognized key shape — ignore rather than guess where it belongs.
+    }
+
+    const targetKeySet = new Set(tenantWrites.map(w => w.targetKey));
+    const deletions = [...existingTenantKeys].filter(k => !targetKeySet.has(k) && !isBackupExcludedKey(k, currentTenant));
+
+    return { currentTenant, fileTenant, namespaceRewrite, tenantWrites, userWrites, portalWrites, managersWrite, deletions };
+  }
+
+  // Reads + validates the file and builds the plan. Deliberately makes no
+  // storage writes — only `list`/`get` calls — so nothing changes until the
+  // user reviews the dry-run modal and confirms.
+  async function handleBackupFileSelected(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setBackupImport({ stage:'analyzing', error:'', fileData:null, plan:null, mode:'merge', replaceConfirmText:'', progress:'Reading file…', result:null });
+    try {
+      const text = await file.text();
+      let data;
+      try { data = JSON.parse(text); } catch(parseErr) { throw new Error('That file is not valid JSON.'); }
+      if (data.formatVersion !== 1) {
+        const got = (data.formatVersion === undefined) ? 'missing' : JSON.stringify(data.formatVersion);
+        throw new Error('Unsupported backup file — expected formatVersion 1, got ' + got + '.');
+      }
+      if (!data.tenant || !data.keys || typeof data.keys !== 'object') {
+        throw new Error('This file is missing required fields (tenant/keys) and cannot be imported.');
+      }
+      setBackupImport(p=>({ ...p, progress:'Comparing against current data…' }));
+      const plan = await buildImportPlan(data);
+      setBackupImport(p=>({ ...p, stage:'preview', fileData:data, plan, progress:'' }));
+    } catch(err) {
+      alert('❌ Import failed: ' + (err.message || String(err)));
+      resetBackupImport();
+    }
+  }
+
+  async function executeImport() {
+    const plan = backupImport.plan;
+    const mode = backupImport.mode;
+    if (!plan) return;
+    const written = [], skipped = [], failed = [];
+    setBackupImport(p=>({ ...p, stage:'writing', progress:'Starting import…' }));
+
+    if (mode === 'replace') {
+      for (const k of plan.deletions) {
+        setBackupImport(p=>({ ...p, progress:'Deleting ' + k + '…' }));
+        try { await window.storage.delete(k); written.push({ key:k, action:'deleted' }); }
+        catch(e) { failed.push({ key:k, action:'delete', error: e.message || String(e) }); }
+      }
+    }
+
+    for (const w of plan.tenantWrites) {
+      setBackupImport(p=>({ ...p, progress:'Writing ' + w.targetKey + '…' }));
+      try {
+        await window.storage.set(w.targetKey, stringifyStoredValue(w.value));
+        written.push({ key:w.targetKey, action: w.isNew ? 'created' : 'overwritten' });
+      } catch(e) { failed.push({ key:w.targetKey, action:'set', error: e.message || String(e) }); }
+    }
+
+    for (const w of plan.userWrites) {
+      if (w.skip) { skipped.push({ key:w.targetKey, reason:w.skipReason }); continue; }
+      setBackupImport(p=>({ ...p, progress:'Writing ' + w.targetKey + '…' }));
+      try {
+        await window.storage.set(w.targetKey, stringifyStoredValue(w.value));
+        written.push({ key:w.targetKey, action: w.isNew ? 'created' : 'overwritten' });
+      } catch(e) { failed.push({ key:w.targetKey, action:'set', error: e.message || String(e) }); }
+    }
+
+    for (const w of plan.portalWrites) {
+      setBackupImport(p=>({ ...p, progress:'Writing ' + w.targetKey + '…' }));
+      try {
+        await window.storage.set(w.targetKey, stringifyStoredValue(w.value));
+        written.push({ key:w.targetKey, action: w.isNew ? 'created' : 'overwritten' });
+      } catch(e) { failed.push({ key:w.targetKey, action:'set', error: e.message || String(e) }); }
+    }
+
+    if (plan.managersWrite) {
+      const w = plan.managersWrite;
+      setBackupImport(p=>({ ...p, progress:'Writing ' + w.targetKey + '…' }));
+      try {
+        await window.storage.set(w.targetKey, stringifyStoredValue(w.value));
+        written.push({ key:w.targetKey, action: w.isNew ? 'created' : 'overwritten' });
+      } catch(e) { failed.push({ key:w.targetKey, action:'set', error: e.message || String(e) }); }
+    }
+
+    addAuditEntry('Imported backup from tenant "' + plan.fileTenant + '" (' + mode + ' mode): ' + written.length + ' written, ' + skipped.length + ' skipped, ' + failed.length + ' failed');
+    setBackupImport(p=>({ ...p, stage:'result', progress:'', result:{ written, skipped, failed } }));
   }
 
 
@@ -5769,6 +6055,48 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   })}
                 </div>
               )}
+
+              <div style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:'20px 24px',marginTop:32}}>
+                <h3 style={{margin:'0 0 12px',fontSize:17,fontWeight:700,color:'var(--text-primary)'}}>💾 Backup & Transfer</h3>
+                <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:'1px solid '+(theme==='light'?'#f59e0b':'#f59e0b55'),borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13,color:theme==='light'?'#92400e':'#f59e0b',display:'flex',gap:8,alignItems:'flex-start'}}>
+                  <span style={{flexShrink:0}}>⚠️</span>
+                  <span>The exported file contains <b>password hashes and staff time-off notes</b> for every account. Store it like a password database — don't email it or leave it in a shared folder.</span>
+                </div>
+                <p style={{color:'var(--text-muted)',fontSize:13,marginTop:0,marginBottom:16,lineHeight:1.5}}>
+                  Export every account and data record for this practice into a single JSON file, or restore/transfer from a previous export.
+                </p>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+                  <Btn onClick={exportBackupData} disabled={backupExport.running}>
+                    {backupExport.running ? 'Exporting…' : '⬇ Export all data'}
+                  </Btn>
+                  <Btn variant="secondary" disabled={backupImport.stage==='analyzing'}
+                    onClick={()=>backupFileInputRef.current && backupFileInputRef.current.click()}>
+                    {backupImport.stage==='analyzing' ? 'Reading…' : '⬆ Import from file'}
+                  </Btn>
+                  <input type="file" accept="application/json,.json" ref={backupFileInputRef} onChange={handleBackupFileSelected} style={{display:'none'}} />
+                </div>
+                {backupExport.running && (
+                  <div style={{marginTop:12,fontSize:13,color:'var(--text-muted)'}}>⏳ {backupExport.progress}</div>
+                )}
+                {backupExport.error && (
+                  <div style={{marginTop:12,fontSize:13,color:'#ef4444'}}>{backupExport.error}</div>
+                )}
+                {!backupExport.running && backupExport.summary && (
+                  <div style={{marginTop:12,fontSize:13,color:(backupExport.failures && backupExport.failures.length) ? '#f59e0b' : '#10b981'}}>
+                    {(backupExport.failures && backupExport.failures.length) ? '⚠️ Exported ' : '✅ Exported '}
+                    {backupExport.summary.tenantKeys} data keys, {backupExport.summary.accounts} accounts, {backupExport.summary.portalLinks} portal links ({formatBackupBytes(backupExport.bytes)}).
+                  </div>
+                )}
+                {!backupExport.running && backupExport.failures && backupExport.failures.length > 0 && (
+                  <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:'rgba(245,158,11,0.10)',border:'1px solid rgba(245,158,11,0.35)',fontSize:12.5,color:'var(--text-primary)'}}>
+                    <b>This backup is incomplete — {backupExport.failures.length} {backupExport.failures.length === 1 ? 'key' : 'keys'} could not be read.</b>
+                    <div style={{marginTop:4,color:'var(--text-secondary)'}}>Do not rely on this file for a transfer. Retry the export; if it keeps failing, note which keys below.</div>
+                    <ul style={{margin:'6px 0 0 18px',padding:0}}>
+                      {backupExport.failures.map((f, i) => (<li key={i} style={{marginBottom:2}}>{f}</li>))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -6207,6 +6535,130 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           <Btn onClick={createManagedUser}>Create User</Btn>
         </div>
       </Modal>
+
+      {backupImport.stage === 'preview' && backupImport.plan && (() => {
+        const plan = backupImport.plan;
+        const tenantNew = plan.tenantWrites.filter(w=>w.isNew).length;
+        const tenantOverwrite = plan.tenantWrites.length - tenantNew;
+        const acctWrites = plan.userWrites.filter(w=>!w.skip);
+        const acctNew = acctWrites.filter(w=>w.isNew).length;
+        const acctOverwrite = acctWrites.length - acctNew;
+        const skippedAccounts = plan.userWrites.filter(w=>w.skip);
+        const portalNew = plan.portalWrites.filter(w=>w.isNew).length;
+        const portalOverwrite = plan.portalWrites.length - portalNew;
+        const replaceReady = backupImport.mode === 'merge' || (backupImport.mode === 'replace' && backupImport.replaceConfirmText.trim() === plan.currentTenant);
+        return (
+          <Modal open={true} onClose={resetBackupImport} title="Import Backup — Review" wide>
+            <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>
+              <div>File tenant: <b style={{color:'var(--text-primary)'}}>{backupImport.fileData.tenant}</b></div>
+              <div>Exported: <b style={{color:'var(--text-primary)'}}>{new Date(backupImport.fileData.exportedAt).toLocaleString()}</b></div>
+            </div>
+
+            {plan.namespaceRewrite && (
+              <div style={{background:theme==='light'?'#fef3c7':'#78350f33',border:'1px solid '+(theme==='light'?'#f59e0b':'#f59e0b55'),borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13,color:theme==='light'?'#92400e':'#f59e0b'}}>
+                <div style={{fontWeight:700,marginBottom:4}}>⚠️ This file is from a different tenant ("{plan.fileTenant}")</div>
+                <div>All keys will be rewritten from "{plan.fileTenant}:" to "{plan.currentTenant}:" (and the managers list along with it). Accounts pointing at "{plan.fileTenant}" will be re-homed to "{plan.currentTenant}".</div>
+              </div>
+            )}
+
+            <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'12px 14px',marginBottom:16,fontSize:13}}>
+              <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0'}}>
+                <span style={{color:'var(--text-secondary)'}}>Tenant data keys</span>
+                <span><b style={{color:'#10b981'}}>{tenantNew} new</b> · <b style={{color:'#f59e0b'}}>{tenantOverwrite} overwrite</b></span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0'}}>
+                <span style={{color:'var(--text-secondary)'}}>Accounts</span>
+                <span><b style={{color:'#10b981'}}>{acctNew} new</b> · <b style={{color:'#f59e0b'}}>{acctOverwrite} overwrite</b></span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0'}}>
+                <span style={{color:'var(--text-secondary)'}}>Portal links</span>
+                <span><b style={{color:'#10b981'}}>{portalNew} new</b> · <b style={{color:'#f59e0b'}}>{portalOverwrite} overwrite</b></span>
+              </div>
+            </div>
+
+            {skippedAccounts.length > 0 && (
+              <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>
+                {skippedAccounts.map(s => (
+                  <div key={s.targetKey} style={{marginBottom:2}}>⏭ "{s.targetKey}" will be skipped — {s.skipReason}.</div>
+                ))}
+              </div>
+            )}
+
+            <div style={{marginBottom:16}}>
+              <label style={{display:'block',fontSize:13,color:'var(--text-secondary)',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Mode</label>
+              <div style={{display:'flex',gap:8}}>
+                {[{v:'merge',l:'Merge',desc:'Overwrite matching keys, leave everything else untouched'},{v:'replace',l:'Replace',desc:'Also delete tenant keys not present in this file'}].map(opt=>(
+                  <div key={opt.v} onClick={()=>setBackupImport(p=>({...p,mode:opt.v,replaceConfirmText:''}))} className="hov-tile"
+                    style={{flex:1,padding:'10px 12px',borderRadius:8,cursor:'pointer',border:'2px solid '+(backupImport.mode===opt.v?'#6366f1':'var(--border-default)'),background:backupImport.mode===opt.v?(theme==='light'?'#e0e0ff':'#1e1e3f'):'var(--bg-surface)',transition:'all 0.15s'}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{opt.l}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{opt.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {backupImport.mode === 'replace' && (
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,color:'#ef4444',marginBottom:8}}>
+                  ⚠️ {plan.deletions.length} existing tenant key{plan.deletions.length===1?'':'s'} not present in this file will be permanently deleted.
+                </div>
+                <Input label={'Type "'+plan.currentTenant+'" to confirm Replace'} value={backupImport.replaceConfirmText}
+                  onChange={v=>setBackupImport(p=>({...p,replaceConfirmText:v}))} placeholder={plan.currentTenant} />
+              </div>
+            )}
+
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
+              <Btn variant="ghost" onClick={resetBackupImport}>Cancel</Btn>
+              <Btn variant={backupImport.mode==='replace'?'danger':'primary'} disabled={!replaceReady} onClick={executeImport}>
+                {backupImport.mode==='replace' ? 'Replace & Import' : 'Import (Merge)'}
+              </Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {backupImport.stage === 'writing' && (
+        <Modal open={true} onClose={()=>{}} title="Importing…">
+          <div style={{fontSize:14,color:'var(--text-secondary)',padding:'12px 0'}}>⏳ {backupImport.progress}</div>
+        </Modal>
+      )}
+
+      {backupImport.stage === 'result' && backupImport.result && (
+        <Modal open={true} onClose={resetBackupImport} title="Import Complete">
+          <div style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14}}>
+            <div style={{color:'#10b981',fontWeight:700}}>✅ {backupImport.result.written.length} key{backupImport.result.written.length===1?'':'s'} written</div>
+            {backupImport.result.skipped.length > 0 && <div style={{color:'#f59e0b',fontWeight:700,marginTop:6}}>⏭ {backupImport.result.skipped.length} skipped</div>}
+            {backupImport.result.failed.length > 0 && <div style={{color:'#ef4444',fontWeight:700,marginTop:6}}>❌ {backupImport.result.failed.length} failed</div>}
+          </div>
+
+          {backupImport.result.skipped.length > 0 && (
+            <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'10px 14px',marginBottom:14,maxHeight:160,overflowY:'auto',fontSize:12}}>
+              {backupImport.result.skipped.map((s,i) => (
+                <div key={i} style={{marginBottom:4,color:'var(--text-muted)'}}>"{s.key}" — {s.reason}</div>
+              ))}
+            </div>
+          )}
+
+          {backupImport.result.failed.length > 0 && (
+            <div style={{background:theme==='light'?'#fee2e2':'#2d1515',border:'1px solid '+(theme==='light'?'#fca5a5':'#7f1d1d'),borderRadius:8,padding:'10px 14px',marginBottom:14,maxHeight:160,overflowY:'auto',fontSize:12}}>
+              {backupImport.result.failed.map((f,i) => (
+                <div key={i} style={{marginBottom:4,color:'#ef4444'}}>"{f.key}" ({f.action}) — {f.error}</div>
+              ))}
+            </div>
+          )}
+
+          <div style={{background:'var(--bg-surface)',border:'1px solid var(--border-subtle)',borderRadius:8,padding:'10px 14px',marginBottom:14,maxHeight:160,overflowY:'auto',fontSize:12}}>
+            {backupImport.result.written.map((w,i) => (
+              <div key={i} style={{marginBottom:2,color:'var(--text-dim)'}}>{w.action} — {w.key}</div>
+            ))}
+          </div>
+
+          <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}>
+            <Btn variant="ghost" onClick={resetBackupImport}>Close</Btn>
+            <Btn onClick={()=>window.location.reload()}>Reload Page</Btn>
+          </div>
+        </Modal>
+      )}
 
       {pendingFinalAction && (
         <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}

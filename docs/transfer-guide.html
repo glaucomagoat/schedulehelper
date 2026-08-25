@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<!--
+  Source for "Schedule Helper — Transfer & Import Guide" (PDF).
+  Edit this file, then regenerate the PDF with headless Chrome:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --no-pdf-header-footer \
+      --print-to-pdf="Schedule Helper — Transfer & Import Guide.pdf" \
+      "file://$PWD/docs/transfer-guide.html"
+
+  Output is 6 pages, Letter portrait, with selectable text (not rasterised).
+  The companion technical document is HANDOVER.md in the repository root.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Schedule Helper — Transfer &amp; Import Guide</title>
+<style>
+  @page { size: letter portrait; margin: 16mm 15mm 14mm; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  /* Explicit background: without it a viewer in forced-dark renders dark-on-dark
+     when the HTML is opened directly. The PDF is unaffected either way. */
+  html, body { background:#ffffff; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color:#1a1a24; font-size:10.5pt; line-height:1.55;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @media (prefers-color-scheme: dark) {
+    html, body { background:#ffffff; color:#1a1a24; }
+  }
+  h1 { font-size:23pt; font-weight:800; letter-spacing:-0.4pt; color:#1a1a2e; }
+  h2 { font-size:14pt; font-weight:800; color:#3730a3; margin:0 0 8pt;
+       padding-bottom:4pt; border-bottom:1.5pt solid #c7d2fe; }
+  h3 { font-size:11pt; font-weight:700; color:#1a1a2e; margin:12pt 0 4pt; }
+  p  { margin:0 0 7pt; }
+  ul, ol { margin:0 0 8pt 16pt; }
+  li { margin-bottom:3.5pt; }
+  code { font-family:"SF Mono", Menlo, Consolas, monospace; font-size:9pt;
+         background:#eef0f7; padding:1pt 4pt; border-radius:3px; color:#3730a3; }
+  pre  { font-family:"SF Mono", Menlo, Consolas, monospace; font-size:8.5pt;
+         background:#f6f7fb; border:0.7pt solid #dcdfeb; border-left:3pt solid #6366f1;
+         border-radius:4px; padding:8pt 10pt; margin:0 0 9pt; white-space:pre-wrap;
+         word-break:break-all; line-height:1.45; }
+
+  .cover { text-align:center; padding-top:52mm; page-break-after:always; }
+  .cover .sub { font-size:12.5pt; color:#555; margin-top:8pt; }
+  .cover .meta { margin-top:34mm; font-size:9.5pt; color:#777; }
+  .rule { width:56pt; height:3.5pt; background:#6366f1; margin:14pt auto 0; border-radius:2pt; }
+
+  section { page-break-inside:avoid; margin-bottom:16pt; }
+  .step { page-break-inside:avoid; margin-bottom:14pt; }
+  .step-h { display:flex; align-items:baseline; gap:8pt; margin-bottom:5pt; }
+  .num { display:inline-block; min-width:20pt; height:20pt; line-height:20pt;
+         background:#4f46e5; color:#fff; font-weight:800; font-size:10pt;
+         text-align:center; border-radius:50%; flex-shrink:0; }
+  .step-t { font-size:12pt; font-weight:800; color:#1a1a2e; }
+
+  table { width:100%; border-collapse:collapse; margin:0 0 9pt; font-size:9pt; }
+  th { background:#3730a3; color:#fff; text-align:left; padding:5pt 7pt; font-weight:700; }
+  td { border-bottom:0.6pt solid #e2e5ef; padding:5pt 7pt; vertical-align:top; }
+  tr:nth-child(even) td { background:#fafbfe; }
+
+  .note, .warn, .ok {
+    border-radius:5px; padding:8pt 11pt; margin:0 0 9pt; font-size:9.5pt;
+    page-break-inside:avoid;
+  }
+  .note { background:#eef2ff; border-left:3pt solid #6366f1; }
+  .warn { background:#fff4ed; border-left:3pt solid #ea7317; }
+  .ok   { background:#edfaf1; border-left:3pt solid #16a34a; }
+  .note b, .warn b, .ok b { display:block; margin-bottom:2pt; }
+
+  .check { list-style:none; margin-left:0; }
+  .check li { padding-left:19pt; position:relative; margin-bottom:5pt; }
+  .check li:before { content:"☐"; position:absolute; left:0; font-size:12pt; color:#4f46e5; }
+
+  footer { margin-top:18pt; padding-top:7pt; border-top:0.6pt solid #dcdfeb;
+           font-size:8pt; color:#888; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Schedule Helper</h1>
+  <div class="sub">Transfer &amp; Import Guide</div>
+  <div class="rule"></div>
+  <div class="meta">
+    For the incoming owner &middot; Doctor and Technician scheduling<br>
+    Follow these steps in order.
+  </div>
+</div>
+
+<section>
+  <h2>What you have been given</h2>
+  <p>Three things arrive with this handover. You need all three.</p>
+  <table>
+    <tr><th style="width:31%">Item</th><th>What it is</th></tr>
+    <tr><td><b>A backup file</b><br><code>schedule-helper-backup-….json</code></td>
+        <td>Every schedule, rule, setting, and user account from the old site — including
+            passwords, so staff keep the logins they already have.</td></tr>
+    <tr><td><b>The code</b></td>
+        <td>A Git repository you deploy to your own Netlify account.</td></tr>
+    <tr><td><b>A list of settings</b></td>
+        <td>Roughly ten environment variables. The site will not run without them.</td></tr>
+  </table>
+  <div class="warn">
+    <b>Treat the backup file like a password database.</b>
+    It contains password hashes for every account and staff time-off notes that may
+    include personal or medical detail. Do not email it, post it in chat, or leave it in
+    a shared folder. Transfer it the way you would transfer a password, and delete your
+    copy once the migration is verified.
+  </div>
+</section>
+
+<section>
+  <h2>Before you start</h2>
+  <ul class="check">
+    <li>A Netlify account (the free tier is sufficient)</li>
+    <li>Access to the Git repository</li>
+    <li>An Anthropic API key, if you want AI schedule generation — this is your own billing</li>
+    <li>A decision about the Telegram bot (see Step&nbsp;5 — decide this <i>before</i> you begin)</li>
+    <li>About an hour, plus time for staff to re-link Telegram if you change bots</li>
+  </ul>
+</section>
+
+<div class="step">
+  <div class="step-h"><span class="num">1</span><span class="step-t">Deploy the site</span></div>
+  <p>Create a new site in Netlify from the repository. Build settings are already in
+     <code>netlify.toml</code> — you should not need to change them.</p>
+  <p>When the first deploy finishes, open the site. You will see a login page. You cannot
+     log in yet; that is expected.</p>
+</div>
+
+<div class="step">
+  <div class="step-h"><span class="num">2</span><span class="step-t">Add the settings</span></div>
+  <p>In Netlify, go to <b>Site configuration → Environment variables</b> and add each of
+     these. Mark the ones noted as secret.</p>
+  <table>
+    <tr><th style="width:34%">Name</th><th>What it does</th><th style="width:15%">Secret</th></tr>
+    <tr><td><code>SESSION_SECRET</code></td><td>Keeps people logged in. Use a long random value</td><td>Yes</td></tr>
+    <tr><td><code>LINK_SECRET</code></td><td>Signs the schedule links inside notifications</td><td>Yes</td></tr>
+    <tr><td><code>INTERNAL_SECRET</code></td><td>Lets the scheduler talk to itself</td><td>Yes</td></tr>
+    <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>Your Telegram bot</td><td>Yes</td></tr>
+    <tr><td><code>TELEGRAM_BOT_USERNAME</code></td><td>The bot's @name</td><td>No</td></tr>
+    <tr><td><code>TELEGRAM_WEBHOOK_SECRET</code></td><td>Verifies messages really come from Telegram</td><td>Yes</td></tr>
+    <tr><td><code>PUBLIC_BASE_URL</code></td><td>Your site address, no trailing slash</td><td>No</td></tr>
+    <tr><td><code>TECH_ADMIN_USERNAME</code></td><td>The main admin username — see the box below</td><td>No</td></tr>
+    <tr><td><code>ANTHROPIC_API_KEY</code></td><td>AI schedule generation</td><td>Yes</td></tr>
+    <tr><td><code>CVE_USER</code> / <code>CVE_PASS</code></td><td>Creates your first admin login</td><td>Yes</td></tr>
+  </table>
+  <div class="note">
+    <b>Use the same admin username as the old site.</b>
+    Ask the previous owner what it was — it is almost certainly <code>cve</code>. Set both
+    <code>CVE_USER</code> and <code>TECH_ADMIN_USERNAME</code> to that exact name. All the
+    data is filed under it, and matching it makes the import effortless. If you choose a
+    different name the import still works, but it has to rewrite everything as it goes.
+  </div>
+  <p>Trigger a fresh deploy so the new settings take effect.</p>
+</div>
+
+<div class="step">
+  <div class="step-h"><span class="num">3</span><span class="step-t">Sign in</span></div>
+  <p>Open the site and log in with the <code>CVE_USER</code> and <code>CVE_PASS</code> you
+     just set. You will land in an empty scheduler — no doctors, no locations, no
+     schedules. That is correct. The data arrives in the next step.</p>
+</div>
+
+<div class="step">
+  <div class="step-h"><span class="num">4</span><span class="step-t">Import the data</span></div>
+  <p>Go to the <b>Managers</b> tab, find the <b>Backup &amp; Transfer</b> card, and choose
+     <b>Import from file</b>. Select the backup file.</p>
+  <p><b>Nothing is written yet.</b> A summary appears first, showing exactly what will
+     change — how many schedules, accounts, and logins, and which are new versus
+     overwritten. Read it before continuing.</p>
+  <h3>Choose a mode</h3>
+  <ul>
+    <li><b>Merge</b> — adds and overwrites, leaves anything else alone. Use this. On a
+        fresh site the result is identical to Replace.</li>
+    <li><b>Replace</b> — deletes existing data first. Only for a deliberate do-over, and
+        it makes you type the admin name to confirm.</li>
+  </ul>
+  <p>Confirm, wait for the report, then reload the page when prompted. Your schedules,
+     doctors, technicians, locations, and rules should all be present.</p>
+  <div class="ok">
+    <b>Everyone keeps their existing password.</b>
+    Passwords travel in the backup as secure hashes, so staff sign in exactly as before.
+    You do not need to reset anything or tell anyone a new password.
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-h"><span class="num">5</span><span class="step-t">Reconnect Telegram</span></div>
+  <p>This is the only part that cannot be copied cleanly, so decide deliberately.</p>
+  <table>
+    <tr><th style="width:34%">Option</th><th>What happens</th></tr>
+    <tr><td><b>Keep the same bot</b><br>(reuse the old token)</td>
+        <td>Notifications keep working immediately. Nobody re-links. But the previous
+            owner still owns the bot and could revoke access.</td></tr>
+    <tr><td><b>Create your own bot</b><br>(new token from BotFather)</td>
+        <td>A clean break — but every doctor, technician, and administrator must tap a
+            new invite link before they receive anything. Notifications are dark until
+            they do.</td></tr>
+  </table>
+  <p>Either way, tell Telegram where your site now lives. Replace the two bracketed
+     values and open this address once in a browser:</p>
+  <pre>https://api.telegram.org/bot&lt;YOUR_BOT_TOKEN&gt;/setWebhook?url=&lt;YOUR_SITE_URL&gt;/.netlify/functions/telegram-webhook&amp;secret_token=&lt;YOUR_WEBHOOK_SECRET&gt;</pre>
+  <p>A response containing <code>"ok":true</code> means it worked.</p>
+  <div class="warn">
+    <b>If you created a new bot, plan for a re-link day.</b>
+    Each person opens their own invite link from the Notifications tab once. Until they
+    do, that person receives nothing — and the system cannot tell you they missed it any
+    more clearly than showing them as unlinked. Send the invites in one batch and chase
+    the stragglers.
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-h"><span class="num">6</span><span class="step-t">Verify before you rely on it</span></div>
+  <p>Work through every line. The failures that matter are the quiet ones.</p>
+  <ul class="check">
+    <li>Both the doctor page and the technician page load</li>
+    <li>You can sign in as the admin</li>
+    <li><b>A doctor portal user signs in with their existing password</b></li>
+    <li><b>A technician portal user signs in with their existing password</b></li>
+    <li>Past months show their schedules on both sides</li>
+    <li>The technician month shows published plans</li>
+    <li>Export from the new site and compare it to the file you imported</li>
+    <li>Send yourself a test notification from the Notifications tab</li>
+    <li>Send <code>/today</code> to the bot and confirm it replies</li>
+    <li>Generate a schedule to confirm the AI key works</li>
+  </ul>
+  <div class="note">
+    <b>The account checks are the important ones.</b>
+    Schedules are easy to see at a glance; a missing login is not. Test a real portal
+    account of each kind rather than assuming they came across.
+  </div>
+</div>
+
+<section>
+  <h2>If something looks wrong</h2>
+  <table>
+    <tr><th style="width:38%">Symptom</th><th>Cause and fix</th></tr>
+    <tr><td>Login page returns a server error</td>
+        <td><code>SESSION_SECRET</code> is missing. Add it and redeploy.</td></tr>
+    <tr><td>Schedules imported but nobody can log in</td>
+        <td>The admin username does not match the old site's. Re-check
+            <code>CVE_USER</code> and <code>TECH_ADMIN_USERNAME</code>, then import again.</td></tr>
+    <tr><td>Site is empty after importing</td>
+        <td>The import report will say what was skipped. Reload the page first — the app
+            caches data until it reloads.</td></tr>
+    <tr><td>Bot does not answer</td>
+        <td>The webhook still points at the old site. Re-run the Step&nbsp;5 address.</td></tr>
+    <tr><td>Nobody receives notifications</td>
+        <td>If you changed bots, everyone must re-link. Check the Notifications tab for
+            who is still unlinked.</td></tr>
+    <tr><td>Links in messages give a 403</td>
+        <td><code>LINK_SECRET</code> differs from the old site. Either restore the old
+            value or send a fresh notification, which generates new links.</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Keep taking backups</h2>
+  <p>The same <b>Export all data</b> button is your ongoing backup. There is no other
+     recovery path — the data lives only in this site's storage. Export on a schedule
+     you are comfortable with, and always before a bulk change such as clearing or
+     regenerating a plan.</p>
+  <p>A backup you have never restored is a guess. Once a year, import one into a throwaway
+     site and confirm it comes back.</p>
+</section>
+
+<footer>
+  Schedule Helper — Transfer &amp; Import Guide.
+  A companion file, <b>HANDOVER.md</b>, ships in the repository with the technical detail
+  for a developer or an AI coding assistant.
+</footer>
+
+</body>
+</html>
