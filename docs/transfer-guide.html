@@ -93,6 +93,12 @@
 <section>
   <h2>What you have been given</h2>
   <p>Three things arrive with this handover. You need all three.</p>
+  <div class="note">
+    <b>This is one website with two halves, sharing a single set of data.</b>
+    The main address is the <b>doctor scheduler</b>. Adding <code>/techs.html</code> opens
+    the <b>technician scheduler</b>. One backup file covers both — you import once, on the
+    doctor side, and both halves come back together.
+  </div>
   <table>
     <tr><th style="width:31%">Item</th><th>What it is</th></tr>
     <tr><td><b>A backup file</b><br><code>schedule-helper-backup-….json</code></td>
@@ -148,12 +154,15 @@
     <tr><td><code>ANTHROPIC_API_KEY</code></td><td>AI schedule generation</td><td>Yes</td></tr>
     <tr><td><code>CVE_USER</code> / <code>CVE_PASS</code></td><td>Creates your first admin login</td><td>Yes</td></tr>
   </table>
-  <div class="note">
-    <b>Use the same admin username as the old site.</b>
-    Ask the previous owner what it was — it is almost certainly <code>cve</code>. Set both
-    <code>CVE_USER</code> and <code>TECH_ADMIN_USERNAME</code> to that exact name. All the
-    data is filed under it, and matching it makes the import effortless. If you choose a
-    different name the import still works, but it has to rewrite everything as it goes.
+  <div class="warn">
+    <b>Set CVE_USER and TECH_ADMIN_USERNAME to the same name — the old site's admin
+    username, almost certainly <code>cve</code>.</b>
+    Ignore the word "TECH" in that second name; it is misleading. It controls the
+    doctor schedule as much as the technician one. If the two names differ, the site
+    will look completely normal while every Telegram notification is built from the
+    wrong place — staff receive assignments that do not match the board, or nothing at
+    all, and nothing on screen indicates a problem. This is the single easiest way to
+    break the handover.
   </div>
   <p>Trigger a fresh deploy so the new settings take effect.</p>
 </div>
@@ -201,6 +210,10 @@
             new invite link before they receive anything. Notifications are dark until
             they do.</td></tr>
   </table>
+  <p><b>Doctors and technicians link separately.</b> Doctors use the Notifications tab on
+     the doctor site; technicians and administrators use the Notifications tab on the
+     technician site. Each tab lists who is still unlinked — work both lists, or one
+     group is left out.</p>
   <p>Either way, tell Telegram where your site now lives. Replace the two bracketed
      values and open this address once in a browser:</p>
   <pre>https://api.telegram.org/bot&lt;YOUR_BOT_TOKEN&gt;/setWebhook?url=&lt;YOUR_SITE_URL&gt;/.netlify/functions/telegram-webhook&amp;secret_token=&lt;YOUR_WEBHOOK_SECRET&gt;</pre>
@@ -217,17 +230,29 @@
 <div class="step">
   <div class="step-h"><span class="num">6</span><span class="step-t">Verify before you rely on it</span></div>
   <p>Work through every line. The failures that matter are the quiet ones.</p>
+  <p><b>Doctor side</b> — the main address, <code>/</code></p>
   <ul class="check">
-    <li>Both the doctor page and the technician page load</li>
     <li>You can sign in as the admin</li>
+    <li>Past months show doctor assignments, and Plans A/B/C are all present</li>
+    <li>A month you had marked <b>Final</b> still shows as Final</li>
+    <li>Doctors, Locations, Rules, Vacation, Medical Leave and Holidays are populated</li>
     <li><b>A doctor portal user signs in with their existing password</b></li>
+    <li>Export a month PDF — try both Classic and New Style</li>
+    <li>The Notifications tab lists every doctor and shows who is linked to Telegram</li>
+  </ul>
+  <p><b>Technician side</b> — <code>/techs.html</code></p>
+  <ul class="check">
+    <li>Technicians, Sites, Staffing Targets and Rules are populated</li>
+    <li>The month view shows published plans</li>
     <li><b>A technician portal user signs in with their existing password</b></li>
-    <li>Past months show their schedules on both sides</li>
-    <li>The technician month shows published plans</li>
+    <li>Export the month PDF</li>
+  </ul>
+  <p><b>Both</b></p>
+  <ul class="check">
+    <li>Send <code>/today</code> to the bot and confirm the reply matches the board</li>
+    <li>Send yourself a test notification from each Notifications tab</li>
+    <li>Generate a schedule on each side to confirm the AI key works</li>
     <li>Export from the new site and compare it to the file you imported</li>
-    <li>Send yourself a test notification from the Notifications tab</li>
-    <li>Send <code>/today</code> to the bot and confirm it replies</li>
-    <li>Generate a schedule to confirm the AI key works</li>
   </ul>
   <div class="note">
     <b>The account checks are the important ones.</b>

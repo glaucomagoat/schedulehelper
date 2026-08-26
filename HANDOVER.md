@@ -88,7 +88,7 @@ new site gives you an **empty** store. Forking the repo transfers zero data.
 | `TELEGRAM_BOT_USERNAME` | Embedded in invite deep links | Must match the token's bot |
 | `TELEGRAM_WEBHOOK_SECRET` | Validates inbound Telegram requests | Generate fresh, then re-register the webhook |
 | `PUBLIC_BASE_URL` | Base for every generated link | The new domain, no trailing slash |
-| `TECH_ADMIN_USERNAME` | **Defines the data namespace** | See §5 — must match the imported data |
+| `TECH_ADMIN_USERNAME` | **Defines the data namespace for BOTH apps**, despite the name | Must equal `CVE_USER` and the imported data — see §5 |
 | `ANTHROPIC_API_KEY` | AI schedule generation (edge function) | The new owner's own key and billing |
 | `CVE_USER`, `CVE_PASS` | Seed the owner admin account | How you log in before importing |
 
@@ -224,6 +224,22 @@ All keys below are prefixed `<tenant>:` unless stated otherwise.
 ---
 
 ## 9. Landmines
+
+**`TECH_ADMIN_USERNAME` is not technician-specific.** The name is wrong. It sets the
+namespace the *server-side* notification code reads for **both** halves of the app —
+`loadContext()` in `_lib/techdata.mjs` pulls `<ns>:staff`, `<ns>:schedules`,
+`<ns>:finalPlans` (all doctor data) off it, alongside the technician keys. The browser
+apps, meanwhile, namespace by the **logged-in admin's username**.
+
+If `TECH_ADMIN_USERNAME` and `CVE_USER` differ, the two halves silently disagree: the
+apps read and write `<CVE_USER>:*` while every Telegram message is composed from
+`<TECH_ADMIN_USERNAME>:*`. The site looks perfect and notifications go out naming the
+wrong assignments, or none. **Set both to the same value.**
+
+**Doctor Telegram bindings live in `techContacts`.** There is no separate doctor
+contacts blob. `techContacts` is keyed by id across all three person types —
+technicians (`t…`), administrators (`a…`) and doctors (`s…`) — because the id prefixes
+cannot collide. Do not "clean up" that blob thinking it is technician-only.
 
 **`list()` does not return other accounts.** A `list` call is filtered by
 `isKeyReadable`, which grants an admin only `user:<self>`. Other accounts are found via
