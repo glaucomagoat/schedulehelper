@@ -248,6 +248,52 @@ const LOCATION_COLORS_LIGHT = {
   OFF: {bg:'#e6e6f0', border:'#8888aa', text:'#44446a'},  // OFF - dim (readable)
 };
 
+// ── Site colour resolution ───────────────────────────────────────────────────
+// Mirrors techs.html:207-234 exactly (same palette, same math) — that's what
+// makes a shared location resolve to the SAME generated colour in both apps when
+// neither has set a custom one. A location gets its colour from: an explicit
+// override on the location object itself (locations[].color — shared with the
+// technician app), else the curated preset table above (unchanged), else one
+// generated deterministically from this palette, indexed by the location's
+// position in `locations`. See resolveSiteColor() inside StaffScheduler() for the
+// actual resolver — these are just the pure pieces it's built from.
+const SITE_COLOR_PALETTE = [
+  '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#10b981',
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#8b5cf6', '#d946ef',
+  '#ec4899', '#f43f5e',
+];
+function hexToRgb(hex) {
+  const h = String(hex || '').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(function (c) { return c + c; }).join('') : h;
+  const num = parseInt(full, 16) || 0;
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(function (v) {
+    return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  }).join('');
+}
+// Mixes `hex` toward `targetHex` by `amount` (0 = pure hex, 1 = pure target).
+function mixHex(hex, targetHex, amount) {
+  const a = hexToRgb(hex), b = hexToRgb(targetHex);
+  return rgbToHex(
+    a.r + (b.r - a.r) * amount,
+    a.g + (b.g - a.g) * amount,
+    a.b + (b.b - a.b) * amount
+  );
+}
+// Derives the { bg, border, text } triple the rest of the app expects from a single
+// accent hex, for a given theme. border is always the accent itself; bg is the accent
+// mixed heavily toward the theme's surface (a pale tint in light, a deep tint in dark);
+// text is the accent pushed toward the opposite end so it reads on that tint.
+function deriveSiteColorTriple(hex, th) {
+  const H = /^#[0-9a-fA-F]{3,6}$/.test(String(hex || '')) ? hex : '#6b7280';
+  if (th === 'dark') {
+    return { bg: mixHex(H, '#12121f', 0.82), border: H, text: mixHex(H, '#ffffff', 0.35) };
+  }
+  return { bg: mixHex(H, '#ffffff', 0.85), border: H, text: mixHex(H, '#000000', 0.4) };
+}
+
 // ============================================================
 // PRESET RULES — All doctor scheduling rules
 // weekOfMonth: "all" | comma-separated "1,2,3,4"
@@ -773,6 +819,21 @@ window.ScheduleHelper = function StaffScheduler() {
   });
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const sidebarCollapsed = !(sidebarPinned || sidebarHovered);
+  // The sidebar sticks below the header, so it needs the header's REAL height —
+  // padding differs between mobile and desktop, and a hardcoded guess is what put
+  // the pin/hover row just past the bottom of the viewport.
+  const headerRef = useRef(null);
+  const [headerH, setHeaderH] = useState(61);
+  useEffect(() => {
+    function measure() {
+      const el = headerRef.current;
+      if (el) setHeaderH(Math.round(el.getBoundingClientRect().height));
+    }
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [isMobile]);
+
   const [profileForm, setProfileForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', email: '' });
   const [profileMsg, setProfileMsg] = useState('');
   const [staffAccountForm, setStaffAccountForm] = useState({}); // { [staffId]: {username:'',password:'',saving:false,msg:'',newPassword:'',changingPw:false,pwMsg:''} }
@@ -920,6 +981,27 @@ window.ScheduleHelper = function StaffScheduler() {
   // Theme
   const [theme, setTheme] = useState('light');
   const locColors = theme === 'light' ? LOCATION_COLORS_LIGHT : LOCATION_COLORS;
+  // Single resolver for a location's colour triple — mirrors techs.html's
+  // resolveSiteColor exactly, including the index basis: a doctor location's index
+  // within `locations` here is the SAME position it occupies within techs.html's
+  // allSites (locations.concat(techSites)), since doctor locations always occupy
+  // the leading positions there. That agreement is what lets an unset location
+  // generate the identical default colour in both apps. Order: an explicit
+  // override on the location object (.color, shared via cve:locations), then the
+  // preset table above for the current theme (unchanged), then a colour generated
+  // from this location's position in `locations`.
+  function resolveSiteColor(id, th) {
+    const theme2 = th || theme;
+    const site = locations.find(l => l.id === id);
+    const custom = site && site.color;
+    if (custom) return deriveSiteColorTriple(custom, theme2);
+    const table = theme2 === 'light' ? LOCATION_COLORS_LIGHT : LOCATION_COLORS;
+    if (table[id]) return table[id];
+    const idx = locations.findIndex(l => l.id === id);
+    const hex = SITE_COLOR_PALETTE[(idx < 0 ? 0 : idx) % SITE_COLOR_PALETTE.length];
+    return deriveSiteColorTriple(hex, theme2);
+  }
+  function locColor(id) { return resolveSiteColor(id, theme); }
 
   // Plan system: A, B, C per month
   const [activePlan, setActivePlan] = useState('A');
@@ -1235,6 +1317,11 @@ window.ScheduleHelper = function StaffScheduler() {
   const [editingStaff, setEditingStaff] = useState(null);
   const [editingRule, setEditingRule] = useState(null);
   const [editingLocation, setEditingLocation] = useState(null);
+  // A location's colour is shared with the technician app (locations[].color), so
+  // committing a change here needs a confirmation first — see requestLocationColor
+  // below. Holds the candidate value between the colour input's onChange and the
+  // user's Confirm/Cancel; nothing is written to `locations` until Confirm.
+  const [pendingLocationColor, setPendingLocationColor] = useState(null); // { locId, name, hex } | null
   const [editingVacation, setEditingVacation] = useState(null);
   const [editingMedicalLeave, setEditingMedicalLeave] = useState(null);
   const [collapsedVacYears, setCollapsedVacYears] = useState(new Set());
@@ -2190,6 +2277,28 @@ window.ScheduleHelper = function StaffScheduler() {
     setLocationForm({ name:'', address:'' }); setShowLocationModal(false);
   }
   function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
+  // Every location editable here is shared with the technician app, so a colour
+  // change always crosses over — this only stages the candidate value; nothing is
+  // written until confirmLocationColor() runs. Fired from the colour input's
+  // onChange (which only fires once the native picker is dismissed), never from
+  // onInput, so the confirmation shows once per commit rather than while dragging.
+  function requestLocationColor(loc, hex) { setPendingLocationColor({ locId: loc.id, name: loc.name, hex: hex, action: 'set' }); }
+  // Reset crosses over exactly as a colour change does — it removes the override on
+  // BOTH schedules — so it is confirmed the same way rather than applying silently.
+  function requestResetLocationColor(loc) { setPendingLocationColor({ locId: loc.id, name: loc.name, hex: null, action: 'reset' }); }
+  function confirmLocationColor() {
+    const p = pendingLocationColor;
+    if (!p) return;
+    setLocations(prev => prev.map(l => {
+      if (l.id !== p.locId) return l;
+      if (p.action === 'reset') { const c = { ...l }; delete c.color; return c; }
+      return { ...l, color: p.hex };
+    }));
+    setPendingLocationColor(null);
+  }
+  // Leaves the stored colour exactly as it was — pendingLocationColor is discarded
+  // without ever touching `locations`.
+  function cancelLocationColor() { setPendingLocationColor(null); }
   function addRule() {
     const isLocationRule = ruleForm.ruleScope === 'location';
     if (!isLocationRule && !ruleForm.staffId) return;
@@ -4251,7 +4360,13 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         const isOff = g.locId === 'OFF';
         const tags = g.items.map(e => '<span class="tag" style="color:' + e.staff.color + '">' + escapeHtml(e.init) + '</span>').join(' ');
         if (isOff) return '<div class="grp off"><span class="tags">' + tags + '</span> <i>OFF</i></div>';
-        return '<div class="grp"><span class="loc">' + escapeHtml(locAbbrev[g.locId]||'?') + '</span> <span class="tags">' + tags + '</span></div>';
+        // Paper is always light regardless of the on-screen theme, so this always asks
+        // resolveSiteColor for the light triple — a custom colour set on the Locations
+        // tab prints exactly as it looks on screen there.
+        const lc = resolveSiteColor(g.locId, 'light');
+        const grpStyle = 'background:' + lc.bg + ';border-color:' + lc.border + ';';
+        const locStyle = 'color:' + lc.text + ';';
+        return '<div class="grp" style="' + grpStyle + '"><span class="loc" style="' + locStyle + '">' + escapeHtml(locAbbrev[g.locId]||'?') + '</span> <span class="tags">' + tags + '</span></div>';
       }
       groupByLoc(allDay).forEach(g => { c += renderGroup(g); });
       if (splitAm.length > 0 || splitPm.length > 0) {
@@ -4710,7 +4825,7 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
 
       {/* Top Bar */}
-      <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+      <div ref={headerRef} style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
           <img src="logo.png" alt="logo" style={{width:isMobile?32:36,height:isMobile?32:36,objectFit:'contain',flexShrink:0}} />
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
@@ -4818,9 +4933,10 @@ IMPORTANT: You have NO ability to modify the schedule, add/remove staff, change 
         {/* Sidebar — desktop only */}
         {!isMobile && (
           <div onMouseEnter={()=>setSidebarHovered(true)} onMouseLeave={()=>setSidebarHovered(false)}
-            style={{position:'relative',width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
+            style={{position:'sticky',top:headerH,alignSelf:'flex-start',height:'calc(100vh - ' + headerH + 'px)',
+                    width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
             <div style={{flex:1,overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',userSelect:'none'}}>
-            <div style={{flex:1,padding:'20px 0'}}>
+            <div style={{flex:1,minHeight:0,overflowY:'auto',padding:'20px 0'}}>
               {[
                 {id:'schedule',icon:'📅',label:'Schedule'},
                 ...(isAdmin ? [
@@ -4994,7 +5110,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                       <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
                         {locations.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(l => {
                           const active = visibleLocations.has(l.id);
-                          const lc = locColors[l.id] || locColors.OFF;
+                          const lc = locColor(l.id);
                           return (
                             <div key={l.id} onClick={e=>{e.stopPropagation();toggleLocationVisibility(l.id);}}
                               style={{display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,userSelect:'none',
@@ -5460,7 +5576,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                         function renderLocBlock(g, gi) {
                           const isOff = g.locId === 'OFF';
                           const loc = isOff ? null : locations.find(function(l){return l.id===g.locId});
-                          const lc = locColors[g.locId] || locColors.OFF;
+                          const lc = locColor(g.locId);
                           const locName = loc ? loc.name : '?';
                           // Multi-column: location name left, staff names flow right
                           return (
@@ -5796,7 +5912,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                                         {dayRules.map((r,ri) => {
                                           const isOff = r.locationId === 'OFF';
                                           const loc = isOff ? null : locations.find(x=>x.id===r.locationId);
-                                          const lc = locColors[r.locationId] || locColors.OFF;
+                                          const lc = locColor(r.locationId);
                                           const periodLabel = r.period === 'am' ? 'AM' : r.period === 'pm' ? 'PM' : '';
                                           return (
                                             <div key={ri} style={{background:isOff?locColors.OFF.bg:lc.bg,borderLeft:`2px solid ${isOff?locColors.OFF.border:lc.border}`,borderRadius:3,padding:'3px 5px',marginBottom:ri<dayRules.length-1?2:0}}>
@@ -6110,7 +6226,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               <div style={{display:'flex',flexDirection:'column',gap:12}}>
                 {locations.map(l=>{
                   const lr = rules.filter(r=>r.locationId===l.id);
-                  const lc = locColors[l.id] || locColors.OFF;
+                  const lc = locColor(l.id);
                   const isExpanded = expandedLocation === l.id;
                   return(
                     <div key={l.id} className="hov-tile" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,borderLeft:`3px solid ${lc.border}`,overflow:'hidden'}}>
@@ -6124,6 +6240,15 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                           <Chip color={lc.text}>{lr.length} rule{lr.length!==1?'s':''}</Chip>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          {isAdmin && (
+                            <div onClick={e=>e.stopPropagation()} style={{display:'flex',alignItems:'center',gap:4}}>
+                              <input type="color" value={lc.border}
+                                     onChange={e=>requestLocationColor(l, e.target.value)}
+                                     title={'Accent colour for ' + l.name}
+                                     style={{width:28,height:24,padding:0,border:'1px solid var(--border-default)',borderRadius:6,cursor:'pointer',background:'none'}} />
+                              {l.color && <IconBtn label="Reset colour to default" onClick={()=>requestResetLocationColor(l)} style={{fontSize:12}}>↺</IconBtn>}
+                            </div>
+                          )}
                           {isAdmin && <IconBtn label="Edit location" onClick={e=>{e.stopPropagation();setEditingLocation(l);setLocationForm({name:l.name,address:l.address});setShowLocationModal(true)}} style={{fontSize:14}}>✏️</IconBtn>}
                           {isAdmin && <IconBtn label="Delete location" onClick={e=>{e.stopPropagation();removeLocation(l.id)}} style={{fontSize:14}}>🗑️</IconBtn>}
                           <span style={{color:'var(--text-muted)',fontSize:15,transition:'transform 0.2s',transform:isExpanded?'rotate(180deg)':'rotate(0deg)'}}>▼</span>
@@ -6229,7 +6354,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                 {locations.map(l=>{
                   const count=rules.filter(r=>r.ruleScope==='location'&&r.locationId===l.id).length;
                   if(count===0) return null;
-                  const lc=locColors[l.id]||{text:'var(--text-secondary)',border:'var(--border-default)'};
+                  const lc=locColor(l.id);
                   return(
                     <div key={'loc_'+l.id} onClick={()=>setRulesFilter('loc_'+l.id)} className="hov-tile"
                       style={{padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,
@@ -6245,7 +6370,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
                   const s=staff.find(x=>x.id===r.staffId);
                   const l=r.locationId==='OFF'?{name:'OFF'}:locations.find(x=>x.id===r.locationId);
                   const isLocRule=r.ruleScope==='location';
-                  const lc=isLocRule?(locColors[r.locationId]||{text:'var(--text-secondary)',border:'var(--text-dim)'}):null;
+                  const lc=isLocRule?locColor(r.locationId):null;
                   const accentColor=isLocRule?(lc.border||'var(--text-dim)'):(s?.color||'#666');
                   return(
                     <div key={r.id} style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:12,padding:16,borderLeft:`3px solid ${accentColor}`}}>
@@ -6974,6 +7099,26 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
               <Btn variant={pendingRoleChange.newType==='admin'?'primary':'success'} onClick={()=>{changeManagedUserRole(pendingRoleChange.username,pendingRoleChange.newType);setPendingRoleChange(null);}}>
                 Confirm Change
               </Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingLocationColor && (
+        <div style={{position:'fixed',inset:0,background:'var(--overlay-bg)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={cancelLocationColor}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Confirm location colour change" style={{background:'var(--bg-elevated)',border:'1px solid var(--border-default)',borderRadius:16,padding:28,maxWidth:420,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+            <div style={{fontSize:22,marginBottom:10}}>🎨</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--text-primary)',marginBottom:8}}>Update the technician schedule too?</div>
+            <div style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+              "{pendingLocationColor.name}" also appears on the technician schedule.
+              {pendingLocationColor.action === 'reset'
+                ? ' Resetting it here returns it to the default colour there too.'
+                : ' Its colour will change there too.'}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <Btn variant="ghost" onClick={cancelLocationColor}>Cancel</Btn>
+              <Btn variant="primary" onClick={confirmLocationColor}>Confirm</Btn>
             </div>
           </div>
         </div>

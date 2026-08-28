@@ -204,6 +204,52 @@ const LOCATION_COLORS_LIGHT = {
   OFF: {bg:'#e6e6f0', border:'#8888aa', text:'#44446a'},
 };
 
+// ── Site colour resolution ───────────────────────────────────────────────────
+// Technician-created sites (techSites, ids like "ts1234…") aren't in the preset
+// tables above, so before this they all fell back to the same neutral grey. Every
+// site now gets its own colour: an explicit override on the site object itself
+// (locations[].color — shared with the doctor app — or techSites[].color for a
+// tech-only room), else the curated preset above (unchanged), else one generated deterministically
+// from this palette. See resolveSiteColor() inside App() for the actual resolver —
+// these are just the pure pieces it's built from, kept free of theme/React state
+// so they're trivial to reason about.
+const SITE_COLOR_PALETTE = [
+  '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#10b981',
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#8b5cf6', '#d946ef',
+  '#ec4899', '#f43f5e',
+];
+function hexToRgb(hex) {
+  const h = String(hex || '').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(function (c) { return c + c; }).join('') : h;
+  const num = parseInt(full, 16) || 0;
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(function (v) {
+    return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  }).join('');
+}
+// Mixes `hex` toward `targetHex` by `amount` (0 = pure hex, 1 = pure target).
+function mixHex(hex, targetHex, amount) {
+  const a = hexToRgb(hex), b = hexToRgb(targetHex);
+  return rgbToHex(
+    a.r + (b.r - a.r) * amount,
+    a.g + (b.g - a.g) * amount,
+    a.b + (b.b - a.b) * amount
+  );
+}
+// Derives the { bg, border, text } triple the rest of the app expects from a single
+// accent hex, for a given theme. border is always the accent itself; bg is the accent
+// mixed heavily toward the theme's surface (a pale tint in light, a deep tint in dark);
+// text is the accent pushed toward the opposite end so it reads on that tint.
+function deriveSiteColorTriple(hex, th) {
+  const H = /^#[0-9a-fA-F]{3,6}$/.test(String(hex || '')) ? hex : '#6b7280';
+  if (th === 'dark') {
+    return { bg: mixHex(H, '#12121f', 0.82), border: H, text: mixHex(H, '#ffffff', 0.35) };
+  }
+  return { bg: mixHex(H, '#ffffff', 0.85), border: H, text: mixHex(H, '#000000', 0.4) };
+}
+
 // Mirrors index.html:313-324
 const PRESET_HOLIDAYS = [
   { id: 'h1', name: "New Year's Day", type: 'fixed', month: 0, day: 1, halfDay: 'closed', note: '' },
@@ -618,6 +664,21 @@ function App() {
   });
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const sidebarCollapsed = !(sidebarPinned || sidebarHovered);
+  // The sidebar sticks below the header, so it needs the header's REAL height —
+  // padding differs between mobile and desktop, and a hardcoded guess is what put
+  // the pin/hover row just past the bottom of the viewport.
+  const headerRef = useRef(null);
+  const [headerH, setHeaderH] = useState(61);
+  useEffect(() => {
+    function measure() {
+      const el = headerRef.current;
+      if (el) setHeaderH(Math.round(el.getBoundingClientRect().height));
+    }
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [isMobile]);
+
 
   // Technician-side data (owned by this app)
   const [techs, setTechs]                 = useState([]);
@@ -856,7 +917,26 @@ function App() {
     });
   }
   const LC = theme === 'dark' ? LOCATION_COLORS : LOCATION_COLORS_LIGHT;
-  function locColor(id) { return LC[id] || { bg:'var(--bg-elevated)', border:'var(--border-default)', text:'var(--text-secondary)' }; }
+  // Single resolver for a site's colour triple, used by every consumer on screen AND
+  // by the month PDF (which always asks for 'light', regardless of the screen theme) —
+  // see siteChipColor/siteTint below. Order: an explicit override on the site object
+  // itself (locations[].color for a shared doctor location, techSites[].color for a
+  // tech-only room — see allSites below), then the curated preset table for that
+  // theme (unchanged from before this feature), then a colour generated from the
+  // site's stable index in allSites so every technician-created site gets its own
+  // colour instead of grey.
+  function resolveSiteColor(id, th) {
+    const theme2 = th || theme;
+    const site = allSites.find(s => s.id === id);
+    const custom = site && site.color;
+    if (custom) return deriveSiteColorTriple(custom, theme2);
+    const table = theme2 === 'dark' ? LOCATION_COLORS : LOCATION_COLORS_LIGHT;
+    if (table[id]) return table[id];
+    const idx = allSites.findIndex(s => s.id === id);
+    const hex = SITE_COLOR_PALETTE[(idx < 0 ? 0 : idx) % SITE_COLOR_PALETTE.length];
+    return deriveSiteColorTriple(hex, theme2);
+  }
+  function locColor(id) { return resolveSiteColor(id, theme); }
 
   // ── Derived data ───────────────────────────────────────────────────────────
   const activeTechs = useMemo(() => techs.filter(t => t.active !== false), [techs]);
@@ -2108,15 +2188,14 @@ function App() {
   const PRINT_W = Math.round(11 * 96 - 2 * (5 / 25.4 * 96));   // 1018
   const PRINT_H = Math.round(8.5 * 96 - 2 * (5 / 25.4 * 96));  //  778
 
-  // Print palette. Each site gets a saturated rule colour AND a pale tint, chosen so
-  // the tints fall on distinguishable steps of LIGHTNESS — colour alone disappears on
-  // a mono printer, and the abbreviation is what actually identifies the site there.
-  const PRINT_TINTS = ['#e8effb','#e6f5ec','#f3e9fb','#fdf4e3','#fde9f0','#e9f6f8','#f0f0f4','#eef3e6'];
-  function siteChipColor(id) { return (LOCATION_COLORS_LIGHT[id] || {}).border || '#6b7280'; }
-  function siteTint(id) {
-    const idx = Object.keys(techStaffing).indexOf(id);
-    return PRINT_TINTS[(idx < 0 ? 0 : idx) % PRINT_TINTS.length];
-  }
+  // Print colours route through the same resolver as the screen, always asking for the
+  // LIGHT triple (paper is always light, whatever theme the admin is viewing in) — so a
+  // custom colour set in Staffing prints exactly as it appears on screen. The chip uses
+  // the saturated accent (border); the cell tint uses the pale bg the resolver derives
+  // for it — colour alone disappears on a mono printer, so the abbreviation is what
+  // actually identifies the site there.
+  function siteChipColor(id) { return resolveSiteColor(id, 'light').border; }
+  function siteTint(id) { return resolveSiteColor(id, 'light').bg; }
 
   // Builds the full printable HTML for one month at a given name-cell font size
   // (px). Returns a string — no DOM access here, so it can also run inside the
@@ -2495,7 +2574,7 @@ function App() {
   return (
     <div style={{minHeight:'100vh',background:'var(--bg-deep)',display:'flex',flexDirection:'column'}}>
       {/* Top Bar */}
-      <div style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+      <div ref={headerRef} style={{background:'var(--bg-surface)',borderBottom:'1px solid var(--border-subtle)',padding:isMobile?'10px 14px':'12px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
           <img src="logo.png" alt="logo" style={{width:isMobile?32:36,height:isMobile?32:36,objectFit:'contain',flexShrink:0}} />
           <div style={{display:'flex',flexDirection:'column',gap:1}}>
@@ -2539,9 +2618,10 @@ function App() {
         {/* Sidebar — desktop only */}
         {!isMobile && (
           <div onMouseEnter={()=>setSidebarHovered(true)} onMouseLeave={()=>setSidebarHovered(false)}
-            style={{position:'relative',width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
+            style={{position:'sticky',top:headerH,alignSelf:'flex-start',height:'calc(100vh - ' + headerH + 'px)',
+                    width:sidebarCollapsed?56:220,transition:'width 0.25s cubic-bezier(0.4,0,0.2,1)',flexShrink:0,display:'flex'}}>
             <div style={{flex:1,overflow:'hidden',background:'var(--bg-surface)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',userSelect:'none'}}>
-            <div style={{flex:1,padding:'20px 0'}}>
+            <div style={{flex:1,minHeight:0,overflowY:'auto',padding:'20px 0'}}>
               {TABS.map(tab => (
                 <div key={tab.id} onClick={()=>setActiveTab(tab.id)} className="hov-row"
                   title={tab.label}
@@ -2594,7 +2674,7 @@ function App() {
                            techDuties,setTechDuties,techSchedules}} />
         )}
         {activeTab === 'staffing' && isAdmin && (
-          <StaffingPanel {...{S,allSites,locations,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
+          <StaffingPanel {...{S,allSites,locations,setLocations,saveData,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
                               notifySettings,setNotifySettings}} />
         )}
         {activeTab === 'timeoff' && isAdmin && (
@@ -4191,7 +4271,7 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
         </div>
       </div>
 
-      <RolesCard {...{S, techDuties, setTechDuties, techSchedules, showToast}} />
+      <RolesCard {...{S, techDuties, setTechDuties, techSchedules, setTechSchedules, techPublished, setTechPublished, showToast}} />
 
       {acctModal && (
         <CreateAccountModal S={S} tech={acctModal.tech}
@@ -4219,7 +4299,7 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
 // freshly generated, never derived from the abbreviation), and editing only ever
 // touches label/abbr on the existing object — so a renamed abbreviation can never
 // orphan an assignment that stored the old id.
-function RolesCard({ S, techDuties, setTechDuties, techSchedules, showToast }) {
+function RolesCard({ S, techDuties, setTechDuties, techSchedules, setTechSchedules, techPublished, setTechPublished, showToast }) {
   const duties = techDuties || [];
   const [addForm, setAddForm] = useState({ label: '', abbr: '' });
   const [addError, setAddError] = useState('');
@@ -4288,14 +4368,51 @@ function RolesCard({ S, techDuties, setTechDuties, techSchedules, showToast }) {
     setTechDuties(duties.filter(x => x.id !== d.id));
     if (showToast) showToast('Role deleted', 'success');
   }
-  // Removes only the definition. Assignments that stored this id are left exactly as
-  // they are — the point of the whole id/abbr split — so their chips simply fall back
-  // to showing the raw code once no role resolves it.
+
+  // Clears a role off every assignment that carries it. A duty lives in TWO places:
+  // the working plans in techSchedules, and the PUBLISHED snapshots, which is what the
+  // portal and the Telegram messages actually read. Clearing only the plans would
+  // leave the deleted role still showing to technicians.
+  function stripDutyFromAssignments(dutyId) {
+    const scrub = (tree) => {
+      let touched = false;
+      const out = {};
+      Object.keys(tree || {}).forEach(k1 => {
+        const lvl = tree[k1];
+        // techSchedules is {planKey: {date: {techId: entry}}}; techPublished is
+        // {monthKey: {plan, publishedAt, days:{date:{techId: entry}}}}.
+        const days = (lvl && lvl.days) ? lvl.days : lvl;
+        const outDays = {};
+        Object.keys(days || {}).forEach(dk => {
+          const day = days[dk] || {};
+          const outDay = {};
+          Object.keys(day).forEach(tid => {
+            const e = day[tid];
+            if (e && e.duty === dutyId) {
+              const copy = Object.assign({}, e);
+              delete copy.duty;
+              outDay[tid] = copy;
+              touched = true;
+            } else outDay[tid] = e;
+          });
+          outDays[dk] = outDay;
+        });
+        out[k1] = (lvl && lvl.days) ? Object.assign({}, lvl, { days: outDays }) : outDays;
+      });
+      return { out: out, touched: touched };
+    };
+    const a = scrub(techSchedules);
+    if (a.touched && setTechSchedules) setTechSchedules(a.out);
+    const b = scrub(techPublished);
+    if (b.touched && setTechPublished) setTechPublished(b.out);
+  }
+
   function confirmDelete() {
     const dc = deleteConfirm;
+    stripDutyFromAssignments(dc.id);
     setTechDuties(duties.filter(x => x.id !== dc.id));
     setDeleteConfirm(null);
-    if (showToast) showToast('Role deleted — existing assignments left unchanged', 'info');
+    if (showToast) showToast('Role deleted and cleared from ' + dc.count + ' assignment' + (dc.count === 1 ? '' : 's'), 'success');
   }
 
   return (
@@ -4369,9 +4486,9 @@ function RolesCard({ S, techDuties, setTechDuties, techSchedules, showToast }) {
             <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>Delete this role?</div>
             <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 18 }}>
               {deleteConfirm.count} assignment{deleteConfirm.count === 1 ? '' : 's'} on the schedule currently
-              {deleteConfirm.count === 1 ? ' uses' : ' use'} "{deleteConfirm.label}". Deleting it only removes
-              the role definition — those assignments are left untouched, and their chips will show the raw
-              code "{deleteConfirm.id}" instead of a name.
+              {deleteConfirm.count === 1 ? ' uses' : ' use'} "{deleteConfirm.label}". Deleting the role also
+              removes it from {deleteConfirm.count === 1 ? 'that technician' : 'those technicians'} — their
+              site and hours stay exactly as they are, they simply no longer carry a role tag.
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button onClick={() => setDeleteConfirm(null)} style={S.btn}>Cancel</button>
@@ -4825,7 +4942,7 @@ function parseRoster(text, doctors, sites) {
 
 // ── Staffing targets ─────────────────────────────────────────────────────────
 
-function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techStaffing, setTechStaffing, locColor, showToast,
+function StaffingPanel({ S, allSites, locations, setLocations, saveData, techSites, setTechSites, techStaffing, setTechStaffing, locColor, showToast,
                           notifySettings, setNotifySettings }) {
   function upd(locId, field, val) {
     setTechStaffing(Object.assign({}, techStaffing, {
@@ -4837,6 +4954,54 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
     if (on) next[locId] = Object.assign({}, DEFAULT_STAFFING);
     else delete next[locId];
     setTechStaffing(next);
+  }
+
+  // Colour now lives on the site object itself — locations[].color for a shared
+  // doctor location (persisted through saveData so index.html sees it too), or
+  // techSites[].color for a tech-only room (already covered by its own autosave
+  // effect). Editing a doctor location's colour from here crosses into the doctor
+  // app, so it goes through a confirmation before anything is written; a
+  // technician-created site is tech-only and applies immediately.
+  const [pendingColor, setPendingColor] = useState(null); // { id, name, hex } | null
+  function omitColor(obj) { const c = Object.assign({}, obj); delete c.color; return c; }
+  function isDoctorLocation(id) { return locations.some(l => l.id === id); }
+  function applyColor(id, hex) {
+    if (isDoctorLocation(id)) {
+      const next = locations.map(l => l.id === id ? Object.assign({}, l, { color: hex }) : l);
+      setLocations(next);
+      saveData('locations', next);
+    } else {
+      setTechSites((techSites || []).map(s => s.id === id ? Object.assign({}, s, { color: hex }) : s));
+    }
+  }
+  function requestColorChange(site, hex) {
+    if (isDoctorLocation(site.id)) { setPendingColor({ id: site.id, name: site.name, hex: hex }); return; }
+    applyColor(site.id, hex);
+  }
+  function confirmColorChange() {
+    if (!pendingColor) return;
+    if (pendingColor.action === 'reset') doResetColor(pendingColor.id);
+    else applyColor(pendingColor.id, pendingColor.hex);
+    setPendingColor(null);
+  }
+  function cancelColorChange() { setPendingColor(null); }
+  // Clears only the colour override — the site falls back to its preset/generated
+  // default. Leaves every other field on the site untouched. No confirmation: this
+  // only ever restores the shared default both apps already agree on.
+  function doResetColor(id) {
+    if (isDoctorLocation(id)) {
+      const next = locations.map(l => l.id === id ? omitColor(l) : l);
+      setLocations(next);
+      saveData('locations', next);
+    } else {
+      setTechSites((techSites || []).map(s => s.id === id ? omitColor(s) : s));
+    }
+  }
+  // A reset on a SHARED location removes the override on the doctor schedule too, so
+  // it is confirmed exactly like a colour change. A tech-only room resets silently.
+  function resetColor(site) {
+    if (isDoctorLocation(site.id)) { setPendingColor({ id: site.id, name: site.name, hex: null, action: 'reset' }); return; }
+    doResetColor(site.id);
   }
 
   const [subName, setSubName] = useState('');
@@ -4969,12 +5134,45 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
                          onChange={e => upd(l.id, 'abbr', e.target.value.toUpperCase().slice(0,4))}
                          placeholder={l.name.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,3)}
                          style={Object.assign({}, S.input, {width:'100%',fontFamily:'"Space Mono",monospace',letterSpacing:1})} />
+                  <label style={Object.assign({}, S.label, {marginTop:10})}>Color</label>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <input type="color" value={c.border}
+                           onChange={e => requestColorChange(l, e.target.value)}
+                           title={'Accent colour for ' + l.name}
+                           style={{width:36,height:30,padding:0,border:'1px solid var(--border-default)',borderRadius:6,cursor:'pointer',background:'none'}} />
+                    {l.color
+                      ? <button onClick={() => resetColor(l)} style={Object.assign({}, S.btn, {padding:'5px 10px',fontSize:12})}>Reset</button>
+                      : <span style={{fontSize:11,color:'var(--text-dim)'}}>default</span>}
+                  </div>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+
+      {pendingColor && (
+        <div onClick={cancelColorChange}
+             style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.45)',
+                     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Confirm location colour change"
+               style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)',
+                       borderRadius: 14, padding: '20px 22px', maxWidth: 440, width: '100%',
+                       boxShadow: '0 18px 50px rgba(0,0,0,0.35)' }}>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>Update the doctor schedule too?</div>
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 18 }}>
+              "{pendingColor.name}" also appears on the doctor schedule.
+              {pendingColor.action === 'reset'
+                ? ' Resetting it here returns it to the default colour there too.'
+                : ' Its colour will change there too.'}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={cancelColorChange} style={S.btn}>Cancel</button>
+              <button onClick={confirmColorChange} style={S.btnP}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
