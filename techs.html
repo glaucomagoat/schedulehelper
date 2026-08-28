@@ -218,6 +218,18 @@ const SITE_COLOR_PALETTE = [
   '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#8b5cf6', '#d946ef',
   '#ec4899', '#f43f5e',
 ];
+// Picks a colour for a NEW site once, so it can be stored and never move again —
+// the fix for the old positional fallback, which reshuffled every later site's
+// default colour whenever an earlier one was deleted. `taken` must include both
+// every other site's explicit .color AND the preset border hex of every site
+// that has a curated entry, so a generated colour never collides with either.
+// Falls back to a positional pick only once the whole palette is already in use.
+function nextFreeSiteColor(taken) {
+  const takenLower = (taken || []).map(function (h) { return String(h || '').toLowerCase(); });
+  const free = SITE_COLOR_PALETTE.find(function (hex) { return takenLower.indexOf(hex.toLowerCase()) === -1; });
+  if (free) return free;
+  return SITE_COLOR_PALETTE[taken.length % SITE_COLOR_PALETTE.length];
+}
 function hexToRgb(hex) {
   const h = String(hex || '').replace('#', '');
   const full = h.length === 3 ? h.split('').map(function (c) { return c + c; }).join('') : h;
@@ -790,6 +802,34 @@ function App() {
   // order — so the save effects see hydrated=false and skip, then this one arms
   // them for genuine user edits. A timer here would race React's scheduler.
   useEffect(() => { if (!loading && user) hydrated.current = true; }, [loading, user]);
+
+  // Backfill: technician-created sites (techSites) made before per-site colour
+  // storage existed have no stored .color, so they'd still fall back to the old
+  // positional generator — and reshuffle every later site's colour whenever an
+  // earlier one is deleted. Stamp each of those once with a colour it keeps
+  // forever. Never touches a site that already has an explicit colour or a
+  // curated preset entry, so no existing site's appearance changes. Runs only
+  // once data has loaded (hydrated) and only for an admin; idempotent because it
+  // writes nothing once every techSite is covered by an explicit colour or a
+  // preset. This app owns techSites, so only techSites is backfilled here —
+  // locations (owned by index.html) is left untouched.
+  useEffect(() => {
+    if (loading || !isAdmin || !hydrated.current || !(techSites || []).length) return;
+    const needsColor = (techSites || []).some(s => !s.color && !LOCATION_COLORS[s.id]);
+    if (!needsColor) return;
+    const taken = [];
+    locations.concat(techSites || []).forEach(s => {
+      if (s.color) taken.push(s.color);
+      else if (LOCATION_COLORS[s.id]) { taken.push(LOCATION_COLORS[s.id].border); taken.push(LOCATION_COLORS_LIGHT[s.id].border); }
+    });
+    const next = (techSites || []).map(s => {
+      if (s.color || LOCATION_COLORS[s.id]) return s;
+      const hex = nextFreeSiteColor(taken);
+      taken.push(hex);
+      return Object.assign({}, s, { color: hex });
+    });
+    setTechSites(next);
+  }, [loading, isAdmin, techSites, locations]);
 
   // The default tab id ('board') only exists in the admin tab set. Land a
   // technician on the portal's own first tab instead of a blank content pane.
@@ -5023,7 +5063,16 @@ function StaffingPanel({ S, allSites, locations, setLocations, saveData, techSit
     const err = validateLocationName(name, null);
     if (err) { showToast(err, 'error'); return; }
     const id = newId('ts');
-    setTechSites((techSites || []).concat([{ id, name, parentLocationId: subParent || '' }]));
+    // Assign the default colour once, right now, instead of leaving it to the
+    // positional fallback — that's what keeps every other site's colour from
+    // shifting later if this one (or an earlier one) gets deleted.
+    const taken = [];
+    (allSites || []).forEach(function (s) {
+      if (s.color) taken.push(s.color);
+      else if (LOCATION_COLORS[s.id]) { taken.push(LOCATION_COLORS[s.id].border); taken.push(LOCATION_COLORS_LIGHT[s.id].border); }
+    });
+    const newColor = nextFreeSiteColor(taken);
+    setTechSites((techSites || []).concat([{ id, name, parentLocationId: subParent || '', color: newColor }]));
     // Enabled with a flat minimum and no per-doctor ratio: a sub-room is usually
     // "put N people in that room when the parent has clinic", not a ratio.
     setTechStaffing(Object.assign({}, techStaffing, {

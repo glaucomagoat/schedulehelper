@@ -262,6 +262,18 @@ const SITE_COLOR_PALETTE = [
   '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#8b5cf6', '#d946ef',
   '#ec4899', '#f43f5e',
 ];
+// Picks a colour for a NEW site once, so it can be stored and never move again —
+// the fix for the old positional fallback, which reshuffled every later site's
+// default colour whenever an earlier one was deleted. `taken` must include both
+// every other site's explicit .color AND the preset border hex of every site
+// that has a curated entry, so a generated colour never collides with either.
+// Falls back to a positional pick only once the whole palette is already in use.
+function nextFreeSiteColor(taken) {
+  const takenLower = (taken || []).map(function (h) { return String(h || '').toLowerCase(); });
+  const free = SITE_COLOR_PALETTE.find(function (hex) { return takenLower.indexOf(hex.toLowerCase()) === -1; });
+  if (free) return free;
+  return SITE_COLOR_PALETTE[taken.length % SITE_COLOR_PALETTE.length];
+}
 function hexToRgb(hex) {
   const h = String(hex || '').replace('#', '');
   const full = h.length === 3 ? h.split('').map(function (c) { return c + c; }).join('') : h;
@@ -1597,6 +1609,32 @@ window.ScheduleHelper = function StaffScheduler() {
   useEffect(() => { if (user) saveData('dayNotes', dayNotes); }, [dayNotes]);
   useEffect(() => { if (user) saveData('finalPlanStamps', finalPlanStamps); }, [finalPlanStamps]);
 
+  // Backfill: locations created before per-site colour storage existed have no
+  // stored .color, so they'd still fall back to the old positional generator —
+  // and reshuffle every later site's colour whenever an earlier one is deleted.
+  // Stamp each of those once with a colour it keeps forever. Never touches a
+  // site that already has an explicit colour or a curated preset entry, so no
+  // existing location's appearance changes. Runs only once data has loaded and
+  // only for an admin; idempotent because it writes nothing once every site is
+  // covered by an explicit colour or a preset.
+  useEffect(() => {
+    if (loading || !isAdmin || !locations.length) return;
+    const needsColor = locations.some(l => !l.color && !LOCATION_COLORS[l.id]);
+    if (!needsColor) return;
+    const taken = [];
+    locations.forEach(l => {
+      if (l.color) taken.push(l.color);
+      else if (LOCATION_COLORS[l.id]) { taken.push(LOCATION_COLORS[l.id].border); taken.push(LOCATION_COLORS_LIGHT[l.id].border); }
+    });
+    const next = locations.map(l => {
+      if (l.color || LOCATION_COLORS[l.id]) return l;
+      const hex = nextFreeSiteColor(taken);
+      taken.push(hex);
+      return { ...l, color: hex };
+    });
+    setLocations(next);
+  }, [loading, isAdmin, locations]);
+
   // Clear any stale AI status banner when switching month/plan (L5)
   useEffect(() => { if (!generating) setAiLog(''); }, [scheduleKey]);
 
@@ -2273,7 +2311,20 @@ window.ScheduleHelper = function StaffScheduler() {
   function addLocation() {
     if (!locationForm.name) return;
     if (editingLocation) { setLocations(prev => prev.map(l => l.id === editingLocation.id ? { ...l, ...locationForm } : l)); setEditingLocation(null); }
-    else { const newLocId = 'l' + Date.now() + Math.random().toString(36).slice(2,7); setLocations(prev => [...prev, { id: newLocId, ...locationForm }]); setVisibleLocations(prev => new Set(prev).add(newLocId)); }
+    else {
+      const newLocId = 'l' + Date.now() + Math.random().toString(36).slice(2,7);
+      // Assign the default colour once, right now, instead of leaving it to the
+      // positional fallback — that's what keeps every other site's colour from
+      // shifting later if this one (or an earlier one) gets deleted.
+      const taken = [];
+      locations.forEach(function (l) {
+        if (l.color) taken.push(l.color);
+        else if (LOCATION_COLORS[l.id]) { taken.push(LOCATION_COLORS[l.id].border); taken.push(LOCATION_COLORS_LIGHT[l.id].border); }
+      });
+      const newColor = nextFreeSiteColor(taken);
+      setLocations(prev => [...prev, { id: newLocId, ...locationForm, color: newColor }]);
+      setVisibleLocations(prev => new Set(prev).add(newLocId));
+    }
     setLocationForm({ name:'', address:'' }); setShowLocationModal(false);
   }
   function removeLocation(id) { if (!confirm('Remove this location?')) return; setLocations(p=>p.filter(l=>l.id!==id)); setRules(p=>p.filter(r=>r.locationId!==id)); }
