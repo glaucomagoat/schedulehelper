@@ -223,13 +223,30 @@ const TECH_LEVELS = ['Tech', 'COA', 'COT', 'COMT', 'Scribe', 'Front Desk'];
 // Per-DAY duty, set by right-clicking a placed chip. Distinct from a technician's
 // standing roles: someone can be a scribe by trade but be testing on a given Tuesday,
 // so this lives on the assignment rather than on the person.
-const DUTIES = [
-  { id:'S',  label:'Scribe' },
-  { id:'T',  label:'Testing' },
-  { id:'A',  label:'A scan' },
-  { id:'TR', label:'Training Refraction' },
+//
+// This is now just the SEED for a user-managed list (the `techDuties` blob) — see
+// the Roles card in TechsPanel. `id` is permanent and is what an assignment actually
+// stores (techSchedules[key][date][techId].duty), so the seed ids match the codes
+// this app has always used, and a freshly-created role NEVER derives its id from its
+// abbreviation (renaming an abbreviation must never orphan existing assignments).
+const DEFAULT_DUTIES = [
+  { id:'S',  label:'Scribe',              abbr:'S'  },
+  { id:'T',  label:'Testing',             abbr:'T'  },
+  { id:'A',  label:'A scan',              abbr:'A'  },
+  { id:'L',  label:'LASIK',               abbr:'L'  },
+  { id:'TR', label:'Training Refraction', abbr:'TR' },
 ];
-function dutyLabel(id) { const d = DUTIES.find(x => x.id === id); return d ? d.label : ''; }
+// `duties` is the live, user-managed list — always pass the caller's current
+// techDuties here rather than reaching for DEFAULT_DUTIES, so a renamed/deleted role
+// is reflected everywhere. Falls back to the raw stored code when a duty definition
+// no longer exists, so a deleted role degrades to showing its code instead of going
+// blank or crashing.
+function dutyLabel(id, duties) {
+  if (!id) return '';
+  const list = duties || DEFAULT_DUTIES;
+  const d = list.find(x => x.id === id);
+  return d ? d.label : id;
+}
 // Shared by App and the portal components — App's own fmtPublishedAt is scoped
 // inside the component and cannot be reached from here.
 function fmtStamp(ts) {
@@ -238,7 +255,12 @@ function fmtStamp(ts) {
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate() + ', ' + d.getFullYear() + ' at ' + time;
 }
-function dutySuffix(id) { return id ? '(' + id + ')' : ''; }
+function dutySuffix(id, duties) {
+  if (!id) return '';
+  const list = duties || DEFAULT_DUTIES;
+  const d = list.find(x => x.id === id);
+  return '(' + (d ? d.abbr : id) + ')';
+}
 
 const DEFAULT_STAFFING = { techsPerDoctor: 2, minimum: 0, maximum: 0, requiredSkills: [], staffWhenNoDoctor: false };
 const DEFAULT_NOTIFY_SETTINGS = {
@@ -614,6 +636,10 @@ function App() {
   // recorded at the parent site, so a sub-room resolves its doctor count through
   // parentLocationId instead of having its own.
   const [techSites, setTechSites]         = useState([]);
+  // User-managed roles ({id, label, abbr}). Defaults to the seed so dutySuffix/
+  // dutyLabel always have something to resolve against, even before the load
+  // finishes or on a tenant that has never saved this blob.
+  const [techDuties, setTechDuties]       = useState(DEFAULT_DUTIES);
   const [techFinalPlans, setTechFinalPlans] = useState({});  // { "2026-7": "A" }
   // What technicians actually see. Editing a finalised month changes this only
   // when Publish Changes is pressed: { "2026-7": { plan, publishedAt, days } }
@@ -692,6 +718,7 @@ function App() {
   useEffect(() => { if (user) saveData('techSchedules', techSchedules); }, [techSchedules]);
   useEffect(() => { if (user) saveData('techTimeOff', techTimeOff); }, [techTimeOff]);
   useEffect(() => { if (user) saveData('techSites', techSites); }, [techSites]);
+  useEffect(() => { if (user) saveData('techDuties', techDuties); }, [techDuties]);
   useEffect(() => { if (user) saveData('techFinalPlans', techFinalPlans); }, [techFinalPlans]);
   useEffect(() => { if (user) saveData('techPublished', techPublished); }, [techPublished]);
   useEffect(() => { if (user) saveData('techNotifySettings', notifySettings); }, [notifySettings]);
@@ -758,7 +785,7 @@ function App() {
     const dOrSkip = k => portal ? Promise.resolve(null) : d(k);
     const [
       tk, tc, tr, ts, tsch, tto, tns, tnl, tsi, tdn, tfp, tpub, tadm, fps,
-      st, loc, fp, sch, hol, ddn
+      st, loc, fp, sch, hol, ddn, tdu
     ] = await Promise.all([
       d('techs'), dOrSkip('techContacts'), dOrSkip('techRules'), d('techStaffing'),
       d('techSchedules'), dOrSkip('techTimeOff'), dOrSkip('techNotifySettings'), dOrSkip('techNotifyLog'), d('techSites'), d('techDayNotes'), d('techFinalPlans'), d('techPublished'),
@@ -767,8 +794,13 @@ function App() {
       dOrSkip('techAdmins'),
       d('finalPlanStamps'),
       d('staff'), d('locations'), d('finalPlans'), d('schedules'), d('holidays'), d('dayNotes'),
+      d('techDuties'),
     ]);
     if (tsi) setTechSites(tsi);
+    // Missing or empty blob = never saved yet, so the in-memory seed (DEFAULT_DUTIES,
+    // already the initial state) stays in effect until the practice edits a role —
+    // at which point the whole list, seed included, gets written back for real.
+    if (tdu && tdu.length) setTechDuties(tdu);
     if (tk)  setTechs(tk);
     if (tc)  setTechContacts(tc);
     if (tadm) setTechAdmins(tadm);
@@ -2124,7 +2156,7 @@ function App() {
       // and that fallback died completely once the roles field was removed.
       let out = escapeHtml(label);
       const duty = duties && duties[techId];
-      if (duty) out += '<b>' + escapeHtml(dutySuffix(duty)) + '</b>';
+      if (duty) out += '<b>' + escapeHtml(dutySuffix(duty, techDuties)) + '</b>';
       return out;
     }
     function namesFor(ids, duties) { return ids.map(id => techLabel(id, duties)).join(' · '); }
@@ -2309,7 +2341,7 @@ function App() {
     html += '<div class="hdr"><h1>Technician Schedule</h1><div class="m">' + MONTHS[month0] + ' ' + year + '</div>' +
       '<div class="sub">Central Valley Eye</div></div>';
     html += '<table><thead><tr>' + hdr + '</tr></thead><tbody>' + body + '</tbody></table>';
-    html += '<div class="legend">' + DUTIES.map(d => '<span class="lg"><b>' + dutySuffix(d.id) + '</b> ' + escapeHtml(d.label) + '</span>').join('') +
+    html += '<div class="legend">' + techDuties.map(d => '<span class="lg"><b>' + dutySuffix(d.id, techDuties) + '</b> ' + escapeHtml(d.label) + '</span>').join('') +
       '<span class="lgsites">' + legendSites + '</span></div>';
     html += '</body></html>';
     return html;
@@ -2550,7 +2582,7 @@ function App() {
                          assignedAt,locName,holidayFor,isTechOff,timeOffFor,notifySettings,unnotifiedChanges,lastSnapshot,
                          finalPlans,showToast,sendChanges,sending,unreachable,setActiveTab,allSites,pinnedToday,doctors,pdfBusy,
                          techDayNotes,setTechDayNotes,generateMonthPDF,
-                         docDayNotes,docSchedules,theme,siteAbbr,dutyOf,setDuty,
+                         docDayNotes,docSchedules,theme,siteAbbr,dutyOf,setDuty,duties:techDuties,
                          activeTechPlan,setActiveTechPlan,finalTechPlanForMonth,techPlanHasData,
                          setTechFinalPlan,clearTechFinalPlan,copyTechPlanTo,clearTechPlan,
                          refreshTechData,refreshing,quadSiteIds,
@@ -2558,7 +2590,8 @@ function App() {
         )}
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
-                           portalAccounts,createTechPortalAccount,resetTechPortalPassword,createTechPortalAccountsBulk}} />
+                           portalAccounts,createTechPortalAccount,resetTechPortalPassword,createTechPortalAccountsBulk,
+                           techDuties,setTechDuties,techSchedules}} />
         )}
         {activeTab === 'staffing' && isAdmin && (
           <StaffingPanel {...{S,allSites,locations,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
@@ -2582,7 +2615,7 @@ function App() {
                            staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
                            locName,holidayFor,isTechOff:isPortalTechOff,locations,holidays,
                            doctors,finalPlans,techDayNotes,docDayNotes,docSchedules,theme,
-                           quadSiteIds,siteAbbr,dutyOf:portalDutyOf,notifySettings,
+                           quadSiteIds,siteAbbr,dutyOf:portalDutyOf,notifySettings,duties:techDuties,
                            techPublished,myTechId,doctorsAtSiteOn}} />
         )}
         {activeTab === 'p-month' && !isAdmin && (
@@ -2590,7 +2623,7 @@ function App() {
                           openDay:dk => { setSelectedDate(dk); setActiveTab('p-week'); },
                           staffedSites:portalStaffedSites,activeTechs,getAssignment:getPortalAssignment,
                           locName,holidayFor,isTechOff:isPortalTechOff,targets,holidays,
-                          quadSiteIds,siteAbbr,techDayNotes,dutyOf:portalDutyOf,
+                          quadSiteIds,siteAbbr,techDayNotes,dutyOf:portalDutyOf,duties:techDuties,
                           viewerTechId:myTechId,
                           publishedNote:(() => {
                             const p2 = parseDateKey(selectedDate);
@@ -2650,7 +2683,7 @@ function DayBoard(p) {
           docDayNotes, docSchedules, theme, siteAbbr, dutyOf, setDuty,
           activeTechPlan, setActiveTechPlan, finalTechPlanForMonth, techPlanHasData,
           setTechFinalPlan, clearTechFinalPlan, copyTechPlanTo, clearTechPlan,
-          refreshTechData, refreshing, quadSiteIds,
+          refreshTechData, refreshing, quadSiteIds, duties,
           techPlanDirty, publishTechChanges, publishedForMonth, fmtPublishedAt, copyTechDay } = p;
 
   const dp = parseDateKey(selectedDate);
@@ -2797,12 +2830,12 @@ function DayBoard(p) {
       {boardView === 'month'
         ? <MonthView {...{S,locColor,isMobile,selectedDate,setSelectedDate,openDay,staffedSites,
                           activeTechs,getAssignment,locName,holidayFor,isTechOff,targets,holidays,
-                          quadSiteIds,siteAbbr,techDayNotes,dutyOf}} />
+                          quadSiteIds,siteAbbr,techDayNotes,dutyOf,duties}} />
         : <WeekView  {...{S,locColor,isMobile,isAdmin,selectedDate,setSelectedDate,editDate,setEditDate,
                           staffedSites,activeTechs,getAssignment,setAssignment,locName,holidayFor,
                           isTechOff,timeOffFor,targets,coverage,pinnedToday,doctors,finalPlans,
                           techDayNotes,setTechDayNotes,shiftDay,locations,holidays,
-                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty,copyTechDay}} />}
+                          docDayNotes,docSchedules,theme,quadSiteIds,siteAbbr,dutyOf,setDuty,copyTechDay,duties}} />}
 
       {pdfGate && (
         <div onClick={() => setPdfGate(null)}
@@ -2844,7 +2877,7 @@ function DayBoard(p) {
 
 function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openDay, staffedSites,
                      activeTechs, getAssignment, locName, holidayFor, isTechOff, targets, holidays,
-                     quadSiteIds, siteAbbr, techDayNotes, dutyOf, hint, viewerTechId, publishedNote }) {
+                     quadSiteIds, siteAbbr, techDayNotes, dutyOf, hint, viewerTechId, publishedNote, duties }) {
   const dp = parseDateKey(selectedDate);
   const first = new Date(dp.year, dp.month0, 1);
   const daysInMonth = new Date(dp.year, dp.month0 + 1, 0).getDate();
@@ -2904,7 +2937,7 @@ function MonthView({ S, locColor, isMobile, selectedDate, setSelectedDate, openD
                       {(!wknd || anyWork) && (
                         <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
                                            siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,
-                                           nameSize:12,viewerTechId}} />
+                                           nameSize:12,viewerTechId,duties}} />
                       )}
                     </td>
                   );
@@ -2927,7 +2960,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                     isTechOff, timeOffFor, targets, coverage, pinnedToday, doctors, finalPlans,
                     techDayNotes, setTechDayNotes, shiftDay, locations, holidays,
                     docDayNotes, docSchedules, theme, quadSiteIds, siteAbbr, dutyOf, setDuty, copyTechDay,
-                    viewerTechId, publishedNote, weekSummary, notifySettings }) {
+                    viewerTechId, publishedNote, weekSummary, notifySettings, duties }) {
 
   // Monday-first working week; Saturday appears only when something is scheduled.
   const weekDays = useMemo(() => {
@@ -3064,7 +3097,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                 opacity: isDragging ? 0.28 : 1,
                 cursor: isAdmin ? 'grab' : 'default', userSelect:'none', touchAction:'none'}}>
         {t.name.split(' ')[0]}
-        {duty && <span style={{fontSize:10,fontWeight:800,color:'#4338ca'}}>{dutySuffix(duty)}</span>}
+        {duty && <span style={{fontSize:10,fontWeight:800,color:'#4338ca'}}>{dutySuffix(duty, duties)}</span>}
       </span>
     );
   }
@@ -3114,7 +3147,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                 </div>
                 <TechQuadCell {...{dk,activeTechs,getAssignment,quadSiteIds,staffedSites,locColor,
                                    siteAbbr,isTechOff,techDayNotes,holidayFor,compact:true,dutyOf,nameSize:12,
-                                   viewerTechId}} />
+                                   viewerTechId,duties}} />
               </div>
             );
           })}
@@ -3335,13 +3368,13 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
         </React.Fragment>)}
         <div style={{marginTop:14,paddingTop:10,borderTop:'1px solid var(--border-subtle)',
                      display:'flex',gap:16,flexWrap:'wrap',alignItems:'baseline'}}>
-          {DUTIES.map(d => (
+          {(duties || DEFAULT_DUTIES).map(d => (
             <span key={d.id} style={{fontSize:12,color:'var(--text-secondary)'}}>
-              <b style={{color:'#4338ca',fontWeight:800}}>{dutySuffix(d.id)}</b> {d.label}
+              <b style={{color:'#4338ca',fontWeight:800}}>{dutySuffix(d.id, duties)}</b> {d.label}
             </span>
           ))}
           {isAdmin && <span style={{fontSize:12,color:'var(--text-dim)',fontStyle:'italic'}}>
-            right-click a placed technician to set their duty
+            right-click a placed technician to set their role
           </span>}
         </div>
       </div>
@@ -3421,7 +3454,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                        borderRadius:10,boxShadow:'0 10px 28px rgba(0,0,0,0.30)',padding:6,minWidth:184}}>
             <div style={{fontSize:11,fontWeight:800,letterSpacing:0.5,color:'var(--text-muted)',
                          padding:'4px 8px 6px'}}>{dutyMenu.name}</div>
-            {DUTIES.map(d => {
+            {(duties || DEFAULT_DUTIES).map(d => {
               const on = dutyOf(day, dutyMenu.techId) === d.id;
               return (
                 <button key={d.id} data-hoverable="1"
@@ -3431,7 +3464,7 @@ function WeekView({ S, locColor, isMobile, isAdmin, selectedDate, setSelectedDat
                           border:'none',borderRadius:6,padding:'7px 8px',cursor:'pointer',
                           fontFamily:'inherit',fontSize:13,fontWeight:600,
                           color: on ? '#818cf8' : 'var(--text-primary)'}}>
-                  <span style={{fontWeight:800,color:'#4338ca',minWidth:30}}>{dutySuffix(d.id)}</span>
+                  <span style={{fontWeight:800,color:'#4338ca',minWidth:30}}>{dutySuffix(d.id, duties)}</span>
                   {d.label}
                   {on && <span style={{marginLeft:'auto',fontSize:11}}>✓</span>}
                 </button>
@@ -3592,7 +3625,7 @@ function DoctorDayCell({ dk, doctors, locations, docSchedules, finalPlans, docDa
 
 function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSites, locColor,
                         siteAbbr, isTechOff, techDayNotes, holidayFor, compact, dutyOf, nameSize,
-                        viewerTechId }) {
+                        viewerTechId, duties }) {
   const p = parseDateKey(dk);
   const bySite = {};
   activeTechs.forEach(t => {
@@ -3616,7 +3649,7 @@ function TechQuadCell({ dk, activeTechs, getAssignment, quadSiteIds, staffedSite
   const overflow = staffedSites.filter(l => quadSiteIds.indexOf(l.id) === -1 && bySite[l.id]);
   const fname = t => {
     const d = dutyOf ? dutyOf(dk, t.id) : '';
-    return t.name.split(' ')[0] + (d ? dutySuffix(d) : '');
+    return t.name.split(' ')[0] + (d ? dutySuffix(d, duties) : '');
   };
   // In the technician portal the viewer needs to find themselves at a glance, so
   // their own name is underlined and their site block gets a ring. The ring is drawn
@@ -3894,7 +3927,8 @@ function Pre({ ok, label }) {
 // ── Technicians ──────────────────────────────────────────────────────────────
 
 function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, doctors, showToast,
-                      portalAccounts, createTechPortalAccount, resetTechPortalPassword, createTechPortalAccountsBulk }) {
+                      portalAccounts, createTechPortalAccount, resetTechPortalPassword, createTechPortalAccountsBulk,
+                      techDuties, setTechDuties, techSchedules }) {
   const blank = { id:'', name:'', level:'Tech', roles:[], skills:[], homeLocationId:'',
                   pinnedDoctorIds:[], backupForDoctorIds:[], notes:'', active:true };
   const [form, setForm] = useState(blank);
@@ -4157,6 +4191,8 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
         </div>
       </div>
 
+      <RolesCard {...{S, techDuties, setTechDuties, techSchedules, showToast}} />
+
       {acctModal && (
         <CreateAccountModal S={S} tech={acctModal.tech}
           onClose={() => setAcctModal(null)}
@@ -4173,6 +4209,176 @@ function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locatio
         <BulkCreateAccountsModal S={S} candidates={bulkCandidates}
           onClose={() => setBulkModal(false)}
           onSubmit={(list, password) => createTechPortalAccountsBulk(list, password)} />
+      )}
+    </div>
+  );
+}
+
+// Manages the practice's own duty/role list (the `techDuties` blob). `id` is
+// permanent by construction here: adding never lets the caller set it (it's always
+// freshly generated, never derived from the abbreviation), and editing only ever
+// touches label/abbr on the existing object — so a renamed abbreviation can never
+// orphan an assignment that stored the old id.
+function RolesCard({ S, techDuties, setTechDuties, techSchedules, showToast }) {
+  const duties = techDuties || [];
+  const [addForm, setAddForm] = useState({ label: '', abbr: '' });
+  const [addError, setAddError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ label: '', abbr: '' });
+  const [editError, setEditError] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, label, count }
+
+  function validateRole(label, abbr, excludeId) {
+    const l = (label || '').trim();
+    const a = (abbr || '').trim().toUpperCase();
+    if (!l) return 'Label is required.';
+    if (l.length > 40) return 'Label must be 40 characters or fewer.';
+    if (!a) return 'Abbreviation is required.';
+    if (a.length > 4) return 'Abbreviation must be 4 characters or fewer.';
+    const dup = duties.some(d => d.id !== excludeId && d.abbr.toUpperCase() === a);
+    if (dup) return 'That abbreviation is already used by another role.';
+    return '';
+  }
+
+  function addRole() {
+    const err = validateRole(addForm.label, addForm.abbr, null);
+    if (err) { setAddError(err); return; }
+    const id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    setTechDuties(duties.concat([{ id, label: addForm.label.trim(), abbr: addForm.abbr.trim().toUpperCase() }]));
+    setAddForm({ label: '', abbr: '' });
+    setAddError('');
+  }
+
+  function startEdit(d) { setEditingId(d.id); setEditForm({ label: d.label, abbr: d.abbr }); setEditError(''); }
+  function cancelEdit() { setEditingId(null); setEditError(''); }
+  function saveEdit(id) {
+    const err = validateRole(editForm.label, editForm.abbr, id);
+    if (err) { setEditError(err); return; }
+    // id is never part of this update — only label/abbr change on the existing object.
+    setTechDuties(duties.map(d => d.id === id
+      ? Object.assign({}, d, { label: editForm.label.trim(), abbr: editForm.abbr.trim().toUpperCase() })
+      : d));
+    setEditingId(null);
+    setEditError('');
+  }
+
+  // How many stored assignments (across every technician plan, every month ever
+  // saved) reference this role id. Walks techSchedules directly rather than any
+  // memoized subset, since a role could be in use in a month that isn't on screen.
+  function usageCount(id) {
+    let n = 0;
+    Object.keys(techSchedules || {}).forEach(key => {
+      const month = techSchedules[key] || {};
+      Object.keys(month).forEach(dk => {
+        const day = month[dk] || {};
+        Object.keys(day).forEach(techId => {
+          if (day[techId] && day[techId].duty === id) n++;
+        });
+      });
+    });
+    return n;
+  }
+
+  function askDelete(d) {
+    const count = usageCount(d.id);
+    if (count > 0) {
+      setDeleteConfirm({ id: d.id, label: d.label, count });
+      return;
+    }
+    setTechDuties(duties.filter(x => x.id !== d.id));
+    if (showToast) showToast('Role deleted', 'success');
+  }
+  // Removes only the definition. Assignments that stored this id are left exactly as
+  // they are — the point of the whole id/abbr split — so their chips simply fall back
+  // to showing the raw code once no role resolves it.
+  function confirmDelete() {
+    const dc = deleteConfirm;
+    setTechDuties(duties.filter(x => x.id !== dc.id));
+    setDeleteConfirm(null);
+    if (showToast) showToast('Role deleted — existing assignments left unchanged', 'info');
+  }
+
+  return (
+    <div style={Object.assign({}, S.card, { padding: 16 })}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>Roles</div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+        Per-day duties a technician can be given on the schedule board (right-click a placed chip).
+        The abbreviation is what shows in parentheses on their name chip.
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+        {duties.length === 0 && (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No roles defined yet.</div>
+        )}
+        {duties.map(d => {
+          const isEditing = editingId === d.id;
+          return (
+            <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                                     border: '1px solid var(--border-subtle)', borderRadius: 8, flexWrap: 'wrap' }}>
+              {isEditing ? (
+                <React.Fragment>
+                  <input value={editForm.label} onChange={e => setEditForm(Object.assign({}, editForm, { label: e.target.value }))}
+                         placeholder="Label" maxLength={40}
+                         style={Object.assign({}, S.input, { width: 160 })} />
+                  <input value={editForm.abbr} onChange={e => setEditForm(Object.assign({}, editForm, { abbr: e.target.value }))}
+                         placeholder="Abbr" maxLength={4}
+                         style={Object.assign({}, S.input, { width: 70, textTransform: 'uppercase' })} />
+                  <button onClick={() => saveEdit(d.id)} style={S.btnP}>Save</button>
+                  <button onClick={cancelEdit} style={S.btn}>Cancel</button>
+                  {editError && <div style={{ width: '100%', fontSize: 12, color: '#ef4444' }}>{editError}</div>}
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <span style={{ display: 'inline-block', fontSize: 12, fontWeight: 800, color: '#fff',
+                                background: '#4338ca', borderRadius: 4, padding: '2px 7px', minWidth: 24, textAlign: 'center' }}>
+                    {d.abbr}
+                  </span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{d.label}</span>
+                  <button onClick={() => startEdit(d)} style={Object.assign({}, S.btn, { padding: '5px 10px', fontSize: 13 })}>Edit</button>
+                  <button onClick={() => askDelete(d)} style={S.btnD}>Delete</button>
+                </React.Fragment>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
+        <div>
+          <label style={S.label}>Label</label>
+          <input value={addForm.label} onChange={e => setAddForm(Object.assign({}, addForm, { label: e.target.value }))}
+                 placeholder="e.g. Injections" maxLength={40} style={Object.assign({}, S.input, { width: 180 })} />
+        </div>
+        <div>
+          <label style={S.label}>Abbreviation</label>
+          <input value={addForm.abbr} onChange={e => setAddForm(Object.assign({}, addForm, { abbr: e.target.value }))}
+                 placeholder="e.g. INJ" maxLength={4} style={Object.assign({}, S.input, { width: 80, textTransform: 'uppercase' })} />
+        </div>
+        <button onClick={addRole} style={S.btnP}>Add role</button>
+      </div>
+      {addError && <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444' }}>{addError}</div>}
+
+      {deleteConfirm && (
+        <div onClick={() => setDeleteConfirm(null)}
+             style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.45)',
+                     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
+               style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)',
+                       borderRadius: 14, padding: '20px 22px', maxWidth: 440, width: '100%',
+                       boxShadow: '0 18px 50px rgba(0,0,0,0.35)' }}>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>Delete this role?</div>
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 18 }}>
+              {deleteConfirm.count} assignment{deleteConfirm.count === 1 ? '' : 's'} on the schedule currently
+              {deleteConfirm.count === 1 ? ' uses' : ' use'} "{deleteConfirm.label}". Deleting it only removes
+              the role definition — those assignments are left untouched, and their chips will show the raw
+              code "{deleteConfirm.id}" instead of a name.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={() => setDeleteConfirm(null)} style={S.btn}>Cancel</button>
+              <button onClick={confirmDelete} style={S.btnD}>Delete role</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -4635,16 +4841,24 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
 
   const [subName, setSubName] = useState('');
   const [subParent, setSubParent] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editParent, setEditParent] = useState('');
+
+  function validateLocationName(name, excludeId) {
+    if (!name) return 'Give the location a name';
+    if (allSites.some(s => s.id !== excludeId && s.name.toLowerCase() === name.toLowerCase())) {
+      return 'A site with that name already exists';
+    }
+    return '';
+  }
 
   function addSubRoom() {
     const name = subName.trim();
-    if (!name) { showToast('Give the room a name', 'error'); return; }
-    if (!subParent) { showToast('Pick which site it belongs to', 'error'); return; }
-    if (allSites.some(s => s.name.toLowerCase() === name.toLowerCase())) {
-      showToast('A site with that name already exists', 'error'); return;
-    }
+    const err = validateLocationName(name, null);
+    if (err) { showToast(err, 'error'); return; }
     const id = newId('ts');
-    setTechSites((techSites || []).concat([{ id, name, parentLocationId: subParent }]));
+    setTechSites((techSites || []).concat([{ id, name, parentLocationId: subParent || '' }]));
     // Enabled with a flat minimum and no per-doctor ratio: a sub-room is usually
     // "put N people in that room when the parent has clinic", not a ratio.
     setTechStaffing(Object.assign({}, techStaffing, {
@@ -4655,20 +4869,35 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
 
   function removeSubRoom(id) {
     const site = (techSites || []).find(s => s.id === id);
-    if (!confirm(`Remove "${site ? site.name : id}"? Existing assignments to it stay in the schedule but will show as an unknown site.`)) return;
+    if (!confirm('Remove "' + (site ? site.name : id) + '"? Existing assignments to it stay in the schedule but will show as an unknown site.')) return;
     setTechSites((techSites || []).filter(s => s.id !== id));
     const next = Object.assign({}, techStaffing); delete next[id]; setTechStaffing(next);
+  }
+
+  function startEditRoom(s) {
+    setEditingId(s.id);
+    setEditName(s.name);
+    setEditParent(s.parentLocationId || '');
+  }
+  function cancelEditRoom() {
+    setEditingId(null); setEditName(''); setEditParent('');
+  }
+  function saveEditRoom(id) {
+    const name = editName.trim();
+    const err = validateLocationName(name, id);
+    if (err) { showToast(err, 'error'); return; }
+    // id is never touched — only name/parentLocationId change on the existing object,
+    // so assignments that reference this id keep resolving.
+    setTechSites((techSites || []).map(s => s.id === id
+      ? Object.assign({}, s, { name, parentLocationId: editParent || '' })
+      : s));
+    setEditingId(null); setEditName(''); setEditParent('');
   }
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
       <div style={Object.assign({}, S.card, {padding:16})}>
-        <div style={{fontWeight:700,marginBottom:6}}>Sub-rooms</div>
-        <p style={{fontSize:13,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
-          A room technicians staff separately, inside a site the doctor schedule already knows about — like a second
-          suite at Stockton. Doctors are still recorded at the parent site, so a sub-room borrows the parent's doctor
-          count. It exists only here; the doctor scheduler's location list is untouched.
-        </p>
+        <div style={{fontWeight:700,marginBottom:6}}>Technician locations</div>
         <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
           <div>
             <label style={S.label}>Room name</label>
@@ -4676,27 +4905,47 @@ function StaffingPanel({ S, allSites, locations, techSites, setTechSites, techSt
                    placeholder="Stockton - Suite 2" style={Object.assign({}, S.input, {minWidth:200})} />
           </div>
           <div>
-            <label style={S.label}>Inside which site</label>
+            <label style={S.label}>Linked doctor location (optional)</label>
             <select value={subParent} onChange={e => setSubParent(e.target.value)} style={Object.assign({}, S.input, {minWidth:160})}>
-              <option value="">— pick —</option>
+              <option value="">— none —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </div>
-          <button onClick={addSubRoom} style={S.btnP}>Add sub-room</button>
+          <button onClick={addSubRoom} style={S.btnP}>Add location</button>
         </div>
         {(techSites || []).length > 0 && (
           <div style={{marginTop:14,display:'flex',flexDirection:'column',gap:6}}>
-            {techSites.map(s => (
-              <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,
-                                      padding:'7px 0',borderTop:'1px solid var(--border-subtle)'}}>
-                <strong>{s.name}</strong>
-                <span style={{color:'var(--text-muted)',fontSize:12}}>
-                  inside {(locations.find(l => l.id === s.parentLocationId) || {}).name || s.parentLocationId}
-                </span>
-                <div style={{flex:1}} />
-                <button onClick={() => removeSubRoom(s.id)} style={S.btnD}>Remove</button>
-              </div>
-            ))}
+            {techSites.map(s => {
+              const isEditing = editingId === s.id;
+              const linkedSite = locations.find(l => l.id === s.parentLocationId);
+              return (
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,flexWrap:'wrap',
+                                        padding:'7px 0',borderTop:'1px solid var(--border-subtle)'}}>
+                  {isEditing ? (
+                    <React.Fragment>
+                      <input value={editName} onChange={e => setEditName(e.target.value)}
+                             placeholder="Room name" style={Object.assign({}, S.input, {minWidth:180})} />
+                      <select value={editParent} onChange={e => setEditParent(e.target.value)} style={Object.assign({}, S.input, {minWidth:160})}>
+                        <option value="">— none —</option>
+                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                      <button onClick={() => saveEditRoom(s.id)} style={S.btnP}>Save</button>
+                      <button onClick={cancelEditRoom} style={S.btn}>Cancel</button>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      <strong>{s.name}</strong>
+                      <span style={{color:'var(--text-muted)',fontSize:12}}>
+                        {linkedSite ? ('linked to ' + linkedSite.name) : 'not linked to a doctor location'}
+                      </span>
+                      <div style={{flex:1}} />
+                      <button onClick={() => startEditRoom(s)} style={Object.assign({}, S.btn, {padding:'5px 10px',fontSize:13})}>Edit</button>
+                      <button onClick={() => removeSubRoom(s.id)} style={S.btnD}>Remove</button>
+                    </React.Fragment>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -5667,7 +5916,7 @@ function NotifyPanel({ S, notifySettings, setNotifySettings, techs, techContacts
 // live-plan ones an admin edits.
 function PortalWeek(props) {
   const { S, selectedDate, setSelectedDate, notifySettings, techPublished, myTechId,
-          activeTechs, getAssignment, dutyOf, locName, doctorsAtSiteOn } = props;
+          activeTechs, getAssignment, dutyOf, locName, doctorsAtSiteOn, duties } = props;
   const tz = (notifySettings && notifySettings.timezone) || 'America/Los_Angeles';
   const today = todayKeyIn(tz);
   function goToday() { setSelectedDate(today); }
@@ -5710,7 +5959,7 @@ function PortalWeek(props) {
       dk, label: fmtDateShort(dk),
       off: off || nothing, location,
       doctors: docs.join(', '),
-      duty: duty ? dutyLabel(duty) : '',
+      duty: duty ? dutyLabel(duty, duties) : '',
       today: dk === today,
       past: dk < today,
     };

@@ -5,7 +5,7 @@
 // a phone on clinic wifi, and email clients strip <style> blocks and external assets.
 
 import {
-  activeTechs, assignmentsFor, doctorCoverage, doctorsAt, DUTY_LABELS, locationName,
+  activeTechs, assignmentsFor, doctorCoverage, doctorsAt, dutyLabelFor, locationName,
   fmtLong, fmtShort, escapeHtml, parseDateKey, dayOfWeek, addDays, dayNoteFor,
 } from "./techdata.mjs";
 
@@ -59,7 +59,7 @@ export function personalDetail(ctx, dk, techId) {
     amDoctors: am !== "OFF" ? (doctorsAt(ctx, dk, am).am || []) : [],
     pmDoctors: pm !== "OFF" ? (doctorsAt(ctx, dk, pm).pm || []) : [],
     duty: a.duty || null,
-    dutyLabel: a.duty ? (DUTY_LABELS[a.duty] || a.duty) : null,
+    dutyLabel: dutyLabelFor(ctx, a.duty),
   };
 }
 

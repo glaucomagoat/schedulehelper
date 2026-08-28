@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS = {
 // One round trip for everything a day view or a send needs.
 export async function loadContext(store) {
   const ns = ADMIN + ":";
-  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins, techDayNotes, docDayNotes] =
+  const [techs, contacts, techSchedules, staffing, locations, doctors, finalPlans, docSchedules, settings, notifyLog, timeOff, techSites, techFinalPlans, techPublished, techAdmins, techDayNotes, docDayNotes, techDuties] =
     await Promise.all([
       readJson(store, ns + "techs", []),
       // Contact/notification state for every notifiable person, keyed by id:
@@ -84,11 +84,15 @@ export async function loadContext(store) {
       // scheduler keys them by schedule key first, then date.
       readJson(store, ns + "techDayNotes", {}),
       readJson(store, ns + "dayNotes", {}),
+      // User-managed duty/role definitions ({id, label, abbr}). id is permanent and
+      // is what assignments store, so it must never be derived from the abbreviation —
+      // see dutyLabelFor below for the fallback chain a deleted/never-saved role uses.
+      readJson(store, ns + "techDuties", []),
     ]);
   return {
     ns, techs, contacts, techSchedules, staffing, locations, doctors,
     finalPlans, docSchedules, timeOff, notifyLog, techSites, techFinalPlans, techPublished, techAdmins,
-    techDayNotes, docDayNotes,
+    techDayNotes, docDayNotes, duties: techDuties || [],
     // Anywhere a technician can be assigned = real locations + tech-only sub-rooms.
     // Doctors only ever appear at real locations, which is why the two differ.
     allSites: (locations || []).concat(techSites || []),
@@ -247,8 +251,23 @@ export function dayNoteFor(ctx, dk) {
   return out.join(" · ");
 }
 
-// Mirrors the DUTIES constant in techs.html — keep the two in step.
-export const DUTY_LABELS = { S: "Scribe", T: "Testing", A: "A scan", TR: "Training Refraction" };
+// Fallback only, for a site that has never saved a techDuties blob (or one that was
+// seeded before this migration ran). Mirrors DEFAULT_DUTIES in techs.html — keep the
+// two in step. Once a practice edits its roles, ctx.duties is the source of truth and
+// this is never consulted for their ids.
+export const DUTY_LABELS = { S: "Scribe", T: "Testing", A: "A scan", L: "LASIK", TR: "Training Refraction" };
+
+// Resolves a stored duty CODE to a display label: the practice's own definition
+// first (ctx.duties, from the techDuties blob), then the hardcoded fallback above,
+// then the raw code itself — so a role deleted out from under an old assignment (or
+// a site that has never saved the blob at all) still shows something instead of
+// throwing or going blank.
+export function dutyLabelFor(ctx, code) {
+  if (!code) return null;
+  const d = (ctx.duties || []).find(x => x.id === code);
+  if (d) return d.label;
+  return DUTY_LABELS[code] || code;
+}
 
 // Which doctors are at which site on a given day, from the PUBLISHED plan.
 export function doctorCoverage(ctx, dk) {

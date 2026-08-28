@@ -222,8 +222,13 @@ function isKeyReadable(key, session) {
     //                   baked into the published snapshot as OFF, so the portal shows
     //                   who is off without exposing why.
     //   techRules     — admin-only scheduling context, same as vacations/medicalLeaves.
+    //   techDuties    — the practice's role list (label + abbreviation). Not
+    //                   sensitive, and the portal board renders the abbreviation on
+    //                   each name chip, so a reader needs it or the tags degrade to
+    //                   raw codes.
     const TECH_READABLE = ['techs', 'techSchedules', 'techStaffing',
-                           'techFinalPlans', 'techPublished', 'techSites', 'techDayNotes'];
+                           'techFinalPlans', 'techPublished', 'techSites', 'techDayNotes',
+                           'techDuties'];
     return STAFF_READABLE.some(sub => key === `${adminNs}:${sub}`)
         || TECH_READABLE.some(sub => key === `${adminNs}:${sub}`);
   }
