@@ -2711,7 +2711,8 @@ function App() {
         {activeTab === 'techs' && isAdmin && (
           <TechsPanel {...{S,techs,setTechs,techContacts,setTechContacts,locations:allSites,doctors,showToast,
                            portalAccounts,createTechPortalAccount,resetTechPortalPassword,createTechPortalAccountsBulk,
-                           techDuties,setTechDuties,techSchedules}} />
+                           techDuties,setTechDuties,techSchedules,setTechSchedules,
+                           techPublished,setTechPublished}} />
         )}
         {activeTab === 'staffing' && isAdmin && (
           <StaffingPanel {...{S,allSites,locations,setLocations,saveData,techSites,setTechSites,techStaffing,setTechStaffing,locColor,showToast,
@@ -4048,7 +4049,8 @@ function Pre({ ok, label }) {
 
 function TechsPanel({ S, techs, setTechs, techContacts, setTechContacts, locations, doctors, showToast,
                       portalAccounts, createTechPortalAccount, resetTechPortalPassword, createTechPortalAccountsBulk,
-                      techDuties, setTechDuties, techSchedules }) {
+                      techDuties, setTechDuties, techSchedules, setTechSchedules,
+                      techPublished, setTechPublished }) {
   const blank = { id:'', name:'', level:'Tech', roles:[], skills:[], homeLocationId:'',
                   pinnedDoctorIds:[], backupForDoctorIds:[], notes:'', active:true };
   const [form, setForm] = useState(blank);
