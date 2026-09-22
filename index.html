@@ -810,6 +810,47 @@ function DraggableNote({ initLeft, initTop, boxW, vw, vh, noteText, noteReadOnly
 }
 
 // ============================================================
+// PANEL ERROR BOUNDARY
+// ============================================================
+// Catches a render error in whichever tab is on screen so one broken panel shows
+// a readable message instead of unmounting the whole app and leaving a white page
+// (React 18 tears down the entire tree on an uncaught render error).
+//
+// Mount this with key={activeTab}: React remounts the boundary when the key
+// changes, which clears the error and lets the user navigate away from the tab
+// that broke. Without the key the fallback would stick on every tab.
+class PanelBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) {
+    console.error('[PanelBoundary] panel crashed:', err, info && info.componentStack);
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    const msg = String((this.state.err && this.state.err.message) || this.state.err);
+    return (
+      <div style={{maxWidth:640,margin:'40px auto',padding:24,borderRadius:12,
+                   background:'var(--bg-elevated)',border:'1px solid var(--border-default)',
+                   color:'var(--text-primary)',fontFamily:'inherit'}}>
+        <div style={{fontSize:32,marginBottom:8}}>⚠️</div>
+        <div style={{fontWeight:700,fontSize:18,marginBottom:6}}>This tab hit an error</div>
+        <div style={{fontSize:14,color:'var(--text-muted)',lineHeight:1.6,marginBottom:14}}>
+          Your schedule data is safe — nothing was saved or changed. Pick another tab to
+          keep working, or reload to try again.
+        </div>
+        <code style={{display:'block',background:'var(--bg-base)',padding:'10px 12px',
+                      borderRadius:8,fontSize:12,color:'#f87171',whiteSpace:'pre-wrap',
+                      wordBreak:'break-word',marginBottom:14}}>{msg}</code>
+        <button onClick={() => window.location.reload()}
+                style={{background:'#6366f1',color:'#fff',border:'none',borderRadius:8,
+                        padding:'9px 16px',fontSize:14,fontWeight:600,cursor:'pointer',
+                        fontFamily:'inherit'}}>Reload</button>
+      </div>
+    );
+  }
+}
+
+// ============================================================
 // MAIN APP
 // ============================================================
 window.ScheduleHelper = function StaffScheduler() {
@@ -5035,6 +5076,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
 
         {/* Main Content */}
         <div style={{flex:1,padding:isMobile?14:28,overflow:'auto',paddingBottom:isMobile?72:28}}>
+        <PanelBoundary key={activeTab}>
 
           {/* ===== SCHEDULE TAB ===== */}
           {activeTab === 'schedule' && (
@@ -6655,6 +6697,7 @@ style={{position:'absolute',top:24,right:-12,width:24,height:24,borderRadius:'50
           {activeTab === 'notifications' && isAdmin && (
             <DoctorNotifyPanel staff={staff} isMobile={isMobile} />
           )}
+        </PanelBoundary>
         </div>
       </div>
 
